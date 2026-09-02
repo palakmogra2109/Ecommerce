@@ -42,19 +42,32 @@ export async function logoutUser() {
   return await response.json();
 }
 
-export async function getCurrentUser() {
-  const response = await fetch(
-    `${API_URL}/auth/me`,
-    {
-      method: "GET",
-      credentials: "include",
+export async function getCurrentUser(timeoutMs = 5000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+  try {
+    const response = await fetch(
+      `${API_URL}/auth/me`,
+      {
+        method: "GET",
+        credentials: "include",
+        signal: controller.signal,
+      }
+    );
+
+    const data = await response.json();
+
+    return {
+      ...data,
+      status: response.status,
+    };
+  } catch (error) {
+    if (error.name === "AbortError") {
+      return { success: false, message: "Request timed out", status: 408 };
     }
-  );
-
-  const data = await response.json();
-
-  return {
-    ...data,
-    status: response.status,
-  };
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
