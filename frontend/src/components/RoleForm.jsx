@@ -1,28 +1,102 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
+  getRole,
   createRole,
   updateRole,
+  getRolePermissions,
+  updateRolePermissions,
 } from "../services/roles";
+import { listPermissions } from "../services/permissions";
+import PermissionPicker from "../components/PermissionPicker";
 
-const ROLE_STATUSES = ["ACTIVE", "INACTIVE"];
-
-export default function RoleForm({
-  role = null,
-  onClose,
-  onSaved,
-}) {
-  const isEdit = Boolean(role);
+export default function RoleForm({ roleId = null }) {
+  const isEdit = Boolean(roleId);
+  const navigate = useNavigate();
 
   const [form, setForm] = useState({
-    name: role?.name ?? "",
-    slug: role?.slug ?? "",
-    description: role?.description ?? "",
-    status: role?.status ?? "ACTIVE",
+    name: "",
+    slug: "",
+    description: "",
   });
 
+  const [permissions, setPermissions] = useState([]);
+  const [selected, setSelected] = useState([]);
+  const [loading, setLoading] = useState(isEdit);
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    const run = async () => {
+      setLoading(true);
+      setMessage("");
+
+      try {
+        if (isEdit) {
+          const [permData, roleData] = await Promise.all([
+            getRolePermissions(roleId),
+            getRole(roleId),
+          ]);
+
+          if (!active) {
+            return;
+          }
+
+          if (roleData.success) {
+            setForm({
+              name: roleData.role.name,
+              slug: roleData.role.slug,
+              description: roleData.role.description ?? "",
+            });
+          } else {
+            setMessage(roleData.message);
+          }
+
+          if (permData.success) {
+            setPermissions(permData.permissions);
+            setSelected(
+              permData.selected.map((id) => Number(id))
+            );
+          } else {
+            setMessage(permData.message);
+          }
+        } else {
+          const permData = await listPermissions();
+
+          if (!active) {
+            return;
+          }
+
+          if (permData.success) {
+            setPermissions(permData.permissions);
+          } else {
+            setMessage(permData.message);
+          }
+        }
+      } catch {
+        if (!active) {
+          return;
+        }
+
+        setMessage(
+          "Unable to connect to the server. Please try again."
+        );
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    run();
+
+    return () => {
+      active = false;
+    };
+  }, [roleId, isEdit]);
 
   function handleChange(e) {
     const { name, value } = e.target;
@@ -61,47 +135,57 @@ export default function RoleForm({
       return;
     }
 
-    setLoading(true);
+    setSaving(true);
     setMessage("");
 
     try {
       const data = isEdit
-        ? await updateRole(role.id, form)
+        ? await updateRole(roleId, form)
         : await createRole(form);
 
-      if (data.success) {
-        onSaved(data.message);
-      } else {
+      if (!data.success) {
         setMessage(data.message);
+        return;
+      }
+
+      const targetId = isEdit ? roleId : data.role.id;
+
+      const permData = await updateRolePermissions(
+        targetId,
+        selected
+      );
+
+      if (permData.success) {
+        navigate("/roles");
+      } else {
+        setMessage(permData.message);
       }
     } catch {
       setMessage(
         "Unable to connect to the server. Please try again."
       );
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal-panel"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
-          <h2>{isEdit ? "Edit Role" : "Create Role"}</h2>
-          <button
-            type="button"
-            className="modal-close"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            &times;
-          </button>
-        </div>
+    <div className="admin-page">
+      <div className="admin-header">
+        <h1>{isEdit ? "Edit Role" : "Create Role"}</h1>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => navigate("/roles")}
+        >
+          ← Back to Roles
+        </button>
+      </div>
 
-        <form onSubmit={handleSubmit}>
+      {loading ? (
+        <p className="admin-empty">Loading...</p>
+      ) : (
+        <form className="admin-form" onSubmit={handleSubmit}>
           <label className="form-label">Name</label>
           <input
             type="text"
@@ -143,36 +227,23 @@ export default function RoleForm({
             rows="3"
           />
 
-          <label className="form-label">Status</label>
-          <select
-            name="status"
-            value={form.status}
-            onChange={handleChange}
-          >
-            {ROLE_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
-              </option>
-            ))}
-          </select>
+          <label className="form-label">Permissions</label>
+          <PermissionPicker
+            permissions={permissions}
+            selected={selected}
+            onChange={setSelected}
+          />
 
           {message && (
             <p className="form-message">{message}</p>
           )}
 
-          <div className="modal-actions">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={onClose}
-            >
-              Cancel
-            </button>
+          <div className="form-actions">
             <button
               type="submit"
-              disabled={loading}
+              disabled={saving}
             >
-              {loading
+              {saving
                 ? "Saving..."
                 : isEdit
                   ? "Save Changes"
@@ -180,7 +251,7 @@ export default function RoleForm({
             </button>
           </div>
         </form>
-      </div>
+      )}
     </div>
   );
 }

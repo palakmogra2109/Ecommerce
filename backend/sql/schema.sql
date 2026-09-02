@@ -9,6 +9,8 @@ CREATE TABLE IF NOT EXISTS users (
   name        TEXT NOT NULL DEFAULT '',
   email       TEXT NOT NULL UNIQUE,
   password    TEXT NOT NULL,
+  mobile      TEXT,
+  avatar      TEXT,
   status      TEXT NOT NULL DEFAULT 'ACTIVE'
               CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -18,6 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
 -- Backfill columns on existing databases
 ALTER TABLE users ADD COLUMN IF NOT EXISTS status    TEXT NOT NULL DEFAULT 'ACTIVE';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile     TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar     TEXT;
 
 -- =============================================================
 -- roles
@@ -89,4 +93,15 @@ CREATE TABLE IF NOT EXISTS role_has_permissions (
   permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (role_id, permission_id)
+);
+
+-- =============================================================
+-- user_has_permissions
+-- Optional per-user permissions on top of role permissions.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS user_has_permissions (
+  user_id       BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, permission_id)
 );

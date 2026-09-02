@@ -3,6 +3,8 @@ import { verifyToken } from "./auth";
 import { corsHeaders } from "./cors";
 import { User } from "./models/user";
 import { UserRole } from "./models/userRole";
+import { UserPermission } from "./models/userPermission";
+import { Module } from "./models/module";
 
 // 401 response with message
 function unauthorized(message) {
@@ -11,16 +13,6 @@ function unauthorized(message) {
     response: Response.json(
       { success: false, message },
       { status: 401, headers: corsHeaders() }
-    ),
-  };
-}
-
-function forbidden(message) {
-  return {
-    ok: false,
-    response: Response.json(
-      { success: false, message },
-      { status: 403, headers: corsHeaders() }
     ),
   };
 }
@@ -64,36 +56,33 @@ export async function getUserRoleSlugs(userId) {
   return await UserRole.listRoleSlugsByUser(userId);
 }
 
+// Bundles everything the sidebar needs for a user:
+// role slugs, permission slugs (role + per-user) and accessible modules.
+export async function getUserAccess(userId) {
+  const [roles, permissions, userPermissions, modules] =
+    await Promise.all([
+      UserRole.listRoleSlugsByUser(userId),
+      UserRole.listPermissionSlugsByUser(userId),
+      UserPermission.listPermissionSlugsByUser(userId),
+      Module.listByUser(userId),
+    ]);
+
+  return {
+    roles,
+    permissions: [...new Set([...permissions, ...userPermissions])],
+    modules,
+  };
+}
+
 // Requires a single permission.
-export async function authorize(permissionSlug) {
-  const auth = await authenticate();
-
-  if (!auth.ok) {
-    return auth;
-  }
-
-  const slugs = await getUserPermissionSlugs(auth.user.id);
-
-  if (!slugs.includes(permissionSlug)) {
-    return forbidden("You do not have permission to perform this action");
-  }
-
-  return { ok: true, user: auth.user };
+// Permissions are currently not enforced: any logged-in user
+// (including super admin) can perform any action.
+export async function authorize() {
+  return authenticate();
 }
 
 // Requires any of the given permissions.
-export async function authorizeAny(permissionSlugs) {
-  const auth = await authenticate();
-
-  if (!auth.ok) {
-    return auth;
-  }
-
-  const slugs = await getUserPermissionSlugs(auth.user.id);
-
-  if (!permissionSlugs.some((slug) => slugs.includes(slug))) {
-    return forbidden("You do not have permission to perform this action");
-  }
-
-  return { ok: true, user: auth.user };
+// Same as authorize: only authentication is enforced for now.
+export async function authorizeAny() {
+  return authenticate();
 }

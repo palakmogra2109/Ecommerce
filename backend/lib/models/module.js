@@ -56,4 +56,24 @@ export const Module = {
 
     return result.rows;
   },
+
+  // Modules the given user's roles can access via module_has_roles.
+  async listByUser(userId) {
+    const result = await pool.query(
+      `
+      SELECT DISTINCT m.id,
+             m.name,
+             m.slug,
+             m.status
+      FROM ${TABLE} m
+      JOIN module_has_roles mhr ON mhr.module_id = m.id
+      JOIN user_has_roles uhr ON uhr.role_id = mhr.role_id
+      WHERE uhr.user_id = $1
+      ORDER BY m.name ASC
+      `,
+      [userId]
+    );
+
+    return result.rows;
+  },
 };

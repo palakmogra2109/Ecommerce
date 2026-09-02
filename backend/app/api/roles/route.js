@@ -22,8 +22,9 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
 
     const search = searchParams.get("search") ?? "";
+    const status = searchParams.get("status") ?? "";
 
-    const roles = await Role.list({ search });
+    const roles = await Role.list({ search, status });
 
     return Response.json(
       {

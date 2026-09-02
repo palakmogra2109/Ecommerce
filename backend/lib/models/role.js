@@ -68,15 +68,25 @@ export const Role = {
     return result.rows[0] || null;
   },
 
-  async list({ search = "" } = {}) {
+  async list({ search = "", status = "" } = {}) {
+    const conditions = [];
     const params = [];
-
-    let where = "";
 
     if (search) {
       params.push(`%${search.trim()}%`);
-      where = `WHERE (name ILIKE $1 OR slug ILIKE $1)`;
+      conditions.push(
+        `(name ILIKE $${params.length} OR slug ILIKE $${params.length})`
+      );
     }
+
+    if (status) {
+      params.push(status);
+      conditions.push(`status = $${params.length}`);
+    }
+
+    const where = conditions.length
+      ? `WHERE ${conditions.join(" AND ")}`
+      : "";
 
     const result = await pool.query(
       `

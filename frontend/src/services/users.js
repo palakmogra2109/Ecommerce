@@ -73,3 +73,53 @@ export async function deleteUser(id) {
 
   return await response.json();
 }
+
+export async function getUserPermissions(id) {
+  const response = await fetch(
+    `${API_URL}/users/${id}/permissions`,
+    {
+      method: "GET",
+      credentials: "include",
+    }
+  );
+
+  return await response.json();
+}
+
+export async function updateUserPermissions(id, permissionIds) {
+  const response = await fetch(
+    `${API_URL}/users/${id}/permissions`,
+    {
+      method: "PUT",
+
+      headers: {
+        "Content-Type": "application/json",
+      },
+
+      credentials: "include",
+
+      body: JSON.stringify({ permissions: permissionIds }),
+    }
+  );
+
+  return await response.json();
+}
+
+export async function bulkUpdateUserStatus(ids, status) {
+  const response = await fetch(
+    `${API_URL}/users/bulk-status`,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json",
+      },
+
+      credentials: "include",
+
+      body: JSON.stringify({ ids, status }),
+    }
+  );
+
+  return await response.json();
+}

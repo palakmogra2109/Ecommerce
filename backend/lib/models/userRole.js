@@ -33,6 +33,42 @@ export const UserRole = {
     return result.rows[0] || null;
   },
 
+  // Assign one role to a user (single-role model used by the UI).
+  async assign(userId, roleId) {
+    return await this.insert(userId, roleId);
+  },
+
+  // Replace the user's roles with the given one.
+  async replaceRole(userId, roleId) {
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      await client.query(
+        `DELETE FROM ${TABLE} WHERE user_id = $1`,
+        [userId]
+      );
+
+      await client.query(
+        `
+        INSERT INTO ${TABLE} (user_id, role_id)
+        VALUES ($1, $2)
+        `,
+        [userId, roleId]
+      );
+
+      await client.query("COMMIT");
+
+      return true;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
   async listByUser(userId) {
     const result = await pool.query(
       `

@@ -7,6 +7,10 @@ export async function listRoles(params = {}) {
     searchParams.set("search", params.search);
   }
 
+  if (params.status) {
+    searchParams.set("status", params.status);
+  }
+
   const query = searchParams.toString();
 
   const response = await fetch(
@@ -16,6 +20,22 @@ export async function listRoles(params = {}) {
       credentials: "include",
     }
   );
+
+  return await response.json();
+}
+
+export async function bulkUpdateRoleStatus(ids, status) {
+  const response = await fetch(`${API_URL}/roles/bulk-status`, {
+    method: "POST",
+
+    headers: {
+      "Content-Type": "application/json",
+    },
+
+    credentials: "include",
+
+    body: JSON.stringify({ ids, status }),
+  });
 
   return await response.json();
 }

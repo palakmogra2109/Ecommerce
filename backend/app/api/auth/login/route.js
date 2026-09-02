@@ -2,6 +2,7 @@ import bcrypt from "bcryptjs";
 import pool from "@/lib/db";
 import { createToken } from "@/lib/auth";
 import { corsHeaders } from "@/lib/cors";
+import { getUserAccess } from "@/lib/authorization";
 
 export const runtime = "nodejs";
 
@@ -77,6 +78,8 @@ export async function POST(request) {
 
     const token = await createToken(user);
 
+    const access = await getUserAccess(user.id);
+
     const headers = {
       ...corsHeaders(),
 
@@ -98,6 +101,9 @@ export async function POST(request) {
           name: user.name,
           email: user.email,
           created_at: user.created_at,
+          roles: access.roles,
+          permissions: access.permissions,
+          modules: access.modules,
         },
       },
       {

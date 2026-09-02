@@ -12,22 +12,31 @@ export const USER_STATUSES = Object.values(USER_STATUS);
 
 // Columns exposed outside the API. Never includes the password hash.
 const PUBLIC_COLUMNS =
-  "id, name, email, status, created_at, updated_at";
+  "id, name, email, mobile, avatar, status, created_at, updated_at";
 
 export const User = {
   TABLE,
 
-  async create({ name, email, password, status = "ACTIVE" }) {
+  async create({
+    name,
+    email,
+    password,
+    mobile = null,
+    avatar = null,
+    status = "ACTIVE",
+  }) {
     const result = await pool.query(
       `
-      INSERT INTO ${TABLE} (name, email, password, status)
-      VALUES ($1, $2, $3, $4)
+      INSERT INTO ${TABLE} (name, email, password, mobile, avatar, status)
+      VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING ${PUBLIC_COLUMNS}
       `,
       [
         (name ?? "").trim(),
         email.toLowerCase().trim(),
         password,
+        mobile ?? null,
+        avatar ?? null,
         status,
       ]
     );
@@ -82,7 +91,7 @@ export const User = {
     if (search) {
       params.push(`%${search.trim()}%`);
       conditions.push(
-        `(name ILIKE $${params.length} OR email ILIKE $${params.length})`
+        `(name ILIKE $${params.length} OR email ILIKE $${params.length} OR COALESCE(mobile, '') ILIKE $${params.length})`
       );
     }
 
@@ -109,7 +118,7 @@ export const User = {
     return result.rows;
   },
 
-  async update(id, { name, status } = {}) {
+  async update(id, { name, status, mobile, avatar } = {}) {
     const current = await this.findById(id);
 
     if (!current) {
@@ -121,13 +130,17 @@ export const User = {
       UPDATE ${TABLE}
       SET name = $1,
           status = $2,
+          mobile = $3,
+          avatar = $4,
           updated_at = now()
-      WHERE id = $3
+      WHERE id = $5
       RETURNING ${PUBLIC_COLUMNS}
       `,
       [
         name !== undefined ? name.trim() : current.name,
         status !== undefined ? status : current.status,
+        mobile !== undefined ? mobile : current.mobile,
+        avatar !== undefined ? avatar : current.avatar,
         id,
       ]
     );

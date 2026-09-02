@@ -1,6 +1,8 @@
 import bcrypt from "bcryptjs";
 import { corsHeaders } from "@/lib/cors";
 import { User, USER_STATUSES } from "@/lib/models/user";
+import { Role } from "@/lib/models/role";
+import { UserRole } from "@/lib/models/userRole";
 import { authorize } from "@/lib/authorization";
 
 export const runtime = "nodejs";
@@ -66,7 +68,8 @@ export async function POST(request) {
 
     const body = await request.json();
 
-    const { name, email, password, status } = body;
+    const { name, email, password, status, mobile, avatar, roleId } =
+      body;
 
     if (
       typeof email !== "string" ||
@@ -134,14 +137,41 @@ export async function POST(request) {
       );
     }
 
+    if (
+      roleId &&
+      typeof roleId !== "number" &&
+      typeof roleId !== "string"
+    ) {
+      return Response.json(
+        {
+          success: false,
+          message: "roleId must be a number",
+        },
+        {
+          status: 400,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
     const hashedPassword = await bcrypt.hash(password, 12);
 
     const user = await User.create({
       name: name ?? "",
       email: normalizedEmail,
       password: hashedPassword,
+      mobile: mobile ?? null,
+      avatar: avatar ?? null,
       status: userStatus,
     });
+
+    if (roleId) {
+      const role = await Role.findById(roleId);
+
+      if (role) {
+        await UserRole.assign(user.id, role.id);
+      }
+    }
 
     return Response.json(
       {

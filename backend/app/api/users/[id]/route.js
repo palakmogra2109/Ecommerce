@@ -4,6 +4,8 @@ import {
   User,
   USER_STATUSES,
 } from "@/lib/models/user";
+import { Role } from "@/lib/models/role";
+import { UserRole } from "@/lib/models/userRole";
 import { authorize } from "@/lib/authorization";
 
 export const runtime = "nodejs";
@@ -40,10 +42,15 @@ export async function GET(_request, { params }) {
       );
     }
 
+    const roles = await UserRole.listByUser(id);
+
     return Response.json(
       {
         success: true,
-        user,
+        user: {
+          ...user,
+          role: roles[0] || null,
+        },
       },
       {
         status: 200,
@@ -78,7 +85,7 @@ export async function PATCH(request, { params }) {
 
     const body = await request.json();
 
-    const { name, status, password } = body;
+    const { name, status, password, mobile, avatar, roleId } = body;
 
     const user = await User.findById(id);
 
@@ -93,6 +100,25 @@ export async function PATCH(request, { params }) {
           headers: corsHeaders(),
         }
       );
+    }
+
+    if (roleId) {
+      const role = await Role.findById(roleId);
+
+      if (role) {
+        await UserRole.replaceRole(id, role.id);
+      } else {
+        return Response.json(
+          {
+            success: false,
+            message: "Role not found",
+          },
+          {
+            status: 400,
+            headers: corsHeaders(),
+          }
+        );
+      }
     }
 
     const newStatus =
@@ -123,10 +149,12 @@ export async function PATCH(request, { params }) {
       updated = await User.updatePassword(id, hashedPassword);
     }
 
-    if (name !== undefined || status !== undefined) {
+    if (name !== undefined || status !== undefined || mobile !== undefined || avatar !== undefined) {
       updated = await User.update(id, {
         name: name !== undefined ? name : user.name,
         status: newStatus,
+        mobile: mobile !== undefined ? mobile : user.mobile,
+        avatar: avatar !== undefined ? avatar : user.avatar,
       });
     }
 

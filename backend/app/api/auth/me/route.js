@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import pool from "@/lib/db";
 import { verifyToken } from "@/lib/auth";
 import { corsHeaders } from "@/lib/cors";
+import { getUserAccess } from "@/lib/authorization";
 
 export const runtime = "nodejs";
 
@@ -55,10 +56,22 @@ export async function GET() {
       );
     }
 
+    const user = result.rows[0];
+
+    const access = await getUserAccess(user.id);
+
     return Response.json(
       {
         success: true,
-        user: result.rows[0],
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          created_at: user.created_at,
+          roles: access.roles,
+          permissions: access.permissions,
+          modules: access.modules,
+        },
       },
       {
         status: 200,

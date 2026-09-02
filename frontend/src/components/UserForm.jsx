@@ -1,32 +1,106 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import {
+  getUser,
   createUser,
   updateUser,
 } from "../services/users";
+import { listRoles } from "../services/roles";
+import { uploadMedia, mediaUrl } from "../services/media";
+import Breadcrumb from "../components/Breadcrumb";
+import Avatar from "../components/Avatar";
 import {
   validateEmail,
   validatePassword,
 } from "../utils/validation";
 
-const USER_STATUSES = ["ACTIVE", "INACTIVE", "SUSPENDED"];
-
-export default function UserForm({
-  user = null,
-  onClose,
-  onSaved,
-}) {
-  const isEdit = Boolean(user);
+export default function UserForm({ userId = null }) {
+  const isEdit = Boolean(userId);
+  const navigate = useNavigate();
 
   const [form, setForm] = useState({
-    name: user?.name ?? "",
-    email: user?.email ?? "",
+    name: "",
+    email: "",
+    mobile: "",
     password: "",
-    status: user?.status ?? "ACTIVE",
+    avatar: null,
   });
 
+  const [roles, setRoles] = useState([]);
+  const [roleId, setRoleId] = useState("");
+  const [preview, setPreview] = useState(null);
+  const [loading, setLoading] = useState(isEdit);
+  const [uploading, setUploading] = useState(false);
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(false);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+
+    const run = async () => {
+      setLoading(true);
+      setMessage("");
+
+      try {
+        const rolesData = await listRoles();
+
+        if (!active) {
+          return;
+        }
+
+        if (rolesData.success) {
+          setRoles(rolesData.roles);
+        }
+
+        if (isEdit) {
+          const userData = await getUser(userId);
+
+          if (!active) {
+            return;
+          }
+
+          if (userData.success) {
+            const u = userData.user;
+
+            setForm({
+              name: u.name ?? "",
+              email: u.email,
+              mobile: u.mobile ?? "",
+              password: "",
+              avatar: u.avatar ?? null,
+            });
+
+            setPreview(u.avatar ? mediaUrl(u.avatar) : null);
+
+            if (u.role) {
+              setRoleId(String(u.role.id));
+            }
+          } else {
+            setMessage(userData.message);
+          }
+        }
+      } catch {
+        if (!active) {
+          return;
+        }
+
+        setMessage(
+          "Unable to connect to the server. Please try again."
+        );
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+
+    run();
+
+    return () => {
+      active = false;
+    };
+  }, [userId, isEdit]);
 
   function handleChange(e) {
     const { name, value } = e.target;
@@ -40,6 +114,48 @@ export default function UserForm({
       ...prev,
       [name]: "",
     }));
+  }
+
+  async function handleAvatarChange(e) {
+    const file = e.target.files?.[0];
+
+    if (!file) {
+      return;
+    }
+
+    setUploading(true);
+    setMessage("");
+
+    try {
+      const data = await uploadMedia(file);
+
+      if (data.success) {
+        setForm((prev) => ({
+          ...prev,
+          avatar: data.url,
+        }));
+
+        setPreview(mediaUrl(data.url));
+      } else {
+        setMessage(data.message);
+      }
+    } catch {
+      setMessage(
+        "Unable to upload image. Please try again."
+      );
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  }
+
+  function handleRemoveAvatar() {
+    setForm((prev) => ({
+      ...prev,
+      avatar: null,
+    }));
+
+    setPreview(null);
   }
 
   async function handleSubmit(e) {
@@ -67,16 +183,29 @@ export default function UserForm({
       return;
     }
 
-    setLoading(true);
+    setSaving(true);
     setMessage("");
 
     try {
       const data = isEdit
-        ? await updateUser(user.id, form)
-        : await createUser(form);
+        ? await updateUser(userId, {
+            name: form.name,
+            mobile: form.mobile,
+            avatar: form.avatar,
+            password: form.password || undefined,
+            ...(roleId ? { roleId } : {}),
+          })
+        : await createUser({
+            name: form.name,
+            email: form.email,
+            mobile: form.mobile,
+            avatar: form.avatar,
+            password: form.password,
+            ...(roleId ? { roleId } : {}),
+          });
 
       if (data.success) {
-        onSaved(data.message);
+        navigate("/users");
       } else {
         setMessage(data.message);
       }
@@ -85,29 +214,63 @@ export default function UserForm({
         "Unable to connect to the server. Please try again."
       );
     } finally {
-      setLoading(false);
+      setSaving(false);
     }
   }
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div
-        className="modal-panel"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
-          <h2>{isEdit ? "Edit User" : "Create User"}</h2>
-          <button
-            type="button"
-            className="modal-close"
-            onClick={onClose}
-            aria-label="Close"
-          >
-            &times;
-          </button>
-        </div>
+    <div className="admin-page">
+      <Breadcrumb
+        items={[
+          { label: "Users", to: "/users" },
+          {
+            label: isEdit ? "Edit User" : "Create User",
+          },
+        ]}
+      />
 
-        <form onSubmit={handleSubmit}>
+      <div className="admin-header">
+        <h1>{isEdit ? "Edit User" : "Create User"}</h1>
+        <button
+          type="button"
+          className="btn-secondary"
+          onClick={() => navigate("/users")}
+        >
+          ← Back to Users
+        </button>
+      </div>
+
+      {loading ? (
+        <p className="admin-empty">Loading...</p>
+      ) : (
+        <form className="admin-form" onSubmit={handleSubmit}>
+          <label className="form-label">Profile Image</label>
+          <div className="avatar-upload">
+            <Avatar user={form} size={80} />
+
+            <div className="avatar-upload-actions">
+              <label className="btn-secondary avatar-file-btn">
+                {uploading ? "Uploading..." : "Upload Image"}
+                <input
+                  type="file"
+                  accept="image/*"
+                  onChange={handleAvatarChange}
+                  disabled={uploading}
+                />
+              </label>
+
+              {(preview || form.avatar) && (
+                <button
+                  type="button"
+                  className="btn-danger btn-sm"
+                  onClick={handleRemoveAvatar}
+                >
+                  Remove
+                </button>
+              )}
+            </div>
+          </div>
+
           <label className="form-label">
             Name <span className="optional">(optional)</span>
           </label>
@@ -139,6 +302,16 @@ export default function UserForm({
             <p className="input-error">{errors.email}</p>
           )}
 
+          <label className="form-label">Mobile Number</label>
+          <input
+            type="tel"
+            name="mobile"
+            placeholder="Mobile number"
+            value={form.mobile}
+            onChange={handleChange}
+            autoComplete="off"
+          />
+
           <label className="form-label">
             {isEdit
               ? "New Password (leave blank to keep)"
@@ -157,15 +330,16 @@ export default function UserForm({
             <p className="input-error">{errors.password}</p>
           )}
 
-          <label className="form-label">Status</label>
+          <label className="form-label">Role</label>
           <select
-            name="status"
-            value={form.status}
-            onChange={handleChange}
+            name="roleId"
+            value={roleId}
+            onChange={(e) => setRoleId(e.target.value)}
           >
-            {USER_STATUSES.map((s) => (
-              <option key={s} value={s}>
-                {s}
+            <option value="">Select role</option>
+            {roles.map((role) => (
+              <option key={role.id} value={role.id}>
+                {role.name}
               </option>
             ))}
           </select>
@@ -174,19 +348,9 @@ export default function UserForm({
             <p className="form-message">{message}</p>
           )}
 
-          <div className="modal-actions">
-            <button
-              type="button"
-              className="btn-secondary"
-              onClick={onClose}
-            >
-              Cancel
-            </button>
-            <button
-              type="submit"
-              disabled={loading}
-            >
-              {loading
+          <div className="form-actions">
+            <button type="submit" disabled={saving}>
+              {saving
                 ? "Saving..."
                 : isEdit
                   ? "Save Changes"
@@ -194,7 +358,7 @@ export default function UserForm({
             </button>
           </div>
         </form>
-      </div>
+      )}
     </div>
   );
 }

@@ -1,8 +1,8 @@
 import { corsHeaders } from "@/lib/cors";
-import { Role } from "@/lib/models/role";
+import { User } from "@/lib/models/user";
 import { Permission } from "@/lib/models/permission";
-import { RolePermission } from "@/lib/models/rolePermission";
-import { authorize, authorizeAny } from "@/lib/authorization";
+import { UserPermission } from "@/lib/models/userPermission";
+import { authorize } from "@/lib/authorization";
 
 export const runtime = "nodejs";
 
@@ -15,10 +15,7 @@ export async function OPTIONS() {
 
 export async function GET(_request, { params }) {
   try {
-    const auth = await authorizeAny([
-      "roles.view",
-      "roles.assign_permissions",
-    ]);
+    const auth = await authorize();
 
     if (!auth.ok) {
       return auth.response;
@@ -26,13 +23,13 @@ export async function GET(_request, { params }) {
 
     const { id } = await params;
 
-    const role = await Role.findById(id);
+    const user = await User.findById(id);
 
-    if (!role) {
+    if (!user) {
       return Response.json(
         {
           success: false,
-          message: "Role not found",
+          message: "User not found",
         },
         {
           status: 404,
@@ -41,16 +38,16 @@ export async function GET(_request, { params }) {
       );
     }
 
-    const [permissions, selectedIds] = await Promise.all([
+    const [permissions, selected] = await Promise.all([
       Permission.list(),
-      RolePermission.listPermissionIdsByRole(id),
+      UserPermission.listPermissionIdsByUser(id),
     ]);
 
     return Response.json(
       {
         success: true,
         permissions,
-        selected: selectedIds,
+        selected,
       },
       {
         status: 200,
@@ -58,7 +55,7 @@ export async function GET(_request, { params }) {
       }
     );
   } catch (error) {
-    console.error("Get role permissions error:", error);
+    console.error("Get user permissions error:", error);
 
     return Response.json(
       {
@@ -75,7 +72,7 @@ export async function GET(_request, { params }) {
 
 export async function PUT(request, { params }) {
   try {
-    const auth = await authorize("roles.assign_permissions");
+    const auth = await authorize();
 
     if (!auth.ok) {
       return auth.response;
@@ -83,13 +80,13 @@ export async function PUT(request, { params }) {
 
     const { id } = await params;
 
-    const role = await Role.findById(id);
+    const user = await User.findById(id);
 
-    if (!role) {
+    if (!user) {
       return Response.json(
         {
           success: false,
-          message: "Role not found",
+          message: "User not found",
         },
         {
           status: 404,
@@ -125,7 +122,7 @@ export async function PUT(request, { params }) {
       }
     }
 
-    await RolePermission.sync(id, validIds);
+    await UserPermission.sync(id, validIds);
 
     return Response.json(
       {
@@ -139,7 +136,7 @@ export async function PUT(request, { params }) {
       }
     );
   } catch (error) {
-    console.error("Update role permissions error:", error);
+    console.error("Update user permissions error:", error);
 
     return Response.json(
       {

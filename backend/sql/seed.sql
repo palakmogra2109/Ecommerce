@@ -53,7 +53,9 @@ VALUES
 ON CONFLICT (slug) DO NOTHING;
 
 -- role_has_permissions: effective permissions per role
--- super_admin and admin get everything; manager and staff get a subset.
+-- super_admin and admin get everything; manager gets a subset;
+-- staff currently has a single permission (users.view) so the
+-- sidebar shows just the Users module for regular accounts.
 INSERT INTO role_has_permissions (role_id, permission_id)
 SELECT r.id, p.id
 FROM roles r
@@ -61,6 +63,5 @@ JOIN permissions p
   ON (r.slug IN ('super_admin', 'admin'))
   OR (r.slug = 'manager' AND p.slug IN
      ('users.view', 'users.update', 'roles.view', 'permissions.view'))
-  OR (r.slug = 'staff' AND p.slug IN
-     ('roles.view', 'permissions.view'))
+  OR (r.slug = 'staff' AND p.slug = 'users.view')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
