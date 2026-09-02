@@ -1,4 +1,4 @@
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 
 export default function Dashboard() {
@@ -35,6 +35,18 @@ export default function Dashboard() {
       <button onClick={handleLogout}>
         Logout
       </button>
+
+      <div style={{ marginTop: "20px" }}>
+        <p>
+          <Link to="/users">Manage Users</Link>
+        </p>
+        <p>
+          <Link to="/roles">Manage Roles</Link>
+        </p>
+        <p>
+          <Link to="/permissions">Manage Permissions</Link>
+        </p>
+      </div>
     </div>
   );
 }

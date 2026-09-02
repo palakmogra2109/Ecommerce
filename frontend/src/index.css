@@ -212,6 +212,329 @@ body {
   height: 20px;
 }
 
+/* Admin pages */
+
+.admin-page {
+  max-width: 900px;
+  margin: 40px auto;
+  padding: 0 20px;
+}
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.admin-header h1 {
+  margin: 0;
+  font-size: 28px;
+}
+
+.admin-filters {
+  display: flex;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.admin-filters input,
+.admin-filters select {
+  height: 42px;
+  padding: 0 14px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 15px;
+  outline: none;
+}
+
+.admin-filters input {
+  flex: 1;
+  max-width: 360px;
+}
+
+.admin-filters input:focus,
+.admin-filters select:focus {
+  border-color: #222;
+}
+
+.admin-table-wrap {
+  overflow-x: auto;
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.08);
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 14px 16px;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+.admin-table th {
+  background: #f7f7f7;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  color: #555;
+}
+
+.admin-table tr:last-child td {
+  border-bottom: none;
+}
+
+.admin-empty {
+  text-align: center;
+  padding: 40px !important;
+  color: #888;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 100px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.status-active {
+  background: #e6f4ea;
+  color: #1b5e20;
+}
+
+.status-inactive {
+  background: #fdecea;
+  color: #c62828;
+}
+
+.status-suspended {
+  background: #fff3e0;
+  color: #e65100;
+}
+
+/* Buttons in admin tables/headers */
+
+.btn-secondary {
+  background: #f0f0f0 !important;
+  color: #222 !important;
+  border: 1px solid #ccc !important;
+}
+
+.btn-danger {
+  background: #d32f2f !important;
+  color: white !important;
+  border: 1px solid #d32f2f !important;
+}
+
+.row-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.confirm-text {
+  margin: 0 0 20px;
+  font-size: 15px;
+  color: #333;
+}
+
+.btn-sm {
+  width: auto !important;
+  padding: 6px 14px !important;
+  font-size: 14px !important;
+}
+
+/* Modal */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+  z-index: 100;
+}
+
+.modal-panel {
+  width: 480px;
+  max-width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  background: white;
+  border-radius: 12px;
+  padding: 28px;
+  box-shadow: 0 15px 50px rgba(0, 0, 0, 0.3);
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 22px;
+}
+
+.modal-close {
+  background: none !important;
+  border: none !important;
+  color: #888 !important;
+  font-size: 26px !important;
+  line-height: 1;
+  width: auto !important;
+  height: auto !important;
+  padding: 0 4px !important;
+}
+
+.modal-close:hover {
+  color: #222 !important;
+}
+
+.form-label {
+  display: block;
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #333;
+}
+
+.optional {
+  color: #888;
+  font-weight: 400;
+}
+
+.modal-panel input,
+.modal-panel select,
+.modal-panel textarea {
+  display: block;
+  width: 100%;
+  padding: 0 14px;
+  margin-bottom: 16px;
+  border: 1px solid #ccc;
+  border-radius: 8px;
+  font-size: 15px;
+  outline: none;
+  font-family: inherit;
+}
+
+.modal-panel input,
+.modal-panel select {
+  height: 46px;
+}
+
+.modal-panel textarea {
+  padding: 10px 14px;
+  resize: vertical;
+}
+
+.modal-panel input:disabled {
+  background: #f5f5f5;
+  color: #777;
+}
+
+.modal-panel input:focus,
+.modal-panel select:focus {
+  border-color: #222;
+}
+
+.modal-panel .input-error {
+  margin: -8px 0 12px !important;
+}
+
+.modal-panel .form-message {
+  margin: 0 0 14px;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.modal-actions button {
+  width: auto;
+  height: auto;
+  padding: 10px 22px;
+  border: none;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+  background: #222;
+  color: white;
+}
+
+/* Role permissions modal */
+
+.modal-wide {
+  width: 640px;
+}
+
+.perm-groups {
+  max-height: 50vh;
+  overflow-y: auto;
+  margin-bottom: 16px;
+}
+
+.perm-group {
+  margin-bottom: 14px;
+  border: 1px solid #eee;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.perm-group-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  background: #f7f7f7;
+  font-size: 15px;
+  text-transform: capitalize;
+  cursor: pointer;
+}
+
+.perm-list {
+  padding: 6px 14px 10px;
+}
+
+.perm-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.perm-item span {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.perm-item code {
+  background: #f0f0f0;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 12px;
+  color: #555;
+}
+
 /* Loading spinner */
 
 .loading-screen {

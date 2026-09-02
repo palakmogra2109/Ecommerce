@@ -3,6 +3,9 @@ import { Navigate, Route, Routes } from "react-router-dom";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import Dashboard from "./pages/Dashboard";
+import Users from "./pages/Users";
+import Roles from "./pages/Roles";
+import Permissions from "./pages/Permissions";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -66,6 +69,36 @@ export default function App() {
         element={
           <ProtectedRoute>
             <Dashboard />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* /users → User management only if logged in */}
+      <Route
+        path="/users"
+        element={
+          <ProtectedRoute>
+            <Users />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* /roles → Role management only if logged in */}
+      <Route
+        path="/roles"
+        element={
+          <ProtectedRoute>
+            <Roles />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* /permissions → Permission management only if logged in */}
+      <Route
+        path="/permissions"
+        element={
+          <ProtectedRoute>
+            <Permissions />
           </ProtectedRoute>
         }
       />
