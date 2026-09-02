@@ -1,0 +1,121 @@
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+}
+
+.auth-container {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+
+  background-image:
+    linear-gradient(rgba(0, 0, 0, 0.45),
+      rgba(0, 0, 0, 0.45)),
+    url("/images/ecommerce.jpg");
+
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+.auth-form {
+  width: 500px;
+  max-width: 95%;
+  padding: 50px 45px;
+  background: rgba(255, 255, 255, 0.96);
+  border-radius: 18px;
+  box-shadow: 0 12px 45px rgba(0, 0, 0, 0.3);
+}
+
+.auth-form h1 {
+  margin: 0 0 35px;
+  text-align: center;
+  font-size: 38px;
+}
+
+.auth-form input {
+  display: block;
+  width: 100%;
+  height: 55px;
+  padding: 15px 18px;
+  margin-bottom: 20px;
+
+  border: 1px solid #ccc;
+  border-radius: 9px;
+
+  font-size: 17px;
+  outline: none;
+}
+
+.auth-form input:focus {
+  border-color: #222;
+}
+
+.auth-form button {
+  width: 100%;
+  height: 55px;
+  padding: 15px;
+
+  border: none;
+  border-radius: 9px;
+
+  background: #222;
+  color: white;
+
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.auth-form p {
+  margin-top: 22px;
+  font-size: 16px;
+  text-align: center;
+}
+
+.auth-form a {
+  color: #222;
+  font-weight: bold;
+  text-decoration: none;
+}
+
+.auth-form a:hover {
+  text-decoration: underline;
+}
+
+/* Dashboard */
+
+.dashboard {
+  max-width: 600px;
+  margin: 100px auto;
+  padding: 40px;
+  background: white;
+  border-radius: 10px;
+  box-shadow: 0 5px 20px rgba(0, 0, 0, 0.1);
+}
+
+.dashboard button {
+  width: 150px;
+  padding: 12px;
+
+  border: none;
+  border-radius: 5px;
+
+  background: #222;
+  color: white;
+
+  cursor: pointer;
+}
+
+.input-error {
+  margin: -12px 0 15px !important;
+  text-align: left !important;
+  color: #d32f2f;
+  font-size: 14px !important;
+}

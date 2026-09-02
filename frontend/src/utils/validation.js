@@ -1,0 +1,192 @@
+export const validationMessages = {
+    required: (field) => `${field} is required`,
+
+    name: {
+        required: "Name is required",
+        minLength: "Name must be at least 2 characters",
+        maxLength: "Name must not exceed 100 characters",
+        invalid: "Name can contain only letters and spaces",
+    },
+
+    email: {
+        required: "Email is required",
+        invalid: "Please enter a valid email address",
+    },
+
+    password: {
+        required: "Password is required",
+        minLength: "Password must be at least 6 characters",
+        maxLength: "Password must not exceed 100 characters",
+        uppercase: "Password must contain at least one uppercase letter",
+        lowercase: "Password must contain at least one lowercase letter",
+        number: "Password must contain at least one number",
+        special: "Password must contain at least one special character",
+        mismatch: "Passwords do not match",
+    },
+
+    confirmPassword: {
+        required: "Confirm password is required",
+        mismatch: "Passwords do not match",
+    },
+
+    phone: {
+        required: "Phone number is required",
+        invalid: "Please enter a valid phone number",
+    },
+
+    message: {
+        required: "Message is required",
+        minLength: "Message must be at least 10 characters",
+        maxLength: "Message must not exceed 500 characters",
+    },
+
+    generic: {
+        invalid: "Please enter a valid value",
+        somethingWentWrong: "Something went wrong. Please try again.",
+        networkError: "Unable to connect to the server. Please try again.",
+        serverError: "Server error. Please try again later.",
+    },
+};
+
+
+export function validateRequired(value, fieldName) {
+    if (
+        value === undefined ||
+        value === null ||
+        String(value).trim() === ""
+    ) {
+        return validationMessages.required(fieldName);
+    }
+
+    return "";
+}
+
+
+export function validateName(name) {
+    const requiredError = validateRequired(
+        name,
+        "Name"
+    );
+
+    if (requiredError) {
+        return requiredError;
+    }
+
+    const value = name.trim();
+
+    if (value.length < 2) {
+        return validationMessages.name.minLength;
+    }
+
+    if (value.length > 100) {
+        return validationMessages.name.maxLength;
+    }
+
+    if (!/^[A-Za-z\s]+$/.test(value)) {
+        return validationMessages.name.invalid;
+    }
+
+    return "";
+}
+
+
+export function validateEmail(email) {
+  if (!email || email.trim() === "") {
+    return "Email is required";
+  }
+
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  if (!emailRegex.test(email.trim())) {
+    return "Please enter a valid email address";
+  }
+
+  return "";
+}
+
+
+export function validatePassword(password) {
+    const requiredError = validateRequired(
+        password,
+        "Password"
+    );
+
+    if (requiredError) {
+        return requiredError;
+    }
+
+    if (password.length < 6) {
+        return validationMessages.password.minLength;
+    }
+
+    if (password.length > 100) {
+        return validationMessages.password.maxLength;
+    }
+
+    return "";
+}
+
+
+export function validateConfirmPassword(
+    password,
+    confirmPassword
+) {
+    const requiredError = validateRequired(
+        confirmPassword,
+        "Confirm password"
+    );
+
+    if (requiredError) {
+        return requiredError;
+    }
+
+    if (password !== confirmPassword) {
+        return validationMessages.confirmPassword.mismatch;
+    }
+
+    return "";
+}
+
+
+export function validatePhone(phone) {
+    const requiredError = validateRequired(
+        phone,
+        "Phone number"
+    );
+
+    if (requiredError) {
+        return requiredError;
+    }
+
+    const phoneRegex = /^[0-9]{10}$/;
+
+    if (!phoneRegex.test(phone.trim())) {
+        return validationMessages.phone.invalid;
+    }
+
+    return "";
+}
+
+
+export function validateMessage(message) {
+    const requiredError = validateRequired(
+        message,
+        "Message"
+    );
+
+    if (requiredError) {
+        return requiredError;
+    }
+
+    const value = message.trim();
+
+    if (value.length < 10) {
+        return validationMessages.message.minLength;
+    }
+
+    if (value.length > 500) {
+        return validationMessages.message.maxLength;
+    }
+
+    return "";
+}
