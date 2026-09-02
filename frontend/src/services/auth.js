@@ -42,6 +42,44 @@ export async function logoutUser() {
   return await response.json();
 }
 
+export async function forgotPassword(email) {
+  const response = await fetch(
+    `${API_URL}/auth/forgot-password`,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json",
+      },
+
+      credentials: "include",
+
+      body: JSON.stringify({ email }),
+    }
+  );
+
+  return await response.json();
+}
+
+export async function resetPassword(email, password) {
+  const response = await fetch(
+    `${API_URL}/auth/reset-password`,
+    {
+      method: "POST",
+
+      headers: {
+        "Content-Type": "application/json",
+      },
+
+      credentials: "include",
+
+      body: JSON.stringify({ email, password }),
+    }
+  );
+
+  return await response.json();
+}
+
 export async function getCurrentUser(timeoutMs = 5000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);

@@ -63,13 +63,12 @@ export function validateRequired(value, fieldName) {
 
 
 export function validateName(name) {
-    const requiredError = validateRequired(
-        name,
-        "Name"
-    );
-
-    if (requiredError) {
-        return requiredError;
+    if (
+        name === undefined ||
+        name === null ||
+        String(name).trim() === ""
+    ) {
+        return "";
     }
 
     const value = name.trim();
@@ -90,15 +89,17 @@ export function validateName(name) {
 }
 
 
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
 export function validateEmail(email) {
-  if (!email || email.trim() === "") {
-    return "Email is required";
+  const requiredError = validateRequired(email, "Email");
+
+  if (requiredError) {
+    return requiredError;
   }
 
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
-  if (!emailRegex.test(email.trim())) {
-    return "Please enter a valid email address";
+  if (!EMAIL_REGEX.test(email.trim())) {
+    return validationMessages.email.invalid;
   }
 
   return "";
@@ -121,6 +122,22 @@ export function validatePassword(password) {
 
     if (password.length > 100) {
         return validationMessages.password.maxLength;
+    }
+
+    if (!/[A-Z]/.test(password)) {
+        return validationMessages.password.uppercase;
+    }
+
+    if (!/[a-z]/.test(password)) {
+        return validationMessages.password.lowercase;
+    }
+
+    if (!/\d/.test(password)) {
+        return validationMessages.password.number;
+    }
+
+    if (!/[^A-Za-z0-9]/.test(password)) {
+        return validationMessages.password.special;
     }
 
     return "";

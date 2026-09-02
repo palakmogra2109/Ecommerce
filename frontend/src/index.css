@@ -120,6 +120,98 @@ body {
   font-size: 14px !important;
 }
 
+.form-message {
+  margin: 15px 0 0;
+  text-align: center;
+  color: #1b5e20;
+  font-size: 16px;
+}
+
+.forgot-password {
+  margin: -8px 0 20px;
+  text-align: right;
+}
+
+.forgot-password a {
+  font-size: 15px;
+}
+
+.reset-hint {
+  margin: 0 0 20px;
+  font-size: 15px;
+  text-align: center;
+  color: #444;
+}
+
+/* Password input with eye toggle */
+
+/* Password input */
+
+.password-field {
+  position: relative;
+  width: 100%;
+}
+
+.password-field input {
+  display: block;
+  width: 100%;
+  height: 55px;
+
+  padding: 15px 55px 15px 18px;
+  margin-bottom: 20px;
+
+  border: 1px solid #ccc;
+  border-radius: 9px;
+
+  font-size: 17px;
+  outline: none;
+}
+
+.password-field input:focus {
+  border-color: #222;
+}
+
+/* Eye button */
+
+.auth-form .password-toggle {
+  position: absolute;
+
+  right: 1px;
+  top: 1px;
+
+  width: 53px;
+  height: 53px;
+
+  padding: 0;
+  margin: 0;
+
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  background: #f1f1f1;
+  color: #777;
+
+  border: none;
+  border-radius: 0 8px 8px 0;
+
+  cursor: pointer;
+}
+
+.auth-form .password-toggle:hover {
+  background: #e7e7e7;
+  color: #444;
+}
+
+.auth-form .password-toggle:focus {
+  outline: none;
+}
+
+.auth-form .password-toggle svg {
+  width: 20px;
+  height: 20px;
+}
+
 /* Loading spinner */
 
 .loading-screen {

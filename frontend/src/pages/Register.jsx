@@ -5,7 +5,9 @@ import {
   validateName,
   validateEmail,
   validatePassword,
+  validateConfirmPassword,
 } from "../utils/validation";
+import PasswordInput from "../components/PasswordInput";
 
 export default function Register() {
   const { register } = useAuth();
@@ -16,6 +18,7 @@ export default function Register() {
     name: "",
     email: "",
     password: "",
+    confirmPassword: "",
   });
 
   const [errors, setErrors] = useState({});
@@ -53,6 +56,10 @@ export default function Register() {
     const passwordError = validatePassword(
       form.password
     );
+    const confirmError = validateConfirmPassword(
+      form.password,
+      form.confirmPassword
+    );
 
     if (nameError) {
       newErrors.name = nameError;
@@ -64,6 +71,10 @@ export default function Register() {
 
     if (passwordError) {
       newErrors.password = passwordError;
+    }
+
+    if (confirmError) {
+      newErrors.confirmPassword = confirmError;
     }
 
     setErrors(newErrors);
@@ -87,6 +98,7 @@ export default function Register() {
           name: "",
           email: "",
           password: "",
+          confirmPassword: "",
         });
 
         setErrors({});
@@ -152,8 +164,7 @@ export default function Register() {
         )}
 
 
-        <input
-          type="password"
+        <PasswordInput
           name="password"
           placeholder="Password"
           value={form.password}
@@ -164,6 +175,21 @@ export default function Register() {
         {errors.password && (
           <p className="input-error">
             {errors.password}
+          </p>
+        )}
+
+
+        <PasswordInput
+          name="confirmPassword"
+          placeholder="Confirm Password"
+          value={form.confirmPassword}
+          onChange={handleChange}
+          autoComplete="new-password"
+        />
+
+        {errors.confirmPassword && (
+          <p className="input-error">
+            {errors.confirmPassword}
           </p>
         )}
 

@@ -13,35 +13,17 @@ export async function OPTIONS() {
 
 export async function POST(request) {
   try {
-    // Parse JSON
     const body = await request.json();
 
-    const { name, email, password } = body;
+    const { email, password } = body;
 
-    // Validate types
     if (
-      (name !== undefined && name !== null && typeof name !== "string") ||
+      !email ||
       typeof email !== "string" ||
+      !email.trim() ||
+      !password ||
       typeof password !== "string"
     ) {
-      return Response.json(
-        {
-          success: false,
-          message: "Name, email and password must be strings",
-        },
-        {
-          status: 400,
-          headers: corsHeaders(),
-        }
-      );
-    }
-
-    // Remove unnecessary spaces
-    const cleanName = (name && name.trim()) || "";
-    const normalizedEmail = email.toLowerCase().trim();
-
-    // Validate required fields
-    if (!normalizedEmail || !password) {
       return Response.json(
         {
           success: false,
@@ -54,7 +36,6 @@ export async function POST(request) {
       );
     }
 
-    // Validate password
     if (password.length < 6) {
       return Response.json(
         {
@@ -68,53 +49,40 @@ export async function POST(request) {
       );
     }
 
-    // Check existing user
-    const existingUser = await pool.query(
-      "SELECT id FROM users WHERE email = $1",
-      [normalizedEmail]
+    const normalizedEmail = email.toLowerCase().trim();
+
+    const hashedPassword = await bcrypt.hash(password, 12);
+
+    const result = await pool.query(
+      "UPDATE users SET password = $1 WHERE email = $2 RETURNING id",
+      [hashedPassword, normalizedEmail]
     );
 
-    if (existingUser.rows.length > 0) {
+    if (result.rows.length === 0) {
       return Response.json(
         {
           success: false,
-          message: "Email is already registered",
+          message: "No account found with this email",
         },
         {
-          status: 409,
+          status: 404,
           headers: corsHeaders(),
         }
       );
     }
 
-    // Hash password
-    const hashedPassword = await bcrypt.hash(password, 12);
-
-    // Create user
-    const result = await pool.query(
-      `
-      INSERT INTO users (name, email, password)
-      VALUES ($1, $2, $3)
-      RETURNING id, name, email, created_at
-      `,
-      [cleanName, normalizedEmail, hashedPassword]
-    );
-
-    const user = result.rows[0];
-
     return Response.json(
       {
         success: true,
-        message: "Registration successful",
-        user,
+        message: "Password updated successfully. You can now login.",
       },
       {
-        status: 201,
+        status: 200,
         headers: corsHeaders(),
       }
     );
   } catch (error) {
-    console.error("Register error:", error);
+    console.error("Reset password error:", error);
 
     return Response.json(
       {

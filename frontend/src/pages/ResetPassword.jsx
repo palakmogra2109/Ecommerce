@@ -1,87 +1,90 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { useAuth } from "../context/AuthContext";
-import {
-  validateEmail,
-  validatePassword,
-} from "../utils/validation";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import PasswordInput from "../components/PasswordInput";
+import { resetPassword } from "../services/auth";
+import { validatePassword } from "../utils/validation";
 
-export default function Login() {
-  const { login } = useAuth();
-
+export default function ResetPassword() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+
+  const token = searchParams.get("token");
 
   const [form, setForm] = useState({
-    email: "",
     password: "",
+    confirmPassword: "",
   });
 
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
 
-
   function handleChange(e) {
     const { name, value } = e.target;
 
-    setForm({
-      ...form,
+    setForm((prev) => ({
+      ...prev,
       [name]: value,
-    });
+    }));
 
-    // Remove error for this field while typing
-    setErrors({
-      ...errors,
+    setErrors((prev) => ({
+      ...prev,
       [name]: "",
-    });
+    }));
 
     setMessage("");
   }
 
-
   async function handleSubmit(e) {
     e.preventDefault();
 
+    setErrors({});
     setMessage("");
+
+    if (!token) {
+      setMessage("Invalid or expired reset link.");
+      return;
+    }
 
     const newErrors = {};
 
-    const emailError = validateEmail(form.email);
     const passwordError = validatePassword(form.password);
-
-    if (emailError) {
-      newErrors.email = emailError;
-    }
 
     if (passwordError) {
       newErrors.password = passwordError;
     }
 
-    setErrors(newErrors);
+    if (!form.confirmPassword) {
+      newErrors.confirmPassword =
+        "Please confirm your password.";
+    } else if (
+      form.password !== form.confirmPassword
+    ) {
+      newErrors.confirmPassword =
+        "Passwords do not match.";
+    }
 
-    // Stop API request if validation fails
     if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
       return;
     }
 
     setLoading(true);
 
     try {
-      const data = await login(
-        form.email,
+      const data = await resetPassword(
+        token,
         form.password
       );
 
       if (data.success) {
         setForm({
-          email: "",
           password: "",
+          confirmPassword: "",
         });
 
-        setErrors({});
-
-        navigate("/dashboard");
+        // Password changed successfully
+        navigate("/login");
       } else {
         setMessage(data.message);
       }
@@ -96,37 +99,20 @@ export default function Login() {
     }
   }
 
-
   return (
     <div className="auth-container">
       <form
         className="auth-form"
         onSubmit={handleSubmit}
       >
-        <h1>Login</h1>
-
-        <input
-          type="email"
-          name="email"
-          placeholder="Email"
-          value={form.email}
-          onChange={handleChange}
-          autoComplete="username"
-        />
-
-        {errors.email && (
-          <p className="input-error">
-            {errors.email}
-          </p>
-        )}
-
+        <h1>Change Password</h1>
 
         <PasswordInput
           name="password"
-          placeholder="Password"
+          placeholder="New Password"
           value={form.password}
           onChange={handleChange}
-          autoComplete="current-password"
+          autoComplete="new-password"
         />
 
         {errors.password && (
@@ -135,33 +121,34 @@ export default function Login() {
           </p>
         )}
 
+        <PasswordInput
+          name="confirmPassword"
+          placeholder="Confirm New Password"
+          value={form.confirmPassword}
+          onChange={handleChange}
+          autoComplete="new-password"
+        />
+
+        {errors.confirmPassword && (
+          <p className="input-error">
+            {errors.confirmPassword}
+          </p>
+        )}
+
         <button
           type="submit"
           disabled={loading}
         >
-          {loading ? "Logging in..." : "Login"}
+          {loading
+            ? "Changing Password..."
+            : "Change Password"}
         </button>
-
-        <p className="forgot-password">
-          <Link to="/forgot-password">
-            Forgot password?
-          </Link>
-        </p>
-
 
         {message && (
           <p className="form-message">
             {message}
           </p>
         )}
-
-
-        <p>
-          Don't have an account?{" "}
-          <Link to="/register">
-            Register
-          </Link>
-        </p>
       </form>
     </div>
   );
