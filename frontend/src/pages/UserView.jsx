@@ -51,7 +51,7 @@ export default function UserView() {
   }, [id]);
 
   return (
-    <div className="admin-page">
+    <div className="filament-page">
       <Breadcrumb
         items={[
           { label: "Users", to: "/users" },
@@ -59,72 +59,81 @@ export default function UserView() {
         ]}
       />
 
-      <div className="admin-header">
-        <h1>User Details</h1>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => navigate("/users")}
-        >
-          ← Back to Users
-        </button>
-      </div>
+      {message && <div className="filament-alert">{message}</div>}
 
-      {loading ? (
-        <p className="admin-empty">Loading...</p>
-      ) : message ? (
-        <p className="form-message">{message}</p>
-      ) : (
-        <div className="view-card">
-          <div className="view-card-head">
-            <Avatar user={user} size={72} />
-            <div>
-              <h2>{user.name || "—"}</h2>
-              <p>{user.email}</p>
-            </div>
+      <div className="filament-card">
+        <div className="filament-card-header">
+          <div className="filament-card-header-left">
+            <h1>User Details</h1>
           </div>
-
-          <dl className="view-card-fields">
-            <div>
-              <dt>User ID</dt>
-              <dd>{user.id}</dd>
-            </div>
-            <div>
-              <dt>Mobile</dt>
-              <dd>{user.mobile || "—"}</dd>
-            </div>
-            <div>
-              <dt>Role</dt>
-              <dd>{user.role?.name || "—"}</dd>
-            </div>
-            <div>
-              <dt>Status</dt>
-              <dd>
-                <span
-                  className={`status-badge status-${user.status.toLowerCase()}`}
-                >
-                  {user.status}
-                </span>
-              </dd>
-            </div>
-            <div>
-              <dt>Created</dt>
-              <dd>
-                {new Date(user.created_at).toLocaleString()}
-              </dd>
-            </div>
-          </dl>
-
-          <div className="view-card-actions">
-            <Link
-              className="btn-secondary"
-              to={`/users/${user.id}/edit`}
+          <div className="filament-card-header-right">
+            <button
+              type="button"
+              className="filament-btn filament-btn-outline"
+              onClick={() => navigate("/users")}
             >
-              Edit User
-            </Link>
+              ← Back to Users
+            </button>
           </div>
         </div>
-      )}
+
+        {loading ? (
+          <div className="filament-empty">
+            <div className="filament-spinner" />
+          </div>
+        ) : (
+          <div className="view-card">
+            <div className="view-card-head">
+              <Avatar user={user} size={72} />
+              <div>
+                <h2>{user.name || "—"}</h2>
+                <p>{user.email}</p>
+              </div>
+            </div>
+
+            <dl className="view-card-fields">
+              <div>
+                <dt>User ID</dt>
+                <dd>{user.id}</dd>
+              </div>
+              <div>
+                <dt>Mobile</dt>
+                <dd>{user.mobile || "—"}</dd>
+              </div>
+              <div>
+                <dt>Role</dt>
+                <dd>{user.role?.name || "—"}</dd>
+              </div>
+              <div>
+                <dt>Status</dt>
+                <dd>
+                  <span
+                    className={`filament-badge filament-badge-${user.status.toLowerCase()}`}
+                  >
+                    <span className="filament-badge-dot" />
+                    {user.status}
+                  </span>
+                </dd>
+              </div>
+              <div>
+                <dt>Created</dt>
+                <dd>
+                  {new Date(user.created_at).toLocaleString()}
+                </dd>
+              </div>
+            </dl>
+
+            <div className="view-card-actions">
+              <Link
+                className="filament-btn filament-btn-primary"
+                to={`/users/${user.id}/edit`}
+              >
+                Edit User
+              </Link>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

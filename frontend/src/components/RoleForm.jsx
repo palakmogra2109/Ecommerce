@@ -9,6 +9,7 @@ import {
 } from "../services/roles";
 import { listPermissions } from "../services/permissions";
 import PermissionPicker from "../components/PermissionPicker";
+import Breadcrumb from "../components/Breadcrumb";
 
 export default function RoleForm({ roleId = null }) {
   const isEdit = Boolean(roleId);
@@ -170,88 +171,115 @@ export default function RoleForm({ roleId = null }) {
   }
 
   return (
-    <div className="admin-page">
-      <div className="admin-header">
-        <h1>{isEdit ? "Edit Role" : "Create Role"}</h1>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => navigate("/roles")}
-        >
-          ← Back to Roles
-        </button>
-      </div>
+    <div className="filament-page">
+      <Breadcrumb
+        items={[
+          { label: "Roles", to: "/roles" },
+          {
+            label: isEdit ? "Edit Role" : "Create Role",
+          },
+        ]}
+      />
 
-      {loading ? (
-        <p className="admin-empty">Loading...</p>
-      ) : (
-        <form className="admin-form" onSubmit={handleSubmit}>
-          <label className="form-label">Name</label>
-          <input
-            type="text"
-            name="name"
-            placeholder="e.g. Content Manager"
-            value={form.name}
-            onChange={handleChange}
-            autoComplete="off"
-          />
+      {message && (
+        <div className="filament-alert">{message}</div>
+      )}
 
-          {errors.name && (
-            <p className="input-error">{errors.name}</p>
-          )}
-
-          <label className="form-label">
-            Slug <span className="optional">(optional)</span>
-          </label>
-          <input
-            type="text"
-            name="slug"
-            placeholder="e.g. content_manager"
-            value={form.slug}
-            onChange={handleChange}
-            autoComplete="off"
-            disabled={isEdit}
-          />
-
-          {errors.slug && (
-            <p className="input-error">{errors.slug}</p>
-          )}
-
-          <label className="form-label">Description</label>
-          <textarea
-            name="description"
-            placeholder="Short description"
-            value={form.description}
-            onChange={handleChange}
-            autoComplete="off"
-            rows="3"
-          />
-
-          <label className="form-label">Permissions</label>
-          <PermissionPicker
-            permissions={permissions}
-            selected={selected}
-            onChange={setSelected}
-          />
-
-          {message && (
-            <p className="form-message">{message}</p>
-          )}
-
-          <div className="form-actions">
+      <div className="filament-card">
+        <div className="filament-card-header">
+          <div className="filament-card-header-left">
+            <h1>{isEdit ? "Edit Role" : "Create Role"}</h1>
+          </div>
+          <div className="filament-card-header-right">
             <button
-              type="submit"
-              disabled={saving}
+              type="button"
+              className="filament-btn filament-btn-outline"
+              onClick={() => navigate("/roles")}
             >
-              {saving
-                ? "Saving..."
-                : isEdit
-                  ? "Save Changes"
-                  : "Create Role"}
+              ← Back to Roles
             </button>
           </div>
-        </form>
-      )}
+        </div>
+
+        {loading ? (
+          <div className="filament-empty">
+            <div className="filament-spinner" />
+          </div>
+        ) : (
+          <form className="admin-form" onSubmit={handleSubmit}>
+            <div className="form-row">
+              <label className="form-label">
+                Name <span className="required">*</span>
+              </label>
+              <input
+                type="text"
+                name="name"
+                placeholder="e.g. Content Manager"
+                value={form.name}
+                onChange={handleChange}
+                autoComplete="off"
+              />
+              {errors.name && (
+                <p className="input-error">{errors.name}</p>
+              )}
+            </div>
+
+            <div className="form-row">
+              <label className="form-label">
+                Slug{" "}
+                <span className="optional">(auto-generated if blank)</span>
+              </label>
+              <input
+                type="text"
+                name="slug"
+                placeholder="e.g. content_manager"
+                value={form.slug}
+                onChange={handleChange}
+                autoComplete="off"
+                disabled={isEdit}
+              />
+              {errors.slug && (
+                <p className="input-error">{errors.slug}</p>
+              )}
+            </div>
+
+            <div className="form-row">
+              <label className="form-label">Description</label>
+              <textarea
+                name="description"
+                placeholder="Short description"
+                value={form.description}
+                onChange={handleChange}
+                autoComplete="off"
+                rows="3"
+              />
+            </div>
+
+            <div className="form-row">
+              <label className="form-label">Permissions</label>
+              <PermissionPicker
+                permissions={permissions}
+                selected={selected}
+                onChange={setSelected}
+              />
+            </div>
+
+            <div className="form-actions">
+              <button
+                type="submit"
+                className="filament-btn filament-btn-primary"
+                disabled={saving}
+              >
+                {saving
+                  ? "Saving..."
+                  : isEdit
+                    ? "Save Changes"
+                    : "Create Role"}
+              </button>
+            </div>
+          </form>
+        )}
+      </div>
     </div>
   );
 }

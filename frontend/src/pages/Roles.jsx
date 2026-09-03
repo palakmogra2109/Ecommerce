@@ -31,9 +31,24 @@ export default function Roles() {
       createLabel="Add Role"
       onCreate={() => navigate("/roles/new")}
       columns={[
-        { label: "Name", render: (row) => row.name },
-        { label: "Slug", render: (row) => <code>{row.slug}</code> },
-        { type: "status", label: "Status" },
+        {
+          label: "Name",
+          sortKey: "name",
+          searchKeys: ["name"],
+          render: (row) => row.name,
+        },
+        {
+          label: "Slug",
+          sortKey: "slug",
+          searchKeys: ["slug"],
+          render: (row) => <code>{row.slug}</code>,
+        },
+        {
+          type: "status",
+          label: "Status",
+          sortKey: "status",
+          searchKeys: ["status"],
+        },
       ]}
       onStatusToggle={async (row) => {
         const nextStatus =

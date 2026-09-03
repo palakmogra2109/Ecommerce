@@ -18,17 +18,17 @@ export default function Users() {
       title="Users"
       breadcrumb={[{ label: "Users" }]}
       searchPlaceholder="Search by name, email or mobile"
-      filters={[
-        {
-          key: "status",
-          label: "All statuses",
-          options: [
-            { value: "ACTIVE", label: "Active" },
-            { value: "INACTIVE", label: "Inactive" },
-            { value: "SUSPENDED", label: "Suspended" },
-          ],
-        },
-      ]}
+      // filters={[
+      //   {
+      //     key: "status",
+      //     label: "All statuses",
+      //     options: [
+      //       { value: "ACTIVE", label: "Active" },
+      //       { value: "INACTIVE", label: "Inactive" },
+      //       { value: "SUSPENDED", label: "Suspended" },
+      //     ],
+      //   },
+      // ]}
       fetchData={({ search, filters }) =>
         listUsers({ search, status: filters.status })
       }
@@ -38,6 +38,8 @@ export default function Users() {
       columns={[
         {
           label: "User",
+          sortKey: "name",
+          searchKeys: ["name", "email"],
           render: (row) => (
             <div className="user-cell">
               <Avatar user={row} size={38} />
@@ -50,11 +52,33 @@ export default function Users() {
         },
         {
           label: "Mobile",
+          sortKey: "mobile",
+          searchKeys: ["mobile"],
           render: (row) => row.mobile || "—",
         },
-        { type: "status", label: "Status" },
+        {
+          type: "status",
+          label: "Status",
+          sortKey: "status",
+          searchKeys: ["status"],
+        },
+        {
+          label: "Role",
+          sortKey: "role",
+          render: (row) => {
+            if (!row.role) return "—";
+
+            if (typeof row.role === "string") {
+              return row.role;
+            }
+
+            return row.role.name || "—";
+          },
+        },
         {
           label: "Created",
+          sortKey: "created_at",
+          searchKeys: ["created_at"],
           render: (row) =>
             new Date(row.created_at).toLocaleDateString(),
         },

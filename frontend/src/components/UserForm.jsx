@@ -1,18 +1,20 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+
 import {
   getUser,
   createUser,
   updateUser,
 } from "../services/users";
+
 import { listRoles } from "../services/roles";
-import { uploadMedia, mediaUrl } from "../services/media";
+import {
+  uploadMedia,
+  mediaUrl,
+} from "../services/media";
+
 import Breadcrumb from "../components/Breadcrumb";
 import Avatar from "../components/Avatar";
-import {
-  validateEmail,
-  validatePassword,
-} from "../utils/validation";
 
 export default function UserForm({ userId = null }) {
   const isEdit = Boolean(userId);
@@ -22,27 +24,35 @@ export default function UserForm({ userId = null }) {
     name: "",
     email: "",
     mobile: "",
-    password: "",
     avatar: null,
   });
 
   const [roles, setRoles] = useState([]);
   const [roleId, setRoleId] = useState("");
+
   const [preview, setPreview] = useState(null);
+
   const [loading, setLoading] = useState(isEdit);
   const [uploading, setUploading] = useState(false);
-  const [errors, setErrors] = useState({});
-  const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [errors, setErrors] = useState({});
+  const [message, setMessage] = useState("");
+
+  /*
+   * Load roles and user data
+   */
   useEffect(() => {
     let active = true;
 
-    const run = async () => {
+    async function run() {
       setLoading(true);
       setMessage("");
 
       try {
+        /*
+         * Load roles
+         */
         const rolesData = await listRoles();
 
         if (!active) {
@@ -50,9 +60,16 @@ export default function UserForm({ userId = null }) {
         }
 
         if (rolesData.success) {
-          setRoles(rolesData.roles);
+          setRoles(rolesData.roles || []);
+        } else {
+          setMessage(
+            rolesData.message || "Unable to load roles."
+          );
         }
 
+        /*
+         * Load user when editing
+         */
         if (isEdit) {
           const userData = await getUser(userId);
 
@@ -65,22 +82,37 @@ export default function UserForm({ userId = null }) {
 
             setForm({
               name: u.name ?? "",
-              email: u.email,
+              email: u.email ?? "",
               mobile: u.mobile ?? "",
-              password: "",
               avatar: u.avatar ?? null,
             });
 
-            setPreview(u.avatar ? mediaUrl(u.avatar) : null);
+            setPreview(
+              u.avatar
+                ? mediaUrl(u.avatar)
+                : null
+            );
 
+            /*
+             * Existing role
+             */
             if (u.role) {
               setRoleId(String(u.role.id));
+            } else if (u.roleId) {
+              setRoleId(String(u.roleId));
+            } else {
+              setRoleId("");
             }
           } else {
-            setMessage(userData.message);
+            setMessage(
+              userData.message ||
+                "Unable to load user."
+            );
           }
         }
-      } catch {
+      } catch (error) {
+        console.error(error);
+
         if (!active) {
           return;
         }
@@ -93,7 +125,7 @@ export default function UserForm({ userId = null }) {
           setLoading(false);
         }
       }
-    };
+    }
 
     run();
 
@@ -102,6 +134,9 @@ export default function UserForm({ userId = null }) {
     };
   }, [userId, isEdit]);
 
+  /*
+   * Input change
+   */
   function handleChange(e) {
     const { name, value } = e.target;
 
@@ -114,8 +149,27 @@ export default function UserForm({ userId = null }) {
       ...prev,
       [name]: "",
     }));
+
+    setMessage("");
   }
 
+  /*
+   * Role change
+   */
+  function handleRoleChange(e) {
+    setRoleId(e.target.value);
+
+    setErrors((prev) => ({
+      ...prev,
+      roleId: "",
+    }));
+
+    setMessage("");
+  }
+
+  /*
+   * Upload avatar
+   */
   async function handleAvatarChange(e) {
     const file = e.target.files?.[0];
 
@@ -135,20 +189,34 @@ export default function UserForm({ userId = null }) {
           avatar: data.url,
         }));
 
-        setPreview(mediaUrl(data.url));
+        setPreview(
+          mediaUrl(data.url)
+        );
       } else {
-        setMessage(data.message);
+        setMessage(
+          data.message ||
+            "Unable to upload image."
+        );
       }
-    } catch {
+    } catch (error) {
+      console.error(error);
+
       setMessage(
         "Unable to upload image. Please try again."
       );
     } finally {
       setUploading(false);
+
+      /*
+       * Allow selecting the same image again
+       */
       e.target.value = "";
     }
   }
 
+  /*
+   * Remove avatar
+   */
   function handleRemoveAvatar() {
     setForm((prev) => ({
       ...prev,
@@ -156,60 +224,128 @@ export default function UserForm({ userId = null }) {
     }));
 
     setPreview(null);
+    setMessage("");
   }
 
+  /*
+   * Validate form
+   */
+  function validateForm() {
+    const newErrors = {};
+
+    /*
+     * Name
+     */
+    if (!form.name.trim()) {
+      newErrors.name = "Name is required";
+    }
+
+    /*
+     * Email
+     *
+     * Email is required only while creating.
+     */
+    if (!isEdit && !form.email.trim()) {
+      newErrors.email = "Email is required";
+    } else if (
+      !isEdit &&
+      !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(
+        form.email.trim()
+      )
+    ) {
+      newErrors.email =
+        "Invalid email format";
+    }
+
+    /*
+     * Mobile
+     */
+    if (!form.mobile.trim()) {
+      newErrors.mobile =
+        "Mobile number is required";
+    }
+
+    /*
+     * Role
+     */
+    if (!roleId) {
+      newErrors.roleId =
+        "Role is required";
+    }
+
+    return newErrors;
+  }
+
+  /*
+   * Submit
+   */
   async function handleSubmit(e) {
     e.preventDefault();
 
-    const newErrors = {};
+    setMessage("");
 
-    const emailError = validateEmail(form.email);
-
-    if (emailError) {
-      newErrors.email = emailError;
-    }
-
-    if (!isEdit) {
-      const passwordError = validatePassword(form.password);
-
-      if (passwordError) {
-        newErrors.password = passwordError;
-      }
-    }
+    const newErrors = validateForm();
 
     setErrors(newErrors);
 
-    if (Object.keys(newErrors).length > 0) {
+    /*
+     * Stop if validation fails
+     */
+    if (
+      Object.keys(newErrors).length > 0
+    ) {
       return;
     }
 
     setSaving(true);
-    setMessage("");
 
     try {
-      const data = isEdit
-        ? await updateUser(userId, {
-            name: form.name,
-            mobile: form.mobile,
-            avatar: form.avatar,
-            password: form.password || undefined,
-            ...(roleId ? { roleId } : {}),
-          })
-        : await createUser({
-            name: form.name,
-            email: form.email,
-            mobile: form.mobile,
-            avatar: form.avatar,
-            password: form.password,
-            ...(roleId ? { roleId } : {}),
-          });
+      let data;
 
+      /*
+       * Update existing user
+       */
+      if (isEdit) {
+        data = await updateUser(
+          userId,
+          {
+            name: form.name.trim(),
+            mobile: form.mobile.trim(),
+            avatar: form.avatar,
+            roleId,
+          }
+        );
+      }
+
+      /*
+       * Create new user
+       */
+      else {
+        data = await createUser({
+          name: form.name.trim(),
+          email: form.email
+            .trim()
+            .toLowerCase(),
+          mobile: form.mobile.trim(),
+          avatar: form.avatar,
+          roleId,
+        });
+      }
+
+      /*
+       * Success
+       */
       if (data.success) {
         navigate("/users");
       } else {
-        setMessage(data.message);
+        setMessage(
+          data.message ||
+            "Unable to save user."
+        );
       }
-    } catch {
+    } catch (error) {
+      console.error(error);
+
       setMessage(
         "Unable to connect to the server. Please try again."
       );
@@ -219,146 +355,331 @@ export default function UserForm({ userId = null }) {
   }
 
   return (
-    <div className="admin-page">
+    <div className="filament-page">
+
+      {/* Breadcrumb */}
       <Breadcrumb
         items={[
-          { label: "Users", to: "/users" },
           {
-            label: isEdit ? "Edit User" : "Create User",
+            label: "Users",
+            to: "/users",
+          },
+          {
+            label: isEdit
+              ? "Edit User"
+              : "Create User",
           },
         ]}
       />
 
-      <div className="admin-header">
-        <h1>{isEdit ? "Edit User" : "Create User"}</h1>
-        <button
-          type="button"
-          className="btn-secondary"
-          onClick={() => navigate("/users")}
-        >
-          ← Back to Users
-        </button>
-      </div>
-
-      {loading ? (
-        <p className="admin-empty">Loading...</p>
-      ) : (
-        <form className="admin-form" onSubmit={handleSubmit}>
-          <label className="form-label">Profile Image</label>
-          <div className="avatar-upload">
-            <Avatar user={form} size={80} />
-
-            <div className="avatar-upload-actions">
-              <label className="btn-secondary avatar-file-btn">
-                {uploading ? "Uploading..." : "Upload Image"}
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleAvatarChange}
-                  disabled={uploading}
-                />
-              </label>
-
-              {(preview || form.avatar) && (
-                <button
-                  type="button"
-                  className="btn-danger btn-sm"
-                  onClick={handleRemoveAvatar}
-                >
-                  Remove
-                </button>
-              )}
-            </div>
-          </div>
-
-          <label className="form-label">
-            Name <span className="optional">(optional)</span>
-          </label>
-          <input
-            type="text"
-            name="name"
-            placeholder="Name"
-            value={form.name}
-            onChange={handleChange}
-            autoComplete="off"
-          />
-
-          {errors.name && (
-            <p className="input-error">{errors.name}</p>
-          )}
-
-          <label className="form-label">Email</label>
-          <input
-            type="email"
-            name="email"
-            placeholder="Email"
-            value={form.email}
-            onChange={handleChange}
-            autoComplete="off"
-            disabled={isEdit}
-          />
-
-          {errors.email && (
-            <p className="input-error">{errors.email}</p>
-          )}
-
-          <label className="form-label">Mobile Number</label>
-          <input
-            type="tel"
-            name="mobile"
-            placeholder="Mobile number"
-            value={form.mobile}
-            onChange={handleChange}
-            autoComplete="off"
-          />
-
-          <label className="form-label">
-            {isEdit
-              ? "New Password (leave blank to keep)"
-              : "Password"}
-          </label>
-          <input
-            type="password"
-            name="password"
-            placeholder="Password"
-            value={form.password}
-            onChange={handleChange}
-            autoComplete="new-password"
-          />
-
-          {errors.password && (
-            <p className="input-error">{errors.password}</p>
-          )}
-
-          <label className="form-label">Role</label>
-          <select
-            name="roleId"
-            value={roleId}
-            onChange={(e) => setRoleId(e.target.value)}
-          >
-            <option value="">Select role</option>
-            {roles.map((role) => (
-              <option key={role.id} value={role.id}>
-                {role.name}
-              </option>
-            ))}
-          </select>
-
-          {message && (
-            <p className="form-message">{message}</p>
-          )}
-
-          <div className="form-actions">
-            <button type="submit" disabled={saving}>
-              {saving
-                ? "Saving..."
-                : isEdit
-                  ? "Save Changes"
-                  : "Create User"}
-            </button>
-          </div>
-        </form>
+      {/* Global message */}
+      {message && (
+        <div className="filament-alert">
+          {message}
+        </div>
       )}
+
+      {/* Card */}
+      <div className="filament-card">
+
+        {/* Header */}
+        <div className="filament-card-header">
+
+          <div className="filament-card-header-left">
+            <h1>
+              {isEdit
+                ? "Edit User"
+                : "Create User"}
+            </h1>
+          </div>
+
+          <div className="filament-card-header-right">
+
+            <button
+              type="button"
+              className="filament-btn filament-btn-outline"
+              onClick={() =>
+                navigate("/users")
+              }
+            >
+              Back
+            </button>
+
+          </div>
+        </div>
+
+        {/* Loading */}
+        {loading ? (
+          <div className="filament-empty">
+            <div className="filament-spinner" />
+          </div>
+        ) : (
+
+          <form
+            className="admin-form user-form"
+            onSubmit={handleSubmit}
+          >
+
+            {/* =====================================
+                PROFILE IMAGE
+            ====================================== */}
+
+            <div className="profile-image-section">
+
+              <div className="profile-image-preview">
+
+                <Avatar
+                  user={form}
+                  size={100}
+                />
+
+              </div>
+
+              <div className="avatar-upload-actions">
+
+                <label
+                  className="
+                    filament-btn
+                    filament-btn-outline
+                    avatar-file-btn
+                  "
+                >
+                  {uploading
+                    ? "Uploading..."
+                    : "Upload Image"}
+
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={
+                      handleAvatarChange
+                    }
+                    disabled={uploading}
+                  />
+                </label>
+
+                {(preview ||
+                  form.avatar) && (
+                  <button
+                    type="button"
+                    className="
+                      filament-btn
+                      filament-btn-danger
+                    "
+                    onClick={
+                      handleRemoveAvatar
+                    }
+                  >
+                    Remove
+                  </button>
+                )}
+
+              </div>
+            </div>
+
+
+            {/* =====================================
+                FORM GRID
+            ====================================== */}
+
+            <div className="form-grid">
+
+              {/* NAME */}
+              <div className="form-row">
+
+                <label className="form-label">
+                  Name{" "}
+                  <span className="required">
+                    *
+                  </span>
+                </label>
+
+                <input
+                  type="text"
+                  name="name"
+                  placeholder="Full name"
+                  value={form.name}
+                  onChange={handleChange}
+                  autoComplete="off"
+                />
+
+                {errors.name && (
+                  <p className="input-error">
+                    {errors.name}
+                  </p>
+                )}
+
+              </div>
+
+
+              {/* EMAIL */}
+              {!isEdit && (
+                <div className="form-row">
+
+                  <label className="form-label">
+                    Email{" "}
+                    <span className="required">
+                      *
+                    </span>
+                  </label>
+
+                  <input
+                    type="email"
+                    name="email"
+                    placeholder="user@example.com"
+                    value={form.email}
+                    onChange={handleChange}
+                    autoComplete="off"
+                  />
+
+                  {errors.email && (
+                    <p className="input-error">
+                      {errors.email}
+                    </p>
+                  )}
+
+                </div>
+              )}
+
+
+              {/* MOBILE */}
+              <div className="form-row">
+
+                <label className="form-label">
+                  Mobile Number{" "}
+                  <span className="required">
+                    *
+                  </span>
+                </label>
+
+                <input
+                  type="tel"
+                  name="mobile"
+                  placeholder="+60 12 345 6789"
+                  value={form.mobile}
+                  onChange={handleChange}
+                  autoComplete="off"
+                />
+
+                {errors.mobile && (
+                  <p className="input-error">
+                    {errors.mobile}
+                  </p>
+                )}
+
+              </div>
+
+
+              {/* ROLE */}
+              <div className="form-row">
+
+                <label className="form-label">
+                  Role{" "}
+                  <span className="required">
+                    *
+                  </span>
+                </label>
+
+                <select
+                  name="roleId"
+                  value={roleId}
+                  onChange={
+                    handleRoleChange
+                  }
+                >
+                  <option value="">
+                    Select role
+                  </option>
+
+                  {roles.map((role) => (
+                    <option
+                      key={role.id}
+                      value={role.id}
+                    >
+                      {role.name}
+                    </option>
+                  ))}
+                </select>
+
+                {errors.roleId && (
+                  <p className="input-error">
+                    {errors.roleId}
+                  </p>
+                )}
+
+              </div>
+
+            </div>
+
+
+            {/* =====================================
+                INFO BOX
+            ====================================== */}
+
+            {!isEdit && (
+              <div className="filament-info-box">
+
+                <svg
+                  viewBox="0 0 24 24"
+                  className="filament-info-icon"
+                >
+                  <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+                </svg>
+
+                <span>
+                  A random password will be
+                  generated and sent to the
+                  user's email address.
+                </span>
+
+              </div>
+            )}
+
+
+            {/* =====================================
+                ACTIONS
+            ====================================== */}
+
+            <div className="form-actions">
+
+              <button
+                type="button"
+                className="
+                  filament-btn
+                  filament-btn-outline
+                "
+                disabled={saving}
+                onClick={() =>
+                  navigate("/users")
+                }
+              >
+                Cancel
+              </button>
+
+              <button
+                type="submit"
+                className="
+                  filament-btn
+                  filament-btn-primary
+                "
+                disabled={
+                  saving ||
+                  uploading
+                }
+              >
+                {saving
+                  ? "Saving..."
+                  : isEdit
+                    ? "Save Changes"
+                    : "Create User"}
+              </button>
+
+            </div>
+
+          </form>
+        )}
+
+      </div>
     </div>
   );
 }
