@@ -1,4 +1,5 @@
 import { corsHeaders } from "@/lib/cors";
+import { parsePagination } from "@/lib/pagination";
 import { Permission } from "@/lib/models/permission";
 import { Module } from "@/lib/models/module";
 import { authorize } from "@/lib/authorization";
@@ -24,17 +25,20 @@ export async function GET(request) {
 
     const moduleName = searchParams.get("module") ?? "";
     const search = searchParams.get("search") ?? "";
+    const { page, limit } = parsePagination(searchParams);
 
-    const [permissions, modules] = await Promise.all([
-      Permission.list({ module: moduleName, search }),
-      Module.list(),
-    ]);
+    const [{ rows: permissions, pagination }, modules] =
+      await Promise.all([
+        Permission.list({ module: moduleName, search, page, limit }),
+        Module.list(),
+      ]);
 
     return Response.json(
       {
         success: true,
         permissions,
         modules,
+        pagination,
       },
       {
         status: 200,

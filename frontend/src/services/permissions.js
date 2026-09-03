@@ -11,6 +11,14 @@ export async function listPermissions(params = {}) {
     searchParams.set("search", params.search);
   }
 
+  if (params.page) {
+    searchParams.set("page", params.page);
+  }
+
+  if (params.limit) {
+    searchParams.set("limit", params.limit);
+  }
+
   const query = searchParams.toString();
 
   const response = await fetch(

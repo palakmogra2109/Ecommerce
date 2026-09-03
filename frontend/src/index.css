@@ -1739,6 +1739,87 @@ body {
 
 
 /* =========================
+   Pagination
+========================= */
+
+.filament-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  padding: 0.75rem 1.25rem;
+  border-top: 1px solid #e2e8f0;
+  background: #f8fafc;
+}
+
+.filament-pagination-info {
+  font-size: 0.8125rem;
+  color: #64748b;
+}
+
+.filament-pagination-info strong {
+  color: #1e293b;
+  font-weight: 600;
+}
+
+.filament-pagination-buttons {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+
+.filament-page-btn {
+  min-width: 2rem;
+  height: 2rem;
+  padding: 0 0.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #d1d5db;
+  border-radius: 0.375rem;
+  background: #fff;
+  color: #374151;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+
+.filament-page-btn:hover:not(:disabled):not(.filament-page-btn-active) {
+  background: #f1f5f9;
+  border-color: #9ca3af;
+}
+
+.filament-page-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.filament-page-btn-active {
+  background: #3b82f6;
+  border-color: #3b82f6;
+  color: #fff;
+  font-weight: 600;
+}
+
+.filament-page-ellipsis {
+  min-width: 1.5rem;
+  text-align: center;
+  color: #94a3b8;
+  user-select: none;
+}
+
+.filament-pagination-limit {
+  display: flex;
+  align-items: center;
+}
+
+.filament-pagination-select {
+  min-width: 7rem;
+}
+
+/* =========================
    Form Actions
 ========================= */
 

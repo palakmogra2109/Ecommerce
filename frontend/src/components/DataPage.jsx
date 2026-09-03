@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Breadcrumb from "./Breadcrumb";
+import Pagination from "./Pagination";
 
 // Reusable Filament-style data-list page.
 //
@@ -9,7 +10,7 @@ import Breadcrumb from "./Breadcrumb";
 //   breadcrumb       array [{ label, to }]
 //   searchPlaceholder string
 //   filters          array [{ key, label, options:[{value,label}] }]
-//   fetchData        fn async ({ search, filters }) => { success, <dataKey>: rows }
+//   fetchData        fn async ({ search, filters, page, limit }) => { success, <dataKey>: rows, pagination? }
 //   dataKey          string
 //   getKey           fn row => id
 //   columns          array [{ label, render(row), type:'status', sortable?, sortKey?, searchable? }]
@@ -18,6 +19,8 @@ import Breadcrumb from "./Breadcrumb";
 //   bulkActions      array
 //   createLabel      string
 //   onCreate         fn
+//   defaultLimit     number
+//   pageSizeOptions  array
 export default function DataPage({
   title,
   breadcrumb,
@@ -32,6 +35,8 @@ export default function DataPage({
   bulkActions = [],
   createLabel = "Add",
   onCreate = null,
+  defaultLimit = 20,
+  pageSizeOptions = [10, 20, 50, 100],
 }) {
   const [rawData, setRawData] = useState([]);
   const [search, setSearch] = useState("");
@@ -42,6 +47,14 @@ export default function DataPage({
   const [busy, setBusy] = useState(false);
   const [deletingRow, setDeletingRow] = useState(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: defaultLimit,
+    total: 0,
+    totalPages: 1,
+  });
+  const [page, setPage] = useState(1);
+  const [limit, setLimit] = useState(defaultLimit);
 
   // Sorting
   const [sortKey, setSortKey] = useState(null);
@@ -57,6 +70,11 @@ export default function DataPage({
   const getKeyRef = useRef(getKey);
   getKeyRef.current = getKey;
 
+  // Reset to first page whenever search or filters change
+  useEffect(() => {
+    setPage(1);
+  }, [search, filterState]);
+
   useEffect(() => {
     let active = true;
 
@@ -65,6 +83,8 @@ export default function DataPage({
         const result = await fetchDataRef.current({
           search,
           filters: filterState,
+          page,
+          limit,
         });
 
         if (!active) {
@@ -73,6 +93,9 @@ export default function DataPage({
 
         if (result.success) {
           setRawData(result[dataKey] || []);
+          if (result.pagination) {
+            setPagination(result.pagination);
+          }
           setSelected([]);
         } else {
           setMessage(result.message);
@@ -97,7 +120,7 @@ export default function DataPage({
     return () => {
       active = false;
     };
-  }, [search, filterState, refreshKey, dataKey]);
+  }, [search, filterState, refreshKey, dataKey, page, limit]);
 
   // Close column picker on outside click
   useEffect(() => {
@@ -337,8 +360,8 @@ export default function DataPage({
           <div className="filament-card-header-left">
             <h1>{title}</h1>
             <span className="filament-count">
-              {data.length}{" "}
-              {data.length === 1 ? "record" : "records"}
+              {pagination.total}{" "}
+              {pagination.total === 1 ? "record" : "records"}
             </span>
           </div>
           <div className="filament-card-header-right">
@@ -633,6 +656,16 @@ export default function DataPage({
             </tbody>
           </table>
         </div>
+
+        <Pagination
+          pagination={pagination}
+          pageSizeOptions={pageSizeOptions}
+          onPageChange={(nextPage) => setPage(nextPage)}
+          onLimitChange={(nextLimit) => {
+            setLimit(nextLimit);
+            setPage(1);
+          }}
+        />
       </div>
 
       {/* Delete modal */}

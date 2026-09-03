@@ -1,6 +1,7 @@
 import bcrypt from "bcryptjs";
 import pool from "@/lib/db";
 import { corsHeaders } from "@/lib/cors";
+import { parsePagination } from "@/lib/pagination";
 import { User } from "@/lib/models/user";
 import { Role } from "@/lib/models/role";
 import { UserRole } from "@/lib/models/userRole";
@@ -31,10 +32,13 @@ export async function GET(request) {
 
     const search = searchParams.get("search") ?? "";
     const status = searchParams.get("status") ?? "";
+    const { page, limit } = parsePagination(searchParams);
 
-    const users = await User.list({
+    const { rows: users, pagination } = await User.list({
       search,
       status: status || null,
+      page,
+      limit,
     });
 
     const userIds = users.map((u) => u.id);
@@ -73,6 +77,7 @@ export async function GET(request) {
       {
         success: true,
         users: enriched,
+        pagination,
       },
       {
         status: 200,

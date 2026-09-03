@@ -29,8 +29,13 @@ export default function Users() {
       //     ],
       //   },
       // ]}
-      fetchData={({ search, filters }) =>
-        listUsers({ search, status: filters.status })
+      fetchData={({ search, filters, page, limit }) =>
+        listUsers({
+          search,
+          status: filters.status,
+          page,
+          limit,
+        })
       }
       dataKey="users"
       createLabel="Add User"

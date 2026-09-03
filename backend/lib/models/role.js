@@ -1,4 +1,5 @@
 import pool from "../db";
+import { paginate } from "../pagination";
 
 const TABLE = "roles";
 
@@ -68,7 +69,7 @@ export const Role = {
     return result.rows[0] || null;
   },
 
-  async list({ search = "", status = "" } = {}) {
+  async list({ search = "", status = "", page = 1, limit = 20 } = {}) {
     const conditions = [];
     const params = [];
 
@@ -88,17 +89,15 @@ export const Role = {
       ? `WHERE ${conditions.join(" AND ")}`
       : "";
 
-    const result = await pool.query(
-      `
-      SELECT ${PUBLIC_COLUMNS}
-      FROM ${TABLE}
-      ${where}
-      ORDER BY name ASC
-      `,
-      params
+    return paginate(
+      {
+        baseSql: `SELECT ${PUBLIC_COLUMNS} FROM ${TABLE} ${where}`,
+        countSql: `SELECT COUNT(*)::int AS count FROM ${TABLE} ${where}`,
+        params,
+        orderBy: "ORDER BY name ASC",
+      },
+      { page, limit, offset: (page - 1) * limit }
     );
-
-    return result.rows;
   },
 
   async update(id, { name, slug, description, status } = {}) {

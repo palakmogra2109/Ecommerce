@@ -24,8 +24,13 @@ export default function Roles() {
           ],
         },
       ]}
-      fetchData={({ search, filters }) =>
-        listRoles({ search, status: filters.status })
+      fetchData={({ search, filters, page, limit }) =>
+        listRoles({
+          search,
+          status: filters.status,
+          page,
+          limit,
+        })
       }
       dataKey="roles"
       createLabel="Add Role"

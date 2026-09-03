@@ -1,4 +1,5 @@
 import { corsHeaders } from "@/lib/cors";
+import { parsePagination } from "@/lib/pagination";
 import { Role, ROLE_STATUSES } from "@/lib/models/role";
 import { authorize } from "@/lib/authorization";
 
@@ -23,13 +24,20 @@ export async function GET(request) {
 
     const search = searchParams.get("search") ?? "";
     const status = searchParams.get("status") ?? "";
+    const { page, limit } = parsePagination(searchParams);
 
-    const roles = await Role.list({ search, status });
+    const { rows: roles, pagination } = await Role.list({
+      search,
+      status,
+      page,
+      limit,
+    });
 
     return Response.json(
       {
         success: true,
         roles,
+        pagination,
       },
       {
         status: 200,

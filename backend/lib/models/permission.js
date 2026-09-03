@@ -1,4 +1,5 @@
 import pool from "../db";
+import { paginate } from "../pagination";
 
 const TABLE = "permissions";
 
@@ -66,7 +67,7 @@ export const Permission = {
     return result.rows[0] || null;
   },
 
-  async list({ module = "", search = "" } = {}) {
+  async list({ module = "", search = "", page = 1, limit = 20 } = {}) {
     const conditions = [];
     const params = [];
 
@@ -87,17 +88,15 @@ export const Permission = {
         ? `WHERE ${conditions.join(" AND ")}`
         : "";
 
-    const result = await pool.query(
-      `
-      SELECT ${PUBLIC_COLUMNS}
-      FROM ${TABLE}
-      ${where}
-      ORDER BY module ASC, name ASC
-      `,
-      params
+    return paginate(
+      {
+        baseSql: `SELECT ${PUBLIC_COLUMNS} FROM ${TABLE} ${where}`,
+        countSql: `SELECT COUNT(*)::int AS count FROM ${TABLE} ${where}`,
+        params,
+        orderBy: "ORDER BY module ASC, name ASC",
+      },
+      { page, limit, offset: (page - 1) * limit }
     );
-
-    return result.rows;
   },
 
   async update(id, { name, module, description } = {}) {
