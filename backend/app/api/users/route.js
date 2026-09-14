@@ -5,7 +5,7 @@ import { parsePagination } from "@/lib/pagination";
 import { User } from "@/lib/models/user";
 import { Role } from "@/lib/models/role";
 import { UserRole } from "@/lib/models/userRole";
-import { isSuperAdmin, KEY_PERMISSIONS, USER_STATUS } from "@shared/constants";
+import { KEY_PERMISSIONS, ROLE_SLUGS, USER_STATUS } from "@shared/constants";
 import { authorize } from "@/lib/authorization";
 import { validateMobile } from "@/lib/phone";
 import {
@@ -41,6 +41,7 @@ export async function GET(request) {
       status: status || null,
       page,
       limit,
+      excludeIds: [auth.user?.id],
     });
 
     const userIds = users.map((u) => u.id);
@@ -56,21 +57,16 @@ export async function GET(request) {
       : { rows: [] };
 
     const roleMap = {};
-    const superAdminIds = new Set();
     for (const row of roleResult.rows) {
-      if (isSuperAdmin(row)) {
-        superAdminIds.add(row.user_id);
-      } else if (!roleMap[row.user_id]) {
+      if (!roleMap[row.user_id]) {
         roleMap[row.user_id] = { id: row.id, name: row.name, slug: row.slug };
       }
     }
 
-    const enriched = users
-      .filter((u) => !superAdminIds.has(u.id))
-      .map((u) => ({
-        ...u,
-        role: roleMap[u.id] || null,
-      }));
+    const enriched = users.map((u) => ({
+      ...u,
+      role: roleMap[u.id] || null,
+    }));
 
     return Response.json(
       {
@@ -236,6 +232,21 @@ export async function POST(request) {
         },
         {
           status: 400,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    // Super admin accounts are system-owned and cannot be created
+    // through the admin panel.
+    if (role.slug === ROLE_SLUGS.SUPER_ADMIN) {
+      return Response.json(
+        {
+          success: false,
+          message: "This role cannot be assigned",
+        },
+        {
+          status: 403,
           headers: corsHeaders(),
         }
       );

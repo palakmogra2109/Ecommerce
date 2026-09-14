@@ -82,7 +82,13 @@ export const User = {
     return result.rows[0] || null;
   },
 
-  async list({ search = "", status = null, page = 1, limit = 20 } = {}) {
+  async list({
+    search = "",
+    status = null,
+    page = 1,
+    limit = 20,
+    excludeIds = [],
+  } = {}) {
     const conditions = [];
     const params = [];
 
@@ -97,6 +103,24 @@ export const User = {
       params.push(status);
       conditions.push(`status = $${params.length}`);
     }
+
+    const excluded = excludeIds.map(Number).filter((id) => Number.isInteger(id));
+
+    if (excluded.length > 0) {
+      params.push(excluded);
+      conditions.push(`id <> ALL($${params.length})`);
+    }
+
+    // Super admin accounts are invisible to everyone else — never list
+    // them and never count them in pagination totals.
+    conditions.push(
+      `NOT EXISTS (
+        SELECT 1 FROM user_has_roles uhr_excl
+        JOIN roles r_excl ON r_excl.id = uhr_excl.role_id
+        WHERE uhr_excl.user_id = ${TABLE}.id
+          AND r_excl.slug = 'super_admin'
+      )`
+    );
 
     const where =
       conditions.length > 0

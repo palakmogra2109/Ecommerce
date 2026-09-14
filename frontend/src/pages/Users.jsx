@@ -19,17 +19,17 @@ export default function Users() {
       title="Users"
       breadcrumb={[{ label: "Users" }]}
       searchPlaceholder="Search by name, email or mobile"
-      // filters={[
-      //   {
-      //     key: "status",
-      //     label: "All statuses",
-      //     options: [
-      //       { value: USER_STATUS.ACTIVE, label: "Active" },
-      //       { value: USER_STATUS.INACTIVE, label: "Inactive" },
-      //       { value: USER_STATUS.SUSPENDED, label: "Suspended" },
-      //     ],
-      //   },
-      // ]}
+      filters={[
+        {
+          key: "status",
+          label: "All statuses",
+          options: [
+            { value: USER_STATUS.ACTIVE, label: "Active" },
+            { value: USER_STATUS.INACTIVE, label: "Inactive" },
+            { value: USER_STATUS.SUSPENDED, label: "Suspended" },
+          ],
+        },
+      ]}
       fetchData={({ search, filters, page, limit }) =>
         listUsers({
           search,

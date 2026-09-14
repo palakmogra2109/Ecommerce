@@ -8,8 +8,11 @@ import UserView from "./pages/UserView";
 import UserForm from "./components/UserForm";
 import Roles from "./pages/Roles";
 import RoleForm from "./components/RoleForm";
+import EmailTemplates from "./pages/EmailTemplates";
+import EmailTemplateForm from "./components/EmailTemplateForm";
 import Products from "./pages/Products";
 import Orders from "./pages/Orders";
+import Settings from "./pages/Settings";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -24,6 +27,11 @@ function UserEditRoute() {
 function RoleEditRoute() {
   const { id } = useParams();
   return <RoleForm roleId={Number(id)} />;
+}
+
+function EmailTemplateEditRoute() {
+  const { id } = useParams();
+  return <EmailTemplateForm templateId={Number(id)} />;
 }
 
 export default function App() {
@@ -100,11 +108,24 @@ export default function App() {
         <Route path="/roles/new" element={<RoleForm />} />
         <Route path="/roles/:id/edit" element={<RoleEditRoute />} />
 
+        {/* /email-templates → Email template management */}
+        <Route
+          path="/email-templates"
+          element={<EmailTemplates />}
+        />
+<Route
+          path="/email-templates/:id/edit"
+          element={<EmailTemplateEditRoute />}
+        />
+
         {/* /products → Product listing */}
         <Route path="/products" element={<Products />} />
 
         {/* /orders → Order listing */}
         <Route path="/orders" element={<Orders />} />
+
+        {/* /settings → Global settings + theme */}
+        <Route path="/settings" element={<Settings />} />
       </Route>
 
       {/* Unknown URL → root */}

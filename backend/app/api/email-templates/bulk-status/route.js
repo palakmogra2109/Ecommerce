@@ -1,7 +1,8 @@
 import { corsHeaders } from "@/lib/cors";
 import pool from "@/lib/db";
-import { USER_STATUSES } from "@/lib/models/user";
+import { EMAIL_TEMPLATE_STATUSES } from "@/lib/models/emailTemplate";
 import { authorize } from "@/lib/authorization";
+import { EMAIL_TEMPLATE_PERMISSIONS } from "@shared/constants";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,7 @@ export async function OPTIONS() {
 
 export async function POST(request) {
   try {
-    const auth = await authorize();
+    const auth = await authorize(EMAIL_TEMPLATE_PERMISSIONS.UPDATE);
 
     if (!auth.ok) {
       return auth.response;
@@ -28,7 +29,7 @@ export async function POST(request) {
       return Response.json(
         {
           success: false,
-          message: "At least one user id is required",
+          message: "At least one template id is required",
         },
         {
           status: 400,
@@ -37,7 +38,7 @@ export async function POST(request) {
       );
     }
 
-    if (!USER_STATUSES.includes(status)) {
+    if (!EMAIL_TEMPLATE_STATUSES.includes(status)) {
       return Response.json(
         {
           success: false,
@@ -52,24 +53,17 @@ export async function POST(request) {
 
     const result = await pool.query(
       `
-      UPDATE users
+      UPDATE email_templates
       SET status = $1, updated_at = now()
       WHERE id = ANY($2::bigint[])
-        AND id <> $3::bigint
-        AND NOT EXISTS (
-          SELECT 1 FROM user_has_roles uhr_excl
-          JOIN roles r_excl ON r_excl.id = uhr_excl.role_id
-          WHERE uhr_excl.user_id = users.id
-            AND r_excl.slug = 'super_admin'
-        )
       `,
-      [status, ids.map(Number), Number(auth.user?.id)]
+      [status, ids.map(Number)]
     );
 
     return Response.json(
       {
         success: true,
-        message: `${result.rowCount} user(s) updated to ${status}`,
+        message: `${result.rowCount} template(s) updated to ${status}`,
         updated: result.rowCount,
       },
       {
@@ -78,7 +72,7 @@ export async function POST(request) {
       }
     );
   } catch (error) {
-    console.error("Bulk status error:", error);
+    console.error("Bulk email template status error:", error);
 
     return Response.json(
       {

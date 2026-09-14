@@ -1,4 +1,4 @@
--- E-Commerce schema
+-- Earth धान्य schema
 -- Idempotent: safe to run on a fresh or existing database.
 
 -- =============================================================
@@ -104,4 +104,41 @@ CREATE TABLE IF NOT EXISTS user_has_permissions (
   permission_id BIGINT NOT NULL REFERENCES permissions(id) ON DELETE CASCADE,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, permission_id)
+);
+
+-- =============================================================
+-- settings
+-- Single global settings row (id is fixed to 1).
+-- theme_color drives the brand accent across the admin panel
+-- and the {{themePrimary}} placeholder in email templates.
+-- dark_mode switches the admin panel to dark mode.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS settings (
+  id          BIGINT PRIMARY KEY,
+  theme_color TEXT NOT NULL DEFAULT '#3b82f6',
+  dark_mode   BOOLEAN NOT NULL DEFAULT FALSE,
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+INSERT INTO settings (id, theme_color, dark_mode)
+VALUES (1, '#3b82f6', FALSE)
+ON CONFLICT (id) DO NOTHING;
+
+-- =============================================================
+-- email_templates
+-- Editable email content. Placeholders like {{userName}} in the
+-- subject/body are replaced with dynamic values at send time.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS email_templates (
+  id          BIGSERIAL PRIMARY KEY,
+  name        TEXT NOT NULL,
+  slug        TEXT NOT NULL UNIQUE,
+  subject     TEXT NOT NULL,
+  body_html   TEXT NOT NULL,
+  body_text   TEXT NOT NULL,
+  variables   JSONB NOT NULL DEFAULT '[]',
+  status      TEXT NOT NULL DEFAULT 'ACTIVE'
+              CHECK (status IN ('ACTIVE', 'INACTIVE')),
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );

@@ -1,5 +1,19 @@
+import fs from "fs";
+import path from "path";
 import nodemailer from "nodemailer";
 import crypto from "crypto";
+import { EmailTemplate } from "./models/emailTemplate";
+import { Setting } from "./models/setting";
+import {
+  contrastText,
+  DEFAULT_THEME_COLOR,
+} from "@shared/constants";
+
+export const EMAIL_TEMPLATES_DIR = path.join(
+  process.cwd(),
+  "lib",
+  "email-templates"
+);
 
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || "smtp.ethereal.email",
@@ -12,6 +26,48 @@ const transporter = nodemailer.createTransport({
       }
     : undefined,
 });
+
+// Replaces {{key}} placeholders in a template with matching values.
+// Unknown placeholders are left untouched so you can spot typos.
+export function renderTemplate(source, values = {}) {
+  return source.replace(/\{\{\s*([\w]+)\s*\}\}/g, (match, key) =>
+    Object.prototype.hasOwnProperty.call(values, key)
+      ? String(values[key])
+      : match
+  );
+}
+
+// Reads a template file fresh on every call, so edits to the
+// .html / .txt files apply without restarting the server.
+export function loadEmailTemplate(file) {
+  return fs.readFileSync(path.join(EMAIL_TEMPLATES_DIR, file), "utf8");
+}
+
+export function getAppName() {
+  return process.env.APP_NAME || "Earth धान्य";
+}
+
+export function getSender() {
+  return process.env.SMTP_FROM || `${getAppName()} <noreply@dpharma.my>`;
+}
+
+// Loads the global theme settings for emails. Falls back to defaults
+// when the settings row/table is unavailable.
+export async function getEmailTheme() {
+  try {
+    const settings = await Setting.get();
+
+    return {
+      themeColor:
+        settings?.theme_color && /^#[0-9a-fA-F]{6}$/.test(settings.theme_color)
+          ? settings.theme_color
+          : DEFAULT_THEME_COLOR,
+    };
+  } catch (error) {
+    console.warn("Could not load theme settings:", error.message);
+    return { themeColor: DEFAULT_THEME_COLOR };
+  }
+}
 
 export function generatePassword(length = 12) {
   const upper = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
@@ -43,34 +99,105 @@ export function generatePassword(length = 12) {
   return arr.join("");
 }
 
-export async function sendCredentialsEmail(
+// Looks up an active template from the email_templates table.
+// Returns null when unavailable so mailers can fall back to files.
+export async function fetchEmailTemplate(slug) {
+  try {
+    const template = await EmailTemplate.findActiveBySlug(slug);
+
+    if (template && template.body_html && template.body_text) {
+      return template;
+    }
+  } catch (error) {
+    console.warn(
+      `Could not load email template "${slug}" from database:`,
+      error.message
+    );
+  }
+
+  return null;
+}
+
+// Builds a mail object ({ subject, text, html }) for a template.
+// Uses the DB template when present, otherwise the file fallback.
+export async function buildEmailFromTemplate({
+  slug,
+  values = {},
+  fallback,
+}) {
+  const dbTemplate = await fetchEmailTemplate(slug);
+  const { themeColor } = await getEmailTheme();
+
+  const mergedValues = {
+    themePrimary: themeColor,
+    themeOnPrimary: contrastText(themeColor),
+    ...values,
+  };
+
+  if (dbTemplate) {
+    return {
+      subject: renderTemplate(dbTemplate.subject, mergedValues),
+      text: renderTemplate(dbTemplate.body_text, mergedValues),
+      html: renderTemplate(dbTemplate.body_html, mergedValues),
+    };
+  }
+
+  return {
+    subject: renderTemplate(fallback.subject, mergedValues),
+    text: renderTemplate(loadEmailTemplate(fallback.textFile), mergedValues),
+    html: renderTemplate(loadEmailTemplate(fallback.htmlFile), mergedValues),
+  };
+}
+
+export async function buildCredentialsEmail({ name, email, password }) {
+  const appName = getAppName();
+  const loginUrl = process.env.LOGIN_URL || "/login";
+
+  return buildEmailFromTemplate({
+    slug: "credentials",
+    values: {
+      appName,
+      userName: name,
+      email,
+      password,
+      loginUrl,
+    },
+    fallback: {
+      subject: `Your ${appName} Account Credentials`,
+      htmlFile: "credentials.html",
+      textFile: "credentials.txt",
+    },
+  });
+}
+
+// Generic sender for any template (DB row or file fallback).
+export async function sendEmailFromTemplate({
+  slug,
   to,
-  name,
-  email,
-  password
-) {
-  const html = `
-    <div style="font-family:Arial,sans-serif;max-width:600px;margin:0 auto;">
-      <h2 style="color:#1e293b;">Welcome to D Pharma Admin</h2>
-      <p>Your account has been created. Here are your login credentials:</p>
-      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:16px;margin:16px 0;">
-        <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Password:</strong> <code style="background:#e2e8f0;padding:2px 6px;border-radius:4px;">${password}</code></p>
-      </div>
-      <p style="color:#64748b;font-size:13px;">Please log in and change your password immediately. Do not share these credentials.</p>
-      <hr style="border:none;border-top:1px solid #e2e8f0;margin:24px 0;" />
-      <p style="color:#94a3b8;font-size:12px;">This is an automated message from D Pharma Admin Panel.</p>
-    </div>
-  `;
+  values = {},
+  fallback,
+}) {
+  const mail = await buildEmailFromTemplate({ slug, values, fallback });
+
+  return transporter.sendMail({
+    from: getSender(),
+    to,
+    subject: mail.subject,
+    text: mail.text,
+    html: mail.html,
+  });
+}
+
+export async function sendCredentialsEmail(to, name, email, password) {
+  const mail = await buildCredentialsEmail({ name, email, password });
 
   try {
     const info = await transporter.sendMail({
-      from:
-        process.env.SMTP_FROM || "D Pharma Admin <noreply@dpharma.my>",
+      from: getSender(),
       to,
-      subject: "Your D Pharma Admin Account Credentials",
-      text: `Welcome ${name || ""}\n\nYour login credentials:\nEmail: ${email}\nPassword: ${password}\n\nPlease log in and change your password immediately.`,
-      html,
+      subject: mail.subject,
+      text: mail.text,
+      html: mail.html,
     });
 
     console.log("Email sent:", info.messageId);

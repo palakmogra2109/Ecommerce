@@ -166,9 +166,11 @@ export default function DataPage({
             keys.push(col.sortKey);
           }
 
-          return keys.some((key) =>
-            String(row[key] || "").toLowerCase().includes(q)
-          );
+          return keys.some((key) => {
+            let v = row[key];
+            if (v && typeof v === "object") v = v.name ?? "";
+            return String(v || "").toLowerCase().includes(q);
+          });
         });
       });
     }
@@ -183,6 +185,8 @@ export default function DataPage({
         if (col && col.sortKey) {
           aVal = a[col.sortKey];
           bVal = b[col.sortKey];
+          if (aVal && typeof aVal === "object") aVal = aVal.name ?? "";
+          if (bVal && typeof bVal === "object") bVal = bVal.name ?? "";
         } else {
           return 0;
         }

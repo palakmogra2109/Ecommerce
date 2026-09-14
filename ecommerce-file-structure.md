@@ -1,8 +1,8 @@
 Below is the clean, finalized Markdown file. Save it as ecommerce_backend_frontend_planning.md.
 
-# E-Commerce Platform — Backend & Frontend Development Plan
+# Earth धान्य Platform — Backend & Frontend Development Plan
 
-> Production-oriented planning document for an e-commerce application built with Node.js, Express.js, React.js, PostgreSQL, and supporting services.
+> Production-oriented planning document for an Earth धान्य application built with Node.js, Express.js, React.js, PostgreSQL, and supporting services.
 
 ---
 
@@ -48,10 +48,10 @@ Below is the clean, finalized Markdown file. Save it as ecommerce_backend_fronte
 
 # 1. Project Overview
 
-We will build a complete e-commerce platform with two separate React applications:
+We will build a complete Earth धान्य platform with two separate React applications:
 
 ```text
-E-Commerce Platform
+Earth धान्य Platform
 │
 ├── Backend
 │   └── Node.js + Express.js
@@ -64,7 +64,7 @@ E-Commerce Platform
 
 The backend will provide APIs for both applications.
 
-                    E-COMMERCE PLATFORM
+                    Earth धान्य PLATFORM
                            │
              ┌─────────────┴─────────────┐
              │                           │
@@ -1960,7 +1960,7 @@ Customer
  ↓
 Receive Order
 
-If this flow works correctly, the core e-commerce system is functional.
+If this flow works correctly, the core Earth धान्य system is functional.
 
 32. V2 Scope
 
@@ -2616,13 +2616,13 @@ Receive Order
  ↓
 Review Product
 
-If this complete flow works reliably, the application has a strong e-commerce MVP foundation.
+If this complete flow works reliably, the application has a strong Earth धान्य MVP foundation.
 
 44. Long-Term Architecture Goal
 
 Final architecture:
 
-                         E-COMMERCE PLATFORM
+                         Earth धान्य PLATFORM
                                   │
               ┌───────────────────┼───────────────────┐
               │                   │                   │
@@ -2831,7 +2831,7 @@ Start with:
 
 Product Model Needs to Change
 
-For normal e-commerce, this is often enough:
+For normal Earth धान्य, this is often enough:
 
 Product
  └── Variant
@@ -3016,7 +3016,7 @@ IMPORTER
 DISTRIBUTOR
 5. Wholesale Pricing
 
-Normal e-commerce has:
+Normal Earth धान्य has:
 
 Product → Price
 

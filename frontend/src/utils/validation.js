@@ -187,8 +187,8 @@ export function validatePhone(phone) {
 
 
 // Validate a mobile number that includes a country code in E.164 form
-// (+<dial><number>). The country code is ignored; only the national part
-// is validated and must be 8 to 10 digits.
+// (+<dial><number>). The dial code is stripped using known prefixes and
+// the remaining national part must be 8 to 10 digits.
 export function validateMobile(mobile) {
     const requiredError = validateRequired(
         mobile,
@@ -205,13 +205,37 @@ export function validateMobile(mobile) {
         return validationMessages.phone.invalid;
     }
 
-    // Count only national digits (exclude the leading + and country code).
-    // We approximate: assume the dial code is the portion before the national.
-    const nationalDigits = value.replace(/^\+/, "").match(/[1-9][0-9]*$/)?.[0] || "";
+    // Strip the leading + and try to remove a known dial code prefix.
+    // Sort by length descending so longer codes match first (e.g. +971 before +97).
+    const dialCodes = [
+        "+93","+355","+213","+376","+244","+54","+374","+61","+43","+994",
+        "+1242","+973","+880","+1246","+375","+32","+501","+229","+975",
+        "+591","+387","+267","+55","+673","+359","+226","+257","+855","+237",
+        "+1","+238","+236","+235","+56","+86","+57","+269","+242","+243",
+        "+506","+225","+385","+53","+357","+420","+45","+253","+593","+20",
+        "+503","+240","+291","+372","+251","+358","+33","+241","+220","+995",
+        "+49","+233","+30","+502","+224","+245","+592","+509","+504","+852",
+        "+36","+354","+91","+62","+98","+964","+353","+972","+39","+223",
+        "+81","+962","+7","+254","+82","+965","+996","+856","+371","+218",
+        "+423","+370","+352","+853","+261","+265","+60","+960","+223",
+        "+225","+52","+692","+691","+230","+262","+212","+258","+95","+264",
+        "+977","+31","+64","+505","+227","+234","+850","+47","+968","+92",
+        "+680","+507","+675","+595","+51","+63","+48","+351","+974","+40",
+        "+7","+250","+290","+966","+221","+381","+232","+65","+421","+386",
+        "+252","+27","+34","+94","+249","+597","+268","+46","+963","+886",
+        "+255","+66","+228","+676","+216","+90","+993","+1681","+256","+380",
+        "+971","+44","+598","+998","+84","+967","+260","+263",
+    ].sort((a, b) => b.length - a.length);
+
+    const digits = value.slice(1); // strip leading +
+    const matchedCode = dialCodes.find((dc) => digits.startsWith(dc.slice(1)));
+    const national = matchedCode
+        ? digits.slice(matchedCode.length - 1)
+        : digits;
 
     if (
-        nationalDigits.length < 8 ||
-        nationalDigits.length > 10
+        national.length < 8 ||
+        national.length > 10
     ) {
         return validationMessages.phone.length;
     }

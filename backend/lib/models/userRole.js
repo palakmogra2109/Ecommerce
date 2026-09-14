@@ -139,4 +139,20 @@ export const UserRole = {
 
     return result.rows.map((row) => row.slug);
   },
+
+  // True when the user carries the super admin role.
+  async isSuperAdmin(userId) {
+    const result = await pool.query(
+      `
+      SELECT 1
+      FROM ${TABLE} uhr
+      JOIN roles r ON r.id = uhr.role_id
+      WHERE uhr.user_id = $1 AND r.slug = 'super_admin'
+      LIMIT 1
+      `,
+      [userId]
+    );
+
+    return result.rows.length > 0;
+  },
 };

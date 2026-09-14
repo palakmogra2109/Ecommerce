@@ -8,9 +8,28 @@ import { Role } from "@/lib/models/role";
 import { UserRole } from "@/lib/models/userRole";
 import { authorize } from "@/lib/authorization";
 import { validateMobile } from "@/lib/phone";
-import { KEY_PERMISSIONS } from "@shared/constants";
+import { KEY_PERMISSIONS, ROLE_SLUGS } from "@shared/constants";
 
 export const runtime = "nodejs";
+
+// Super admin accounts are invisible to everyone. Returning 404 (instead
+// of 403) keeps their existence hidden.
+async function superAdminGuard(id) {
+  if (await UserRole.isSuperAdmin(Number(id))) {
+    return Response.json(
+      {
+        success: false,
+        message: "User not found",
+      },
+      {
+        status: 404,
+        headers: corsHeaders(),
+      }
+    );
+  }
+
+  return null;
+}
 
 export async function OPTIONS() {
   return new Response(null, {
@@ -28,6 +47,27 @@ export async function GET(_request, { params }) {
     }
 
     const { id } = await params;
+
+    // The signed-in user cannot be viewed through the admin panel —
+    // use /api/auth/me for the current profile.
+    if (Number(id) === Number(auth.user?.id)) {
+      return Response.json(
+        {
+          success: false,
+          message: "User not found",
+        },
+        {
+          status: 404,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    const guard = await superAdminGuard(id);
+
+    if (guard) {
+      return guard;
+    }
 
     const user = await User.findById(id);
 
@@ -85,6 +125,26 @@ export async function PATCH(request, { params }) {
 
     const { id } = await params;
 
+    // Nobody may edit their own account through the admin panel.
+    if (Number(id) === Number(auth.user?.id)) {
+      return Response.json(
+        {
+          success: false,
+          message: "You cannot modify your own account",
+        },
+        {
+          status: 403,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    const guard = await superAdminGuard(id);
+
+    if (guard) {
+      return guard;
+    }
+
     const body = await request.json();
 
     const { name, status, password, mobile, avatar, roleId } = body;
@@ -130,6 +190,19 @@ export async function PATCH(request, { params }) {
       const role = await Role.findById(roleId);
 
       if (role) {
+        if (role.slug === ROLE_SLUGS.SUPER_ADMIN) {
+          return Response.json(
+            {
+              success: false,
+              message: "This role cannot be assigned",
+            },
+            {
+              status: 403,
+              headers: corsHeaders(),
+            }
+          );
+        }
+
         await UserRole.replaceRole(id, role.id);
       } else {
         return Response.json(
@@ -222,6 +295,26 @@ export async function DELETE(_request, { params }) {
     }
 
     const { id } = await params;
+
+    // Nobody may delete their own account through the admin panel.
+    if (Number(id) === Number(auth.user?.id)) {
+      return Response.json(
+        {
+          success: false,
+          message: "You cannot delete your own account",
+        },
+        {
+          status: 403,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    const guard = await superAdminGuard(id);
+
+    if (guard) {
+      return guard;
+    }
 
     const user = await User.findById(id);
 

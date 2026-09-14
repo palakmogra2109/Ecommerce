@@ -55,7 +55,7 @@ export default function UserView() {
       <Breadcrumb
         items={[
           { label: "Users", to: "/users" },
-          { label: user ? (user.name || user.email) : "View User" },
+          { label: user ? user.name || user.email : "View User" },
         ]}
       />
 
@@ -81,9 +81,13 @@ export default function UserView() {
           <div className="filament-empty">
             <div className="filament-spinner" />
           </div>
+        ) : !user ? (
+          <div className="filament-empty">
+            <p>User not found.</p>
+          </div>
         ) : (
-          <div className="view-card">
-            <div className="view-card-head">
+          <div className="view-body">
+            <div className="view-head">
               <Avatar user={user} size={72} />
               <div>
                 <h2>{user.name || "—"}</h2>
@@ -91,7 +95,7 @@ export default function UserView() {
               </div>
             </div>
 
-            <dl className="view-card-fields">
+            <dl className="view-fields">
               <div>
                 <dt>User ID</dt>
                 <dd>{user.id}</dd>
@@ -108,7 +112,7 @@ export default function UserView() {
                 <dt>Status</dt>
                 <dd>
                   <span
-                    className={`filament-badge filament-badge-${user.status.toLowerCase()}`}
+                    className={`filament-badge filament-badge-${(user.status || "inactive").toLowerCase()}`}
                   >
                     <span className="filament-badge-dot" />
                     {user.status}
@@ -117,13 +121,11 @@ export default function UserView() {
               </div>
               <div>
                 <dt>Created</dt>
-                <dd>
-                  {new Date(user.created_at).toLocaleString()}
-                </dd>
+                <dd>{new Date(user.created_at).toLocaleString()}</dd>
               </div>
             </dl>
 
-            <div className="view-card-actions">
+            <div className="view-actions">
               <Link
                 className="filament-btn filament-btn-primary"
                 to={`/users/${user.id}/edit`}

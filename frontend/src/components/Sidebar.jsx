@@ -18,6 +18,11 @@ const MODULES = [
     label: "Roles",
   },
   {
+    slug: "email_templates",
+    path: "/email-templates",
+    label: "Email Templates",
+  },
+  {
     slug: "products",
     path: "/products",
     label: "Products",
@@ -26,6 +31,11 @@ const MODULES = [
     slug: "orders",
     path: "/orders",
     label: "Orders",
+  },
+  {
+    slug: "settings",
+    path: "/settings",
+    label: "Settings",
   },
 ];
 
@@ -43,7 +53,7 @@ export default function Sidebar() {
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">E‑Commerce</div>
+      <div className="sidebar-brand">Earth धान्य</div>
 
       <nav className="sidebar-nav">
         {MODULES.map((module) => (

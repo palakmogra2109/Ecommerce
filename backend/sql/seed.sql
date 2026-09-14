@@ -1,4 +1,4 @@
--- E-Commerce seed data (idempotent)
+-- Earth धान्य seed data (idempotent)
 -- Modules and default roles power module_has_roles / user_has_roles.
 
 -- Modules
@@ -7,7 +7,9 @@ VALUES
   ('Users',    'users'),
   ('Dashboard','dashboard'),
   ('Products', 'products'),
-  ('Orders',   'orders')
+  ('Orders',   'orders'),
+  ('Email Templates', 'email_templates'),
+  ('Settings', 'settings')
 ON CONFLICT (slug) DO NOTHING;
 
 -- Roles
@@ -49,7 +51,13 @@ VALUES
   ('Update Roles',    'roles.update',    'roles'),
   ('Delete Roles',    'roles.delete',    'roles'),
   ('View Permissions','permissions.view','permissions'),
-  ('Assign Permissions','roles.assign_permissions','roles')
+  ('Assign Permissions','roles.assign_permissions','roles'),
+  ('View Email Templates','email_templates.view','email_templates'),
+  ('Create Email Templates','email_templates.create','email_templates'),
+  ('Update Email Templates','email_templates.update','email_templates'),
+  ('Delete Email Templates','email_templates.delete','email_templates'),
+  ('View Settings','settings.view','settings'),
+  ('Update Settings','settings.update','settings')
 ON CONFLICT (slug) DO NOTHING;
 
 -- role_has_permissions: effective permissions per role
@@ -65,3 +73,195 @@ JOIN permissions p
      ('users.view', 'users.update', 'roles.view', 'permissions.view'))
   OR (r.slug = 'staff' AND p.slug = 'users.view')
 ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- =============================================================
+-- email_templates
+-- Multiple default templates. Content is editable from the admin
+-- panel; only the {{placeholders}} are filled dynamically.
+-- Only dynamic values that a mailer passes can be used here.
+-- =============================================================
+
+-- 1. Login credentials (sent when an admin creates a user)
+INSERT INTO email_templates (name, slug, subject, body_html, body_text, variables)
+VALUES (
+  'Login Credentials',
+  'credentials',
+  'Your {{appName}} Account Credentials',
+  $html$
+<div style="background:#f1f5f9;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+  <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
+    <div style="background:{{themePrimary}};padding:32px 40px;">
+      <div style="color:{{themeOnPrimary}};font-size:24px;font-weight:bold;">{{appName}}</div>
+      <div style="color:{{themeOnPrimary}};font-size:13px;margin-top:4px;">Account credentials</div>
+    </div>
+    <div style="padding:40px;">
+      <p style="margin:0 0 8px;font-size:16px;color:#0f172a;">Hi {{userName}},</p>
+      <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#334155;">
+        Your administrator account has been created. Please use the credentials below to sign in to your panel.
+      </p>
+      <div style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:20px 24px;margin-bottom:24px;">
+        <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:6px;">Email</div>
+        <div style="font-size:15px;font-weight:bold;color:#0f172a;margin-bottom:16px;">{{email}}</div>
+        <div style="font-size:12px;text-transform:uppercase;letter-spacing:0.5px;color:#64748b;margin-bottom:6px;">Password</div>
+        <div style="font-size:15px;font-weight:bold;color:#0f172a;">{{password}}</div>
+      </div>
+      <p style="margin:0 0 8px;font-size:14px;color:#334155;">Sign in here:</p>
+      <a href="{{loginUrl}}" style="display:inline-block;background:{{themePrimary}};color:{{themeOnPrimary}};text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:bold;margin-bottom:24px;">Log in to your account</a>
+      <p style="margin:0;font-size:13px;line-height:1.6;color:#64748b;">
+        For your security, please log in and change your password as soon as possible. Never share these credentials with anyone.
+      </p>
+    </div>
+    <div style="padding:24px 40px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">
+        This is an automated message from {{appName}}. Do not reply to this email.<br />
+        If you did not request this account, please contact your administrator.
+      </p>
+    </div>
+  </div>
+</div>
+  $html$,
+  $html$
+Hi {{userName}},
+
+Your administrator account has been created. Please use the credentials below to sign in to your panel.
+
+Email:     {{email}}
+Password:  {{password}}
+
+Sign in here: {{loginUrl}}
+
+For your security, please log in and change your password as soon as possible. Never share these credentials with anyone.
+
+This is an automated message from {{appName}}. Do not reply to this email.
+  $html$,
+  '["appName","userName","email","password","loginUrl","themePrimary","themeOnPrimary"]'
+)
+ON CONFLICT (slug) DO NOTHING;
+
+-- 2. Forgot password (request a password reset link)
+INSERT INTO email_templates (name, slug, subject, body_html, body_text, variables)
+VALUES (
+  'Forgot Password',
+  'forgot_password',
+  'Reset your {{appName}} password',
+  $html$
+<div style="background:#f1f5f9;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+  <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
+    <div style="background:{{themePrimary}};padding:32px 40px;">
+      <div style="color:{{themeOnPrimary}};font-size:24px;font-weight:bold;">{{appName}}</div>
+      <div style="color:{{themeOnPrimary}};font-size:13px;margin-top:4px;">Reset your password</div>
+    </div>
+    <div style="padding:40px;">
+      <p style="margin:0 0 8px;font-size:16px;color:#0f172a;">Hi {{userName}},</p>
+      <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#334155;">
+        We received a request to reset your password. Click the button below to choose a new one. This link expires shortly.
+      </p>
+      <a href="{{resetLink}}" style="display:inline-block;background:{{themePrimary}};color:{{themeOnPrimary}};text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:bold;margin-bottom:24px;">Reset password</a>
+      <p style="margin:0;font-size:13px;line-height:1.6;color:#64748b;">
+        If you did not request this, you can safely ignore this email. Your password will not change.
+      </p>
+    </div>
+    <div style="padding:24px 40px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">
+        This is an automated message from {{appName}}. Do not reply to this email.
+      </p>
+    </div>
+  </div>
+</div>
+  $html$,
+  $html$
+Hi {{userName}},
+
+We received a request to reset your password. Open the link below to choose a new one:
+
+{{resetLink}}
+
+If you did not request this, you can safely ignore this email. Your password will not change.
+
+This is an automated message from {{appName}}.
+  $html$,
+  '["appName","userName","resetLink","themePrimary","themeOnPrimary"]'
+)
+ON CONFLICT (slug) DO NOTHING;
+
+-- 3. Password reset confirmation
+INSERT INTO email_templates (name, slug, subject, body_html, body_text, variables)
+VALUES (
+  'Password Reset Confirmation',
+  'reset_password',
+  'Your {{appName}} password has been changed',
+  $html$
+<div style="background:#f1f5f9;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+  <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
+    <div style="background:{{themePrimary}};padding:32px 40px;">
+      <div style="color:{{themeOnPrimary}};font-size:24px;font-weight:bold;">{{appName}}</div>
+      <div style="color:{{themeOnPrimary}};font-size:13px;margin-top:4px;">Password changed</div>
+    </div>
+    <div style="padding:40px;">
+      <p style="margin:0 0 8px;font-size:16px;color:#0f172a;">Hi {{userName}},</p>
+      <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#334155;">
+        This is a confirmation that your {{appName}} password was changed successfully.
+      </p>
+      <p style="margin:0;font-size:13px;line-height:1.6;color:#64748b;">
+        If you did not make this change, please contact your administrator immediately.
+      </p>
+    </div>
+    <div style="padding:24px 40px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">
+        This is an automated message from {{appName}}. Do not reply to this email.
+      </p>
+    </div>
+  </div>
+</div>
+  $html$,
+  $html$
+Hi {{userName}},
+
+This is a confirmation that your {{appName}} password was changed successfully.
+
+If you did not make this change, please contact your administrator immediately.
+
+This is an automated message from {{appName}}.
+  $html$,
+  '["appName","userName","themePrimary","themeOnPrimary"]'
+)
+ON CONFLICT (slug) DO NOTHING;
+
+-- 4. Welcome (optional onboarding email)
+INSERT INTO email_templates (name, slug, subject, body_html, body_text, variables)
+VALUES (
+  'Welcome Email',
+  'welcome',
+  'Welcome to {{appName}}, {{userName}}!',
+  $html$
+<div style="background:#f1f5f9;padding:32px 16px;font-family:Arial,Helvetica,sans-serif;">
+  <div style="max-width:600px;margin:0 auto;background:#ffffff;border-radius:12px;overflow:hidden;">
+    <div style="background:{{themePrimary}};padding:32px 40px;">
+      <div style="color:{{themeOnPrimary}};font-size:24px;font-weight:bold;">{{appName}}</div>
+      <div style="color:{{themeOnPrimary}};font-size:13px;margin-top:4px;">Welcome aboard</div>
+    </div>
+    <div style="padding:40px;">
+      <p style="margin:0 0 8px;font-size:16px;color:#0f172a;">Hi {{userName}},</p>
+      <p style="margin:0 0 24px;font-size:14px;line-height:1.6;color:#334155;">
+        Welcome to {{appName}}! Your account with {{email}} is ready. Sign in to get started.
+      </p>
+      <a href="{{loginUrl}}" style="display:inline-block;background:{{themePrimary}};color:{{themeOnPrimary}};text-decoration:none;padding:12px 28px;border-radius:6px;font-size:14px;font-weight:bold;margin-bottom:24px;">Go to {{appName}}</a>
+    </div>
+    <div style="padding:24px 40px;background:#f8fafc;border-top:1px solid #e2e8f0;">
+      <p style="margin:0;font-size:12px;color:#94a3b8;line-height:1.6;">
+        This is an automated message from {{appName}}. Do not reply to this email.
+      </p>
+    </div>
+  </div>
+</div>
+  $html$,
+  $html$
+Hi {{userName}},
+
+Welcome to {{appName}}! Your account with {{email}} is ready. Sign in to get started: {{loginUrl}}
+
+This is an automated message from {{appName}}.
+  $html$,
+  '["appName","userName","email","loginUrl","themePrimary","themeOnPrimary"]'
+)
+ON CONFLICT (slug) DO NOTHING;
