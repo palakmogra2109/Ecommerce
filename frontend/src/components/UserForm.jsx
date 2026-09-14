@@ -15,6 +15,9 @@ import {
 
 import Breadcrumb from "../components/Breadcrumb";
 import Avatar from "../components/Avatar";
+import PhoneInput from "../components/PhoneInput";
+import { validateMobile } from "../utils/validation";
+import { isSuperAdmin } from "@shared/constants";
 
 export default function UserForm({ userId = null }) {
   const isEdit = Boolean(userId);
@@ -106,7 +109,7 @@ export default function UserForm({ userId = null }) {
           } else {
             setMessage(
               userData.message ||
-                "Unable to load user."
+              "Unable to load user."
             );
           }
         }
@@ -195,7 +198,7 @@ export default function UserForm({ userId = null }) {
       } else {
         setMessage(
           data.message ||
-            "Unable to upload image."
+          "Unable to upload image."
         );
       }
     } catch (error) {
@@ -260,9 +263,10 @@ export default function UserForm({ userId = null }) {
     /*
      * Mobile
      */
-    if (!form.mobile.trim()) {
-      newErrors.mobile =
-        "Mobile number is required";
+    const mobileError = validateMobile(form.mobile);
+
+    if (mobileError) {
+      newErrors.mobile = mobileError;
     }
 
     /*
@@ -340,7 +344,7 @@ export default function UserForm({ userId = null }) {
       } else {
         setMessage(
           data.message ||
-            "Unable to save user."
+          "Unable to save user."
         );
       }
     } catch (error) {
@@ -460,19 +464,19 @@ export default function UserForm({ userId = null }) {
 
                 {(preview ||
                   form.avatar) && (
-                  <button
-                    type="button"
-                    className="
+                    <button
+                      type="button"
+                      className="
                       filament-btn
                       filament-btn-danger
                     "
-                    onClick={
-                      handleRemoveAvatar
-                    }
-                  >
-                    Remove
-                  </button>
-                )}
+                      onClick={
+                        handleRemoveAvatar
+                      }
+                    >
+                      Remove
+                    </button>
+                  )}
 
               </div>
             </div>
@@ -552,20 +556,17 @@ export default function UserForm({ userId = null }) {
                   </span>
                 </label>
 
-                <input
-                  type="tel"
+                <PhoneInput
                   name="mobile"
-                  placeholder="+60 12 345 6789"
                   value={form.mobile}
-                  onChange={handleChange}
-                  autoComplete="off"
+                  onChange={(e164) =>
+                    handleChange({
+                      target: { name: "mobile", value: e164 },
+                    })
+                  }
+                  error={errors.mobile}
+                  placeholder="12345678"
                 />
-
-                {errors.mobile && (
-                  <p className="input-error">
-                    {errors.mobile}
-                  </p>
-                )}
 
               </div>
 
@@ -580,18 +581,13 @@ export default function UserForm({ userId = null }) {
                   </span>
                 </label>
 
-                <select
-                  name="roleId"
-                  value={roleId}
-                  onChange={
-                    handleRoleChange
-                  }
-                >
+                <select name="roleId" value={roleId} onChange={handleRoleChange}>
+
                   <option value="">
                     Select role
                   </option>
 
-                  {roles.map((role) => (
+                  {roles.filter((role) => !isSuperAdmin(role)).map((role) => (
                     <option
                       key={role.id}
                       value={role.id}

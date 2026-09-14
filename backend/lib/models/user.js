@@ -1,13 +1,10 @@
 import pool from "../db";
 import { paginate } from "../pagination";
+import { USER_STATUS as _USER_STATUS } from "@shared/constants";
 
 const TABLE = "users";
 
-export const USER_STATUS = {
-  ACTIVE: "ACTIVE",
-  INACTIVE: "INACTIVE",
-  SUSPENDED: "SUSPENDED",
-};
+export const USER_STATUS = _USER_STATUS;
 
 export const USER_STATUSES = Object.values(USER_STATUS);
 

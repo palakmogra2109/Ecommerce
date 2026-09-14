@@ -7,6 +7,8 @@ import {
 import { Role } from "@/lib/models/role";
 import { UserRole } from "@/lib/models/userRole";
 import { authorize } from "@/lib/authorization";
+import { validateMobile } from "@/lib/phone";
+import { KEY_PERMISSIONS } from "@shared/constants";
 
 export const runtime = "nodejs";
 
@@ -19,7 +21,7 @@ export async function OPTIONS() {
 
 export async function GET(_request, { params }) {
   try {
-    const auth = await authorize("users.view");
+    const auth = await authorize(KEY_PERMISSIONS.USERS_VIEW);
 
     if (!auth.ok) {
       return auth.response;
@@ -75,7 +77,7 @@ export async function GET(_request, { params }) {
 
 export async function PATCH(request, { params }) {
   try {
-    const auth = await authorize("users.update");
+    const auth = await authorize(KEY_PERMISSIONS.USERS_UPDATE);
 
     if (!auth.ok) {
       return auth.response;
@@ -86,6 +88,28 @@ export async function PATCH(request, { params }) {
     const body = await request.json();
 
     const { name, status, password, mobile, avatar, roleId } = body;
+
+    // Validate mobile if provided: the stored value keeps its country code
+    // but only the numeric 8-10 digit national part is validated.
+    let normalizedMobile = mobile;
+    if (mobile !== undefined) {
+      const phone = validateMobile(mobile);
+
+      if (!phone.ok) {
+        return Response.json(
+          {
+            success: false,
+            message: phone.message,
+          },
+          {
+            status: 400,
+            headers: corsHeaders(),
+          }
+        );
+      }
+
+      normalizedMobile = mobile;
+    }
 
     const user = await User.findById(id);
 
@@ -153,7 +177,7 @@ export async function PATCH(request, { params }) {
       updated = await User.update(id, {
         name: name !== undefined ? name : user.name,
         status: newStatus,
-        mobile: mobile !== undefined ? mobile : user.mobile,
+        mobile: normalizedMobile !== undefined ? normalizedMobile : user.mobile,
         avatar: avatar !== undefined ? avatar : user.avatar,
       });
     }
@@ -191,7 +215,7 @@ export async function PATCH(request, { params }) {
 
 export async function DELETE(_request, { params }) {
   try {
-    const auth = await authorize("users.delete");
+    const auth = await authorize(KEY_PERMISSIONS.USERS_DELETE);
 
     if (!auth.ok) {
       return auth.response;

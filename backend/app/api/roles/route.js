@@ -2,6 +2,7 @@ import { corsHeaders } from "@/lib/cors";
 import { parsePagination } from "@/lib/pagination";
 import { Role, ROLE_STATUSES } from "@/lib/models/role";
 import { authorize } from "@/lib/authorization";
+import { KEY_PERMISSIONS } from "@shared/constants";
 
 export const runtime = "nodejs";
 
@@ -14,7 +15,7 @@ export async function OPTIONS() {
 
 export async function GET(request) {
   try {
-    const auth = await authorize("roles.view");
+    const auth = await authorize(KEY_PERMISSIONS.ROLES_VIEW);
 
     if (!auth.ok) {
       return auth.response;
@@ -62,7 +63,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const auth = await authorize("roles.create");
+    const auth = await authorize(KEY_PERMISSIONS.ROLES_CREATE);
 
     if (!auth.ok) {
       return auth.response;

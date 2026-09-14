@@ -5,6 +5,7 @@ import { User } from "./models/user";
 import { UserRole } from "./models/userRole";
 import { UserPermission } from "./models/userPermission";
 import { Module } from "./models/module";
+import { USER_STATUS } from "@shared/constants";
 
 // 401 response with message
 function unauthorized(message) {
@@ -33,7 +34,7 @@ export async function authenticate() {
 
     const user = await User.findById(payload.userId);
 
-    if (!user || user.status !== "ACTIVE") {
+    if (!user || user.status !== USER_STATUS.ACTIVE) {
       return unauthorized("Account is inactive");
     }
 

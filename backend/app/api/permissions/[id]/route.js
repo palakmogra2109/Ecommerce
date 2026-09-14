@@ -1,6 +1,7 @@
 import { corsHeaders } from "@/lib/cors";
 import { Permission } from "@/lib/models/permission";
 import { authorize } from "@/lib/authorization";
+import { KEY_PERMISSIONS } from "@shared/constants";
 
 export const runtime = "nodejs";
 
@@ -13,7 +14,7 @@ export async function OPTIONS() {
 
 export async function GET(_request, { params }) {
   try {
-    const auth = await authorize("permissions.view");
+    const auth = await authorize(KEY_PERMISSIONS.PERMISSIONS_VIEW);
 
     if (!auth.ok) {
       return auth.response;
@@ -64,7 +65,7 @@ export async function GET(_request, { params }) {
 
 export async function PATCH(request, { params }) {
   try {
-    const auth = await authorize("permissions.update");
+    const auth = await authorize(KEY_PERMISSIONS.PERMISSIONS_UPDATE);
 
     if (!auth.ok) {
       return auth.response;
@@ -126,7 +127,7 @@ export async function PATCH(request, { params }) {
 
 export async function DELETE(_request, { params }) {
   try {
-    const auth = await authorize("permissions.delete");
+    const auth = await authorize(KEY_PERMISSIONS.PERMISSIONS_DELETE);
 
     if (!auth.ok) {
       return auth.response;

@@ -1,12 +1,10 @@
 import pool from "../db";
 import { paginate } from "../pagination";
+import { ROLE_STATUS as _ROLE_STATUS } from "@shared/constants";
 
 const TABLE = "roles";
 
-export const ROLE_STATUS = {
-  ACTIVE: "ACTIVE",
-  INACTIVE: "INACTIVE",
-};
+export const ROLE_STATUS = _ROLE_STATUS;
 
 export const ROLE_STATUSES = Object.values(ROLE_STATUS);
 

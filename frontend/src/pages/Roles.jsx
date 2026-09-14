@@ -6,6 +6,7 @@ import {
   deleteRole,
   bulkUpdateRoleStatus,
 } from "../services/roles";
+import { ROLE_STATUS } from "@shared/constants";
 
 export default function Roles() {
   const navigate = useNavigate();
@@ -19,8 +20,8 @@ export default function Roles() {
           key: "status",
           label: "All statuses",
           options: [
-            { value: "ACTIVE", label: "Active" },
-            { value: "INACTIVE", label: "Inactive" },
+            { value: ROLE_STATUS.ACTIVE, label: "Active" },
+            { value: ROLE_STATUS.INACTIVE, label: "Inactive" },
           ],
         },
       ]}
@@ -57,7 +58,9 @@ export default function Roles() {
       ]}
       onStatusToggle={async (row) => {
         const nextStatus =
-          row.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+          row.status === ROLE_STATUS.ACTIVE
+            ? ROLE_STATUS.INACTIVE
+            : ROLE_STATUS.ACTIVE;
 
         return updateRole(row.id, { status: nextStatus });
       }}
@@ -77,12 +80,12 @@ export default function Roles() {
         {
           label: "Bulk Activate",
           run: async (ids) =>
-            bulkUpdateRoleStatus(ids, "ACTIVE"),
+            bulkUpdateRoleStatus(ids, ROLE_STATUS.ACTIVE),
         },
         {
           label: "Bulk Deactivate",
           run: async (ids) =>
-            bulkUpdateRoleStatus(ids, "INACTIVE"),
+            bulkUpdateRoleStatus(ids, ROLE_STATUS.INACTIVE),
         },
       ]}
     />

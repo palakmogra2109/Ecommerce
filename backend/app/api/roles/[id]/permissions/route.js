@@ -3,6 +3,7 @@ import { Role } from "@/lib/models/role";
 import { Permission } from "@/lib/models/permission";
 import { RolePermission } from "@/lib/models/rolePermission";
 import { authorize, authorizeAny } from "@/lib/authorization";
+import { KEY_PERMISSIONS } from "@shared/constants";
 
 export const runtime = "nodejs";
 
@@ -75,7 +76,7 @@ export async function GET(_request, { params }) {
 
 export async function PUT(request, { params }) {
   try {
-    const auth = await authorize("roles.assign_permissions");
+    const auth = await authorize(KEY_PERMISSIONS.ROLES_ASSIGN_PERMISSIONS);
 
     if (!auth.ok) {
       return auth.response;

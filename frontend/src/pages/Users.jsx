@@ -8,6 +8,7 @@ import {
   bulkUpdateUserStatus,
 } from "../services/users";
 import { useAuth } from "../context/AuthContext";
+import { USER_STATUS } from "@shared/constants";
 
 export default function Users() {
   const { user: currentUser } = useAuth();
@@ -23,9 +24,9 @@ export default function Users() {
       //     key: "status",
       //     label: "All statuses",
       //     options: [
-      //       { value: "ACTIVE", label: "Active" },
-      //       { value: "INACTIVE", label: "Inactive" },
-      //       { value: "SUSPENDED", label: "Suspended" },
+      //       { value: USER_STATUS.ACTIVE, label: "Active" },
+      //       { value: USER_STATUS.INACTIVE, label: "Inactive" },
+      //       { value: USER_STATUS.SUSPENDED, label: "Suspended" },
       //     ],
       //   },
       // ]}
@@ -90,7 +91,9 @@ export default function Users() {
       ]}
       onStatusToggle={async (row) => {
         const nextStatus =
-          row.status === "ACTIVE" ? "INACTIVE" : "ACTIVE";
+          row.status === USER_STATUS.ACTIVE
+            ? USER_STATUS.INACTIVE
+            : USER_STATUS.ACTIVE;
 
         return updateUser(row.id, { status: nextStatus });
       }}
@@ -114,14 +117,14 @@ export default function Users() {
       ]}
       bulkActions={[
         {
-          label: "Bulk Activate",
+          label: "Activate",
           run: async (ids) =>
-            bulkUpdateUserStatus(ids, "ACTIVE"),
+            bulkUpdateUserStatus(ids, USER_STATUS.ACTIVE),
         },
         {
-          label: "Bulk Deactivate",
+          label: "Deactivate",
           run: async (ids) =>
-            bulkUpdateUserStatus(ids, "INACTIVE"),
+            bulkUpdateUserStatus(ids, USER_STATUS.INACTIVE),
         },
       ]}
     />

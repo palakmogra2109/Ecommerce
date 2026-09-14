@@ -5,7 +5,9 @@ import { parsePagination } from "@/lib/pagination";
 import { User } from "@/lib/models/user";
 import { Role } from "@/lib/models/role";
 import { UserRole } from "@/lib/models/userRole";
+import { isSuperAdmin, KEY_PERMISSIONS, USER_STATUS } from "@shared/constants";
 import { authorize } from "@/lib/authorization";
+import { validateMobile } from "@/lib/phone";
 import {
   generatePassword,
   sendCredentialsEmail,
@@ -22,7 +24,7 @@ export async function OPTIONS() {
 
 export async function GET(request) {
   try {
-    const auth = await authorize("users.view");
+    const auth = await authorize(KEY_PERMISSIONS.USERS_VIEW);
 
     if (!auth.ok) {
       return auth.response;
@@ -56,10 +58,7 @@ export async function GET(request) {
     const roleMap = {};
     const superAdminIds = new Set();
     for (const row of roleResult.rows) {
-      if (
-        row.slug === "super_admin" ||
-        row.name?.toLowerCase() === "super admin"
-      ) {
+      if (isSuperAdmin(row)) {
         superAdminIds.add(row.user_id);
       } else if (!roleMap[row.user_id]) {
         roleMap[row.user_id] = { id: row.id, name: row.name, slug: row.slug };
@@ -102,7 +101,7 @@ export async function GET(request) {
 
 export async function POST(request) {
   try {
-    const auth = await authorize("users.create");
+    const auth = await authorize(KEY_PERMISSIONS.USERS_CREATE);
 
     if (!auth.ok) {
       return auth.response;
@@ -157,6 +156,23 @@ export async function POST(request) {
       );
     }
 
+    // Validate mobile: must be a valid number in its country with 8-10
+    // national digits, stored in E.164 format (+<dial><number>).
+    const phone = validateMobile(mobile);
+
+    if (!phone.ok) {
+      return Response.json(
+        {
+          success: false,
+          message: phone.message,
+        },
+        {
+          status: 400,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
     const normalizedEmail = email.toLowerCase().trim();
 
     // Validate email format
@@ -173,7 +189,7 @@ export async function POST(request) {
       );
     }
 
-    const userStatus = "ACTIVE";
+    const userStatus = USER_STATUS.ACTIVE;
 
     const existingUser = await User.findByEmail(
       normalizedEmail

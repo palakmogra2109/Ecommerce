@@ -4,6 +4,7 @@ import {
   ROLE_STATUSES,
 } from "@/lib/models/role";
 import { authorize } from "@/lib/authorization";
+import { KEY_PERMISSIONS } from "@shared/constants";
 
 export const runtime = "nodejs";
 
@@ -16,7 +17,7 @@ export async function OPTIONS() {
 
 export async function GET(_request, { params }) {
   try {
-    const auth = await authorize("roles.view");
+    const auth = await authorize(KEY_PERMISSIONS.ROLES_VIEW);
 
     if (!auth.ok) {
       return auth.response;
@@ -67,7 +68,7 @@ export async function GET(_request, { params }) {
 
 export async function PATCH(request, { params }) {
   try {
-    const auth = await authorize("roles.update");
+    const auth = await authorize(KEY_PERMISSIONS.ROLES_UPDATE);
 
     if (!auth.ok) {
       return auth.response;
@@ -150,7 +151,7 @@ export async function PATCH(request, { params }) {
 
 export async function DELETE(_request, { params }) {
   try {
-    const auth = await authorize("roles.delete");
+    const auth = await authorize(KEY_PERMISSIONS.ROLES_DELETE);
 
     if (!auth.ok) {
       return auth.response;
