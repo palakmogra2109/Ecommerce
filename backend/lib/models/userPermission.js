@@ -42,14 +42,15 @@ export const UserPermission = {
   async listPermissionIdsByUser(userId) {
     const result = await pool.query(
       `
-      SELECT permission_id
-      FROM ${TABLE}
-      WHERE user_id = $1
+      SELECT p.uuid
+      FROM ${TABLE} uhp
+      JOIN permissions p ON p.id = uhp.permission_id
+      WHERE uhp.user_id = $1
       `,
       [userId]
     );
 
-    return result.rows.map((row) => row.permission_id);
+    return result.rows.map((row) => row.uuid);
   },
 
   async listPermissionSlugsByUser(userId) {

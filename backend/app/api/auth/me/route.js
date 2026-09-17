@@ -36,7 +36,7 @@ export async function GET() {
 
     const result = await pool.query(
       `
-      SELECT id, name, email, created_at
+      SELECT id, uuid, name, email, created_at
       FROM users
       WHERE id = $1
       `,
@@ -64,7 +64,7 @@ export async function GET() {
       {
         success: true,
         user: {
-          id: user.id,
+          uuid: user.uuid,
           name: user.name,
           email: user.email,
           created_at: user.created_at,

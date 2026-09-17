@@ -1,11 +1,16 @@
 -- Earth धान्य schema
 -- Idempotent: safe to run on a fresh or existing database.
 
+-- gen_random_uuid() needs the pgcrypto extension on PostgreSQL 12.
+-- On PostgreSQL 13+ it is built in, so this is a no-op there.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 -- =============================================================
 -- users
 -- =============================================================
 CREATE TABLE IF NOT EXISTS users (
   id          BIGSERIAL PRIMARY KEY,
+  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   name        TEXT NOT NULL DEFAULT '',
   email       TEXT NOT NULL UNIQUE,
   password    TEXT NOT NULL,
@@ -18,16 +23,19 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- Backfill columns on existing databases
+ALTER TABLE users ADD COLUMN IF NOT EXISTS uuid       UUID NOT NULL DEFAULT gen_random_uuid();
 ALTER TABLE users ADD COLUMN IF NOT EXISTS status    TEXT NOT NULL DEFAULT 'ACTIVE';
 ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile     TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar     TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS users_uuid_key ON users(uuid);
 
 -- =============================================================
 -- roles
 -- =============================================================
 CREATE TABLE IF NOT EXISTS roles (
   id          BIGSERIAL PRIMARY KEY,
+  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   name        TEXT NOT NULL UNIQUE,
   slug        TEXT NOT NULL UNIQUE,
   description TEXT NOT NULL DEFAULT '',
@@ -37,17 +45,24 @@ CREATE TABLE IF NOT EXISTS roles (
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+ALTER TABLE roles ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
+CREATE UNIQUE INDEX IF NOT EXISTS roles_uuid_key ON roles(uuid);
+
 -- =============================================================
 -- permissions
 -- =============================================================
 CREATE TABLE IF NOT EXISTS permissions (
   id          BIGSERIAL PRIMARY KEY,
+  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   name        TEXT NOT NULL,
   slug        TEXT NOT NULL UNIQUE,
   module      TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE permissions ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
+CREATE UNIQUE INDEX IF NOT EXISTS permissions_uuid_key ON permissions(uuid);
 
 -- =============================================================
 -- modules
@@ -131,6 +146,7 @@ ON CONFLICT (id) DO NOTHING;
 -- =============================================================
 CREATE TABLE IF NOT EXISTS email_templates (
   id          BIGSERIAL PRIMARY KEY,
+  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   name        TEXT NOT NULL,
   slug        TEXT NOT NULL UNIQUE,
   subject     TEXT NOT NULL,
@@ -142,3 +158,6 @@ CREATE TABLE IF NOT EXISTS email_templates (
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+ALTER TABLE email_templates ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
+CREATE UNIQUE INDEX IF NOT EXISTS email_templates_uuid_key ON email_templates(uuid);

@@ -8,21 +8,20 @@ export const USER_STATUS = _USER_STATUS;
 
 export const USER_STATUSES = Object.values(USER_STATUS);
 
-// Columns exposed outside the API. Never includes the password hash.
+// Columns exposed outside the API. Never includes the password hash or
+// the internal integer id.
 const PUBLIC_COLUMNS =
-  "id, name, email, mobile, avatar, status, created_at, updated_at";
+  "uuid, name, email, mobile, avatar, status, created_at, updated_at";
+
+// Internal columns used for authorization and joins. The integer id is
+// never sent to the client.
+const INTERNAL_COLUMNS =
+  "id, uuid, name, email, mobile, avatar, status, created_at, updated_at";
 
 export const User = {
   TABLE,
 
-  async create({
-    name,
-    email,
-    password,
-    mobile = null,
-    avatar = null,
-    status = "ACTIVE",
-  }) {
+  async create({ name, email, password, mobile = null, avatar = null, status = "ACTIVE" }) {
     const result = await pool.query(
       `
       INSERT INTO ${TABLE} (name, email, password, mobile, avatar, status)
@@ -42,19 +41,6 @@ export const User = {
     return result.rows[0];
   },
 
-  async findById(id) {
-    const result = await pool.query(
-      `
-      SELECT ${PUBLIC_COLUMNS}
-      FROM ${TABLE}
-      WHERE id = $1
-      `,
-      [id]
-    );
-
-    return result.rows[0] || null;
-  },
-
   async findByEmail(email) {
     const result = await pool.query(
       `
@@ -68,11 +54,39 @@ export const User = {
     return result.rows[0] || null;
   },
 
-  // Includes password hash. Only for internal auth use.
+  // Internal lookup by integer id. Only for authorization on the
+  // integer userId held in the JWT. Not exposed to any client.
+  async getInternalById(id) {
+    const result = await pool.query(
+      `
+      SELECT ${INTERNAL_COLUMNS}
+      FROM ${TABLE}
+      WHERE id = $1
+      `,
+      [id]
+    );
+
+    return result.rows[0] || null;
+  },
+
+  async findByUuid(uuid) {
+    const result = await pool.query(
+      `
+      SELECT ${PUBLIC_COLUMNS}
+      FROM ${TABLE}
+      WHERE uuid = $1
+      `,
+      [uuid]
+    );
+
+    return result.rows[0] || null;
+  },
+
+  // Includes password hash + integer id. Only for internal auth use.
   async findByEmailWithPassword(email) {
     const result = await pool.query(
       `
-      SELECT ${PUBLIC_COLUMNS}, password
+      SELECT ${INTERNAL_COLUMNS}, password
       FROM ${TABLE}
       WHERE email = $1
       `,
@@ -82,13 +96,7 @@ export const User = {
     return result.rows[0] || null;
   },
 
-  async list({
-    search = "",
-    status = null,
-    page = 1,
-    limit = 20,
-    excludeIds = [],
-  } = {}) {
+  async list({ search = "", status = "", page = 1, limit = 20, excludeUuids = [] } = {}) {
     const conditions = [];
     const params = [];
 
@@ -104,15 +112,13 @@ export const User = {
       conditions.push(`status = $${params.length}`);
     }
 
-    const excluded = excludeIds.map(Number).filter((id) => Number.isInteger(id));
+    const excluded = excludeUuids.filter((u) => typeof u === "string");
 
     if (excluded.length > 0) {
       params.push(excluded);
-      conditions.push(`id <> ALL($${params.length})`);
+      conditions.push(`uuid <> ALL($${params.length})`);
     }
 
-    // Super admin accounts are invisible to everyone else — never list
-    // them and never count them in pagination totals.
     conditions.push(
       `NOT EXISTS (
         SELECT 1 FROM user_has_roles uhr_excl
@@ -138,8 +144,34 @@ export const User = {
     );
   },
 
-  async update(id, { name, status, mobile, avatar } = {}) {
-    const current = await this.findById(id);
+  async getInternalByUuid(uuid) {
+    const result = await pool.query(
+      `
+      SELECT ${INTERNAL_COLUMNS}
+      FROM ${TABLE}
+      WHERE uuid = $1
+      `,
+      [uuid]
+    );
+
+    return result.rows[0] || null;
+  },
+
+  async findByUuidWithPassword(uuid) {
+    const result = await pool.query(
+      `
+      SELECT ${INTERNAL_COLUMNS}, password
+      FROM ${TABLE}
+      WHERE uuid = $1
+      `,
+      [uuid]
+    );
+
+    return result.rows[0] || null;
+  },
+
+  async update(uuid, { name, status, mobile, avatar } = {}) {
+    const current = await this.findByUuid(uuid);
 
     if (!current) {
       return null;
@@ -153,44 +185,44 @@ export const User = {
           mobile = $3,
           avatar = $4,
           updated_at = now()
-      WHERE id = $5
+      WHERE uuid = $5
       RETURNING ${PUBLIC_COLUMNS}
       `,
       [
-        name !== undefined ? name.trim() : current.name,
+        name !== undefined ? name : current.name,
         status !== undefined ? status : current.status,
         mobile !== undefined ? mobile : current.mobile,
         avatar !== undefined ? avatar : current.avatar,
-        id,
+        uuid,
       ]
     );
 
     return result.rows[0] || null;
   },
 
-  async updatePassword(id, password) {
+  async updatePassword(uuid, password) {
     const result = await pool.query(
       `
       UPDATE ${TABLE}
       SET password = $1,
           updated_at = now()
-      WHERE id = $2
+      WHERE uuid = $2
       RETURNING ${PUBLIC_COLUMNS}
       `,
-      [password, id]
+      [password, uuid]
     );
 
     return result.rows[0] || null;
   },
 
-  async remove(id) {
+  async remove(uuid) {
     const result = await pool.query(
       `
       DELETE FROM ${TABLE}
-      WHERE id = $1
-      RETURNING id
+      WHERE uuid = $1
+      RETURNING uuid
       `,
-      [id]
+      [uuid]
     );
 
     return result.rows[0] || null;

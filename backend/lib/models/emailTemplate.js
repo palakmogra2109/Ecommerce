@@ -10,7 +10,7 @@ export const EMAIL_TEMPLATE_STATUSES = Object.values(_STATUS);
 
 // Columns exposed outside the API.
 const PUBLIC_COLUMNS =
-  "id, name, slug, subject, body_html, body_text, variables, status, created_at, updated_at";
+  "uuid, name, slug, subject, body_html, body_text, variables, status, created_at, updated_at";
 
 function slugify(value) {
   return value
@@ -53,6 +53,19 @@ export const EmailTemplate = {
       WHERE id = $1
       `,
       [id]
+    );
+
+    return result.rows[0] || null;
+  },
+
+  async findByUuid(uuid) {
+    const result = await pool.query(
+      `
+      SELECT ${PUBLIC_COLUMNS}
+      FROM ${TABLE}
+      WHERE uuid = $1
+      `,
+      [uuid]
     );
 
     return result.rows[0] || null;
@@ -115,8 +128,8 @@ export const EmailTemplate = {
     );
   },
 
-  async update(id, { name, slug, subject, bodyHtml, bodyText, variables, status } = {}) {
-    const current = await this.findById(id);
+  async update(uuid, { name, slug, subject, bodyHtml, bodyText, variables, status } = {}) {
+    const current = await this.findByUuid(uuid);
 
     if (!current) {
       return null;
@@ -133,7 +146,7 @@ export const EmailTemplate = {
           variables = $6,
           status = $7,
           updated_at = now()
-      WHERE id = $8
+      WHERE uuid = $8
       RETURNING ${PUBLIC_COLUMNS}
       `,
       [
@@ -146,21 +159,34 @@ export const EmailTemplate = {
           ? JSON.stringify(variables || [])
           : JSON.stringify(current.variables || []),
         status !== undefined ? status : current.status,
-        id,
+        uuid,
       ]
     );
 
     return result.rows[0] || null;
   },
 
-  async remove(id) {
+  async remove(uuid) {
     const result = await pool.query(
       `
       DELETE FROM ${TABLE}
-      WHERE id = $1
-      RETURNING id
+      WHERE uuid = $1
+      RETURNING uuid
       `,
-      [id]
+      [uuid]
+    );
+
+    return result.rows[0] || null;
+  },
+
+  async getInternalByUuid(uuid) {
+    const result = await pool.query(
+      `
+      SELECT id, uuid
+      FROM ${TABLE}
+      WHERE uuid = $1
+      `,
+      [uuid]
     );
 
     return result.rows[0] || null;

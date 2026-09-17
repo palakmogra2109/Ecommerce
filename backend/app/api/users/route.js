@@ -8,6 +8,7 @@ import { UserRole } from "@/lib/models/userRole";
 import { KEY_PERMISSIONS, ROLE_SLUGS, USER_STATUS } from "@shared/constants";
 import { authorize } from "@/lib/authorization";
 import { validateMobile } from "@/lib/phone";
+import { isValidUuid } from "@/lib/uuid";
 import {
   generatePassword,
   sendCredentialsEmail,
@@ -41,31 +42,36 @@ export async function GET(request) {
       status: status || null,
       page,
       limit,
-      excludeIds: [auth.user?.id],
+      excludeUuids: [auth.user?.uuid],
     });
 
-    const userIds = users.map((u) => u.id);
+    const userUuids = users.map((u) => u.uuid);
 
-    const roleResult = userIds.length
+    const roleResult = userUuids.length
       ? await pool.query(
-          `SELECT uhr.user_id, r.id, r.name, r.slug
+          `SELECT u.uuid, r.uuid AS role_uuid, r.name, r.slug
            FROM user_has_roles uhr
+           JOIN users u ON u.id = uhr.user_id
            JOIN roles r ON r.id = uhr.role_id
-           WHERE uhr.user_id = ANY($1)`,
-          [userIds]
+           WHERE u.uuid = ANY($1)`,
+          [userUuids]
         )
       : { rows: [] };
 
     const roleMap = {};
     for (const row of roleResult.rows) {
-      if (!roleMap[row.user_id]) {
-        roleMap[row.user_id] = { id: row.id, name: row.name, slug: row.slug };
+      if (!roleMap[row.uuid]) {
+        roleMap[row.uuid] = {
+          uuid: row.role_uuid,
+          name: row.name,
+          slug: row.slug,
+        };
       }
     }
 
     const enriched = users.map((u) => ({
       ...u,
-      role: roleMap[u.id] || null,
+      role: roleMap[u.uuid] || null,
     }));
 
     return Response.json(
@@ -204,12 +210,8 @@ export async function POST(request) {
       );
     }
 
-    // Validate roleId
-    if (
-      roleId &&
-      typeof roleId !== "number" &&
-      typeof roleId !== "string"
-    ) {
+    // Validate roleId (public uuid)
+    if (roleId && typeof roleId !== "string" || (roleId && !isValidUuid(roleId))) {
       return Response.json(
         {
           success: false,
@@ -222,7 +224,7 @@ export async function POST(request) {
       );
     }
 
-    const role = await Role.findById(roleId);
+    const role = await Role.getInternalByUuid(roleId);
 
     if (!role) {
       return Response.json(
@@ -267,7 +269,9 @@ export async function POST(request) {
     });
 
     // Assign role
-    await UserRole.assign(user.id, role.id);
+    const createdInternal = await User.getInternalByUuid(user.uuid);
+
+    await UserRole.assign(createdInternal.id, role.id);
 
     // Send credentials email (best effort)
     const mailResult = await sendCredentialsEmail(

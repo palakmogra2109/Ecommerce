@@ -3,6 +3,7 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { getUser } from "../services/users";
 import Avatar from "../components/Avatar";
 import Breadcrumb from "../components/Breadcrumb";
+import { formatDateTime } from "../utils/format";
 
 export default function UserView() {
   const { id } = useParams();
@@ -95,40 +96,46 @@ export default function UserView() {
               </div>
             </div>
 
-            <dl className="view-fields">
-              <div>
-                <dt>User ID</dt>
-                <dd>{user.id}</dd>
+            <div className="view-grid">
+              <div className="view-box">
+                <span className="view-box-label">User ID</span>
+                <span className="view-box-value">{user.uuid}</span>
               </div>
-              <div>
-                <dt>Mobile</dt>
-                <dd>{user.mobile || "—"}</dd>
+              <div className="view-box">
+                <span className="view-box-label">Email</span>
+                <span className="view-box-value">{user.email || "—"}</span>
               </div>
-              <div>
-                <dt>Role</dt>
-                <dd>{user.role?.name || "—"}</dd>
+              <div className="view-box">
+                <span className="view-box-label">Mobile</span>
+                <span className="view-box-value">{user.mobile || "—"}</span>
               </div>
-              <div>
-                <dt>Status</dt>
-                <dd>
+              <div className="view-box">
+                <span className="view-box-label">Role</span>
+                <span className="view-box-value">{user.role?.name || "—"}</span>
+              </div>
+              <div className="view-box">
+                <span className="view-box-label">Status</span>
+                <span className="view-box-value">
                   <span
                     className={`filament-badge filament-badge-${(user.status || "inactive").toLowerCase()}`}
                   >
                     <span className="filament-badge-dot" />
                     {user.status}
                   </span>
-                </dd>
+                </span>
               </div>
-              <div>
-                <dt>Created</dt>
-                <dd>{new Date(user.created_at).toLocaleString()}</dd>
+              <div className="view-box">
+                <span className="view-box-label">Created</span>
+                <span className="view-box-value">
+                  {formatDateTime(user.created_at)}
+                </span>
               </div>
-            </dl>
+            </div>
 
             <div className="view-actions">
               <Link
                 className="filament-btn filament-btn-primary"
-                to={`/users/${user.id}/edit`}
+                to={`/users/${user.uuid}/edit`}
               >
                 Edit User
               </Link>

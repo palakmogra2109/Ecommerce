@@ -1,4 +1,5 @@
 import pool from "../db";
+import { paginate } from "../pagination";
 
 const TABLE = "user_has_roles";
 
@@ -72,7 +73,7 @@ export const UserRole = {
   async listByUser(userId) {
     const result = await pool.query(
       `
-      SELECT r.id,
+      SELECT r.uuid,
              r.name,
              r.slug,
              r.description,
@@ -88,27 +89,56 @@ export const UserRole = {
     return result.rows;
   },
 
-  async listByRole(roleId) {
-    const result = await pool.query(
-      `
-      SELECT u.id,
-             u.name,
-             u.email,
-             u.status
+  async listByRole(roleId, { search = "", page = 1, limit = 20 } = {}) {
+    const conditions = [`uhr.role_id = $1`];
+    const params = [roleId];
+
+    if (search) {
+      params.push(`%${search.trim()}%`);
+      const idx = params.length;
+
+      conditions.push(
+        `(u.name ILIKE $${idx} OR u.email ILIKE $${idx} OR COALESCE(u.mobile, '') ILIKE $${idx})`
+      );
+    }
+
+    const where = `WHERE ${conditions.join(" AND ")}`;
+
+    const baseSql = `
+      SELECT u.uuid, u.name, u.email, u.mobile, u.avatar, u.status, u.created_at, u.updated_at
       FROM ${TABLE} uhr
       JOIN users u ON u.id = uhr.user_id
-      WHERE uhr.role_id = $1
-      ORDER BY u.name ASC
-      `,
-      [roleId]
-    );
+      ${where}
+    `;
 
-    return result.rows;
+    const countSql = `
+      SELECT COUNT(*)::int AS count
+      FROM ${TABLE} uhr
+      JOIN users u ON u.id = uhr.user_id
+      ${where}
+    `;
+
+    return paginate(
+      {
+        baseSql,
+        countSql,
+        params,
+        orderBy: "ORDER BY u.created_at DESC, u.id DESC",
+      },
+      { page, limit, offset: (page - 1) * limit }
+    );
   },
 
   // Collapse a user's roles into the set of permission slugs
-  // they are allowed to use.
+  // they are allowed to use. Super admins get ALL permissions.
   async listPermissionSlugsByUser(userId) {
+    if (await this.isSuperAdmin(userId)) {
+      const result = await pool.query(
+        `SELECT slug FROM permissions`
+      );
+      return result.rows.map((row) => row.slug);
+    }
+
     const result = await pool.query(
       `
       SELECT DISTINCT p.slug

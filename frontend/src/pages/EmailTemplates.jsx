@@ -67,13 +67,13 @@ export default function EmailTemplates() {
             ? STATUS.INACTIVE
             : STATUS.ACTIVE;
 
-        return updateEmailTemplate(row.id, { status: nextStatus });
+        return updateEmailTemplate(row.uuid, { status: nextStatus });
       }}
       actions={[
         {
           type: "edit",
           tooltip: "Edit",
-          to: (row) => `/email-templates/${row.id}/edit`,
+          to: (row) => `/email-templates/${row.uuid}/edit`,
         },
       ]}
       bulkActions={[

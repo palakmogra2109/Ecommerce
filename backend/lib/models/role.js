@@ -9,7 +9,10 @@ export const ROLE_STATUS = _ROLE_STATUS;
 export const ROLE_STATUSES = Object.values(ROLE_STATUS);
 
 const PUBLIC_COLUMNS =
-  "id, name, slug, description, status, created_at, updated_at";
+  "uuid, name, slug, description, status, created_at, updated_at";
+
+const INTERNAL_COLUMNS =
+  "id, uuid, name, slug, description, status, created_at, updated_at";
 
 function slugify(value) {
   return value
@@ -54,6 +57,33 @@ export const Role = {
     return result.rows[0] || null;
   },
 
+  async findByUuid(uuid) {
+    const result = await pool.query(
+      `
+      SELECT ${PUBLIC_COLUMNS}
+      FROM ${TABLE}
+      WHERE uuid = $1
+      `,
+      [uuid]
+    );
+
+    return result.rows[0] || null;
+  },
+
+  // Internal lookup that also returns the integer id.
+  async getInternalByUuid(uuid) {
+    const result = await pool.query(
+      `
+      SELECT ${INTERNAL_COLUMNS}
+      FROM ${TABLE}
+      WHERE uuid = $1
+      `,
+      [uuid]
+    );
+
+    return result.rows[0] || null;
+  },
+
   async findBySlug(slug) {
     const result = await pool.query(
       `
@@ -68,38 +98,51 @@ export const Role = {
   },
 
   async list({ search = "", status = "", page = 1, limit = 20 } = {}) {
-    const conditions = [];
+    const conditions = ["r.slug != 'super_admin'"];
     const params = [];
 
     if (search) {
       params.push(`%${search.trim()}%`);
       conditions.push(
-        `(name ILIKE $${params.length} OR slug ILIKE $${params.length})`
+        `(r.name ILIKE $${params.length} OR r.slug ILIKE $${params.length})`
       );
     }
 
     if (status) {
       params.push(status);
-      conditions.push(`status = $${params.length}`);
+      conditions.push(`r.status = $${params.length}`);
     }
 
     const where = conditions.length
       ? `WHERE ${conditions.join(" AND ")}`
       : "";
 
+    const cols = PUBLIC_COLUMNS.split(",")
+      .map((c) => `r.${c.trim()}`)
+      .join(", ");
+
+    const baseSql = `
+      SELECT ${cols},
+             COALESCE(uh.user_count, 0)::int AS user_count
+      FROM ${TABLE} r
+      LEFT JOIN (
+        SELECT role_id, COUNT(*)::int AS user_count
+        FROM user_has_roles
+        GROUP BY role_id
+      ) uh ON uh.role_id = r.id
+      ${where}
+    `;
+
+    const countSql = `SELECT COUNT(*)::int AS count FROM ${TABLE} r ${where}`;
+
     return paginate(
-      {
-        baseSql: `SELECT ${PUBLIC_COLUMNS} FROM ${TABLE} ${where}`,
-        countSql: `SELECT COUNT(*)::int AS count FROM ${TABLE} ${where}`,
-        params,
-        orderBy: "ORDER BY name ASC",
-      },
+      { baseSql, countSql, params, orderBy: "ORDER BY r.name ASC" },
       { page, limit, offset: (page - 1) * limit }
     );
   },
 
-  async update(id, { name, slug, description, status } = {}) {
-    const current = await this.findById(id);
+  async update(uuid, { name, slug, description, status } = {}) {
+    const current = await this.findByUuid(uuid);
 
     if (!current) {
       return null;
@@ -113,7 +156,7 @@ export const Role = {
           description = $3,
           status = $4,
           updated_at = now()
-      WHERE id = $5
+      WHERE uuid = $5
       RETURNING ${PUBLIC_COLUMNS}
       `,
       [
@@ -121,21 +164,21 @@ export const Role = {
         slug !== undefined ? slugify(slug) : current.slug,
         description !== undefined ? description : current.description,
         status !== undefined ? status : current.status,
-        id,
+        uuid,
       ]
     );
 
     return result.rows[0] || null;
   },
 
-  async remove(id) {
+  async remove(uuid) {
     const result = await pool.query(
       `
       DELETE FROM ${TABLE}
-      WHERE id = $1
-      RETURNING id
+      WHERE uuid = $1
+      RETURNING uuid
       `,
-      [id]
+      [uuid]
     );
 
     return result.rows[0] || null;

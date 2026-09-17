@@ -9,6 +9,7 @@ import {
 } from "../services/users";
 import { useAuth } from "../context/AuthContext";
 import { USER_STATUS } from "@shared/constants";
+import { formatDate } from "../utils/format";
 
 export default function Users() {
   const { user: currentUser } = useAuth();
@@ -50,7 +51,7 @@ export default function Users() {
             <div className="user-cell">
               <Avatar user={row} size={38} />
               <div className="user-cell-text">
-                <Link to={`/users/${row.id}`}>{row.name || "—"}</Link>
+                <Link to={`/users/${row.uuid}`}>{row.name || "—"}</Link>
                 <span>{row.email}</span>
               </div>
             </div>
@@ -71,6 +72,7 @@ export default function Users() {
         {
           label: "Role",
           sortKey: "role",
+          searchKeys: ["role"],
           render: (row) => {
             if (!row.role) return "—";
 
@@ -85,8 +87,7 @@ export default function Users() {
           label: "Created",
           sortKey: "created_at",
           searchKeys: ["created_at"],
-          render: (row) =>
-            new Date(row.created_at).toLocaleDateString(),
+          render: (row) => formatDate(row.created_at),
         },
       ]}
       onStatusToggle={async (row) => {
@@ -95,24 +96,25 @@ export default function Users() {
             ? USER_STATUS.INACTIVE
             : USER_STATUS.ACTIVE;
 
-        return updateUser(row.id, { status: nextStatus });
+        return updateUser(row.uuid, { status: nextStatus });
       }}
       actions={[
         {
           type: "view",
           tooltip: "View",
-          to: (row) => `/users/${row.id}`,
+          to: (row) => `/users/${row.uuid}`,
         },
         {
           type: "edit",
           tooltip: "Edit",
-          to: (row) => `/users/${row.id}/edit`,
+          to: (row) => `/users/${row.uuid}/edit`,
         },
         {
           type: "delete",
           tooltip: "Delete",
-          disabled: (row) => row.id === currentUser?.id,
-          onDelete: async (row) => deleteUser(row.id),
+          disabled: (row) => row.uuid === currentUser?.uuid,
+          disabledReason: "You cannot delete your own account",
+          onDelete: async (row) => deleteUser(row.uuid),
         },
       ]}
       bulkActions={[

@@ -3,7 +3,8 @@ import { Role } from "@/lib/models/role";
 import { Permission } from "@/lib/models/permission";
 import { RolePermission } from "@/lib/models/rolePermission";
 import { authorize, authorizeAny } from "@/lib/authorization";
-import { KEY_PERMISSIONS } from "@shared/constants";
+import { KEY_PERMISSIONS, ROLE_SLUGS } from "@shared/constants";
+import { isValidUuid, invalidUuidResponse } from "@/lib/uuid";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,19 @@ export async function OPTIONS() {
     status: 204,
     headers: corsHeaders(),
   });
+}
+
+function rolePermissionsError() {
+  return Response.json(
+    {
+      success: false,
+      message: "Internal server error",
+    },
+    {
+      status: 500,
+      headers: corsHeaders(),
+    }
+  );
 }
 
 export async function GET(_request, { params }) {
@@ -27,9 +41,13 @@ export async function GET(_request, { params }) {
 
     const { id } = await params;
 
-    const role = await Role.findById(id);
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
 
-    if (!role) {
+    const roleInternal = await Role.getInternalByUuid(id);
+
+    if (!roleInternal) {
       return Response.json(
         {
           success: false,
@@ -42,9 +60,9 @@ export async function GET(_request, { params }) {
       );
     }
 
-    const [permissions, selectedIds] = await Promise.all([
-      Permission.list(),
-      RolePermission.listPermissionIdsByRole(id),
+    const [{ rows: permissions }, selectedIds] = await Promise.all([
+      Permission.list({ limit: 100 }),
+      RolePermission.listPermissionIdsByRole(roleInternal.id),
     ]);
 
     return Response.json(
@@ -61,16 +79,7 @@ export async function GET(_request, { params }) {
   } catch (error) {
     console.error("Get role permissions error:", error);
 
-    return Response.json(
-      {
-        success: false,
-        message: "Internal server error",
-      },
-      {
-        status: 500,
-        headers: corsHeaders(),
-      }
-    );
+    return rolePermissionsError();
   }
 }
 
@@ -84,9 +93,13 @@ export async function PUT(request, { params }) {
 
     const { id } = await params;
 
-    const role = await Role.findById(id);
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
 
-    if (!role) {
+    const roleInternal = await Role.getInternalByUuid(id);
+
+    if (!roleInternal) {
       return Response.json(
         {
           success: false,
@@ -94,6 +107,19 @@ export async function PUT(request, { params }) {
         },
         {
           status: 404,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    if (roleInternal.slug === ROLE_SLUGS.SUPER_ADMIN) {
+      return Response.json(
+        {
+          success: false,
+          message: "Super admin permissions cannot be changed",
+        },
+        {
+          status: 403,
           headers: corsHeaders(),
         }
       );
@@ -116,23 +142,63 @@ export async function PUT(request, { params }) {
       );
     }
 
+    const validUuids = [];
     const validIds = [];
+    const knownSlugs = new Set();
+    const selectedModules = new Set();
 
-    for (const permissionId of permissionIds) {
-      const permission = await Permission.findById(permissionId);
+    for (const permissionUuid of permissionIds) {
+      if (!isValidUuid(String(permissionUuid))) {
+        continue;
+      }
 
-      if (permission) {
-        validIds.push(permissionId);
+      const internal =
+        await Permission.getInternalByUuid(permissionUuid);
+
+      if (internal) {
+        validUuids.push(permissionUuid);
+        validIds.push(internal.id);
+        knownSlugs.add(internal.slug);
+        selectedModules.add(internal.module);
       }
     }
 
-    await RolePermission.sync(id, validIds);
+    // Selecting any permission implies its `<module>.view` permission:
+    // auto-add it so a role can never hold create/update/delete
+    // without view. (`permissions.view` is intentionally excluded —
+    // it is not assignable.)
+    for (const moduleName of selectedModules) {
+      const viewSlug = `${moduleName}.view`;
+
+      if (viewSlug === "permissions.view") {
+        continue;
+      }
+
+      if (knownSlugs.has(viewSlug)) {
+        continue;
+      }
+
+      const view = await Permission.findBySlug(viewSlug);
+
+      if (view) {
+        const viewInternal =
+          await Permission.getInternalByUuid(view.uuid);
+
+        if (viewInternal) {
+          validUuids.push(viewInternal.uuid);
+          validIds.push(viewInternal.id);
+          knownSlugs.add(viewSlug);
+        }
+      }
+    }
+
+    await RolePermission.sync(roleInternal.id, validIds);
 
     return Response.json(
       {
         success: true,
         message: "Permissions updated successfully",
-        selected: validIds,
+        selected: validUuids,
       },
       {
         status: 200,
@@ -142,15 +208,6 @@ export async function PUT(request, { params }) {
   } catch (error) {
     console.error("Update role permissions error:", error);
 
-    return Response.json(
-      {
-        success: false,
-        message: "Internal server error",
-      },
-      {
-        status: 500,
-        headers: corsHeaders(),
-      }
-    );
+    return rolePermissionsError();
   }
 }

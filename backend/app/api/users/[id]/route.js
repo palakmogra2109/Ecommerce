@@ -9,13 +9,14 @@ import { UserRole } from "@/lib/models/userRole";
 import { authorize } from "@/lib/authorization";
 import { validateMobile } from "@/lib/phone";
 import { KEY_PERMISSIONS, ROLE_SLUGS } from "@shared/constants";
+import { isValidUuid, invalidUuidResponse } from "@/lib/uuid";
 
 export const runtime = "nodejs";
 
 // Super admin accounts are invisible to everyone. Returning 404 (instead
 // of 403) keeps their existence hidden.
-async function superAdminGuard(id) {
-  if (await UserRole.isSuperAdmin(Number(id))) {
+async function superAdminGuard(userId) {
+  if (await UserRole.isSuperAdmin(userId)) {
     return Response.json(
       {
         success: false,
@@ -48,9 +49,13 @@ export async function GET(_request, { params }) {
 
     const { id } = await params;
 
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
     // The signed-in user cannot be viewed through the admin panel —
     // use /api/auth/me for the current profile.
-    if (Number(id) === Number(auth.user?.id)) {
+    if (auth.user && id === auth.user?.uuid) {
       return Response.json(
         {
           success: false,
@@ -63,13 +68,28 @@ export async function GET(_request, { params }) {
       );
     }
 
-    const guard = await superAdminGuard(id);
+    const internal = await User.getInternalByUuid(id);
+
+    if (!internal) {
+      return Response.json(
+        {
+          success: false,
+          message: "User not found",
+        },
+        {
+          status: 404,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    const guard = await superAdminGuard(internal.id);
 
     if (guard) {
       return guard;
     }
 
-    const user = await User.findById(id);
+    const user = await User.findByUuid(id);
 
     if (!user) {
       return Response.json(
@@ -84,7 +104,7 @@ export async function GET(_request, { params }) {
       );
     }
 
-    const roles = await UserRole.listByUser(id);
+    const roles = await UserRole.listByUser(internal.id);
 
     return Response.json(
       {
@@ -125,8 +145,12 @@ export async function PATCH(request, { params }) {
 
     const { id } = await params;
 
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
     // Nobody may edit their own account through the admin panel.
-    if (Number(id) === Number(auth.user?.id)) {
+    if (auth.user && id === auth.user?.uuid) {
       return Response.json(
         {
           success: false,
@@ -139,7 +163,22 @@ export async function PATCH(request, { params }) {
       );
     }
 
-    const guard = await superAdminGuard(id);
+    const internal = await User.getInternalByUuid(id);
+
+    if (!internal) {
+      return Response.json(
+        {
+          success: false,
+          message: "User not found",
+        },
+        {
+          status: 404,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    const guard = await superAdminGuard(internal.id);
 
     if (guard) {
       return guard;
@@ -171,7 +210,7 @@ export async function PATCH(request, { params }) {
       normalizedMobile = mobile;
     }
 
-    const user = await User.findById(id);
+    const user = await User.findByUuid(id);
 
     if (!user) {
       return Response.json(
@@ -187,7 +226,20 @@ export async function PATCH(request, { params }) {
     }
 
     if (roleId) {
-      const role = await Role.findById(roleId);
+      if (!isValidUuid(String(roleId))) {
+        return Response.json(
+          {
+            success: false,
+            message: "Role not found",
+          },
+          {
+            status: 400,
+            headers: corsHeaders(),
+          }
+        );
+      }
+
+      const role = await Role.getInternalByUuid(roleId);
 
       if (role) {
         if (role.slug === ROLE_SLUGS.SUPER_ADMIN) {
@@ -203,7 +255,7 @@ export async function PATCH(request, { params }) {
           );
         }
 
-        await UserRole.replaceRole(id, role.id);
+        await UserRole.replaceRole(internal.id, role.id);
       } else {
         return Response.json(
           {
@@ -296,8 +348,12 @@ export async function DELETE(_request, { params }) {
 
     const { id } = await params;
 
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
     // Nobody may delete their own account through the admin panel.
-    if (Number(id) === Number(auth.user?.id)) {
+    if (auth.user && id === auth.user?.uuid) {
       return Response.json(
         {
           success: false,
@@ -310,13 +366,28 @@ export async function DELETE(_request, { params }) {
       );
     }
 
-    const guard = await superAdminGuard(id);
+    const internal = await User.getInternalByUuid(id);
+
+    if (!internal) {
+      return Response.json(
+        {
+          success: false,
+          message: "User not found",
+        },
+        {
+          status: 404,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    const guard = await superAdminGuard(internal.id);
 
     if (guard) {
       return guard;
     }
 
-    const user = await User.findById(id);
+    const user = await User.findByUuid(id);
 
     if (!user) {
       return Response.json(

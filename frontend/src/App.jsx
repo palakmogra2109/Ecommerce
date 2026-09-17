@@ -21,17 +21,32 @@ import AdminLayout from "./components/AdminLayout";
 
 function UserEditRoute() {
   const { id } = useParams();
-  return <UserForm userId={Number(id)} />;
+
+  if (!id || id === "undefined" || id === "null") {
+    return <Navigate to="/users" replace />;
+  }
+
+  return <UserForm userId={id} />;
 }
 
 function RoleEditRoute() {
   const { id } = useParams();
-  return <RoleForm roleId={Number(id)} />;
+
+  if (!id || id === "undefined" || id === "null") {
+    return <Navigate to="/roles" replace />;
+  }
+
+  return <RoleForm roleId={id} />;
 }
 
 function EmailTemplateEditRoute() {
   const { id } = useParams();
-  return <EmailTemplateForm templateId={Number(id)} />;
+
+  if (!id || id === "undefined" || id === "null") {
+    return <Navigate to="/email-templates" replace />;
+  }
+
+  return <EmailTemplateForm templateId={id} />;
 }
 
 export default function App() {
@@ -113,7 +128,7 @@ export default function App() {
           path="/email-templates"
           element={<EmailTemplates />}
         />
-<Route
+        <Route
           path="/email-templates/:id/edit"
           element={<EmailTemplateEditRoute />}
         />

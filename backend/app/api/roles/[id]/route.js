@@ -4,7 +4,8 @@ import {
   ROLE_STATUSES,
 } from "@/lib/models/role";
 import { authorize } from "@/lib/authorization";
-import { KEY_PERMISSIONS } from "@shared/constants";
+import { KEY_PERMISSIONS, ROLE_SLUGS } from "@shared/constants";
+import { isValidUuid, invalidUuidResponse } from "@/lib/uuid";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,11 @@ export async function GET(_request, { params }) {
 
     const { id } = await params;
 
-    const role = await Role.findById(id);
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
+    const role = await Role.findByUuid(id);
 
     if (!role) {
       return Response.json(
@@ -76,11 +81,15 @@ export async function PATCH(request, { params }) {
 
     const { id } = await params;
 
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
     const body = await request.json();
 
     const { name, slug, description, status } = body;
 
-    const role = await Role.findById(id);
+    const role = await Role.findByUuid(id);
 
     if (!role) {
       return Response.json(
@@ -95,7 +104,20 @@ export async function PATCH(request, { params }) {
       );
     }
 
-    if (name !== undefined && (!name.trim() || typeof name !== "string")) {
+    if (role.slug === ROLE_SLUGS.SUPER_ADMIN) {
+      return Response.json(
+        {
+          success: false,
+          message: "Super admin role cannot be modified",
+        },
+        {
+          status: 403,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    if (name !== undefined && (typeof name !== "string" || !name.trim())) {
       return Response.json(
         {
           success: false,
@@ -159,7 +181,11 @@ export async function DELETE(_request, { params }) {
 
     const { id } = await params;
 
-    const role = await Role.findById(id);
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
+    const role = await Role.findByUuid(id);
 
     if (!role) {
       return Response.json(
@@ -169,6 +195,19 @@ export async function DELETE(_request, { params }) {
         },
         {
           status: 404,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    if (role.slug === ROLE_SLUGS.SUPER_ADMIN) {
+      return Response.json(
+        {
+          success: false,
+          message: "Super admin role cannot be deleted",
+        },
+        {
+          status: 403,
           headers: corsHeaders(),
         }
       );

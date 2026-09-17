@@ -40,25 +40,63 @@ WHERE u.id NOT IN (
 ON CONFLICT (user_id, role_id) DO NOTHING;
 
 -- Permissions (sample)
-INSERT INTO permissions (name, slug, module)
+INSERT INTO permissions (name, slug, module, description)
 VALUES
-  ('View Users',      'users.view',      'users'),
-  ('Create Users',    'users.create',    'users'),
-  ('Update Users',    'users.update',    'users'),
-  ('Delete Users',    'users.delete',    'users'),
-  ('View Roles',      'roles.view',      'roles'),
-  ('Create Roles',    'roles.create',    'roles'),
-  ('Update Roles',    'roles.update',    'roles'),
-  ('Delete Roles',    'roles.delete',    'roles'),
-  ('View Permissions','permissions.view','permissions'),
-  ('Assign Permissions','roles.assign_permissions','roles'),
-  ('View Email Templates','email_templates.view','email_templates'),
-  ('Create Email Templates','email_templates.create','email_templates'),
-  ('Update Email Templates','email_templates.update','email_templates'),
-  ('Delete Email Templates','email_templates.delete','email_templates'),
-  ('View Settings','settings.view','settings'),
-  ('Update Settings','settings.update','settings')
+  ('View Users',      'users.view',      'users', 'Browse the user directory and view user profiles'),
+  ('Create Users',    'users.create',    'users', 'Create new user accounts and assign roles'),
+  ('Update Users',    'users.update',    'users', 'Edit user details, status and access'),
+  ('Delete Users',    'users.delete',    'users', 'Remove existing user accounts'),
+  ('View Roles',      'roles.view',      'roles', 'Browse roles and their permission sets'),
+  ('Create Roles',    'roles.create',    'roles', 'Create new roles'),
+  ('Update Roles',    'roles.update',    'roles', 'Edit role details and status'),
+  ('Delete Roles',    'roles.delete',    'roles', 'Remove roles that are no longer needed'),
+  ('View Permissions','permissions.view','permissions','Browse the full list of permissions'),
+  ('Assign Permissions','roles.assign_permissions','roles','Grant and revoke permissions on roles'),
+  ('View Email Templates','email_templates.view','email_templates','Browse email templates and their content'),
+  ('Create Email Templates','email_templates.create','email_templates','Create new transactional email templates'),
+  ('Update Email Templates','email_templates.update','email_templates','Edit email template subjects and bodies'),
+  ('Delete Email Templates','email_templates.delete','email_templates','Remove unused email templates'),
+  ('View Settings','settings.view','settings','View panel settings and preferences'),
+  ('Update Settings','settings.update','settings','Change panel theme, branding and preferences')
 ON CONFLICT (slug) DO NOTHING;
+
+-- Backfill descriptions on existing databases (idempotent)
+UPDATE permissions SET description = CASE slug
+  WHEN 'users.view'                THEN 'Browse the user directory and view user profiles'
+  WHEN 'users.create'              THEN 'Create new user accounts and assign roles'
+  WHEN 'users.update'              THEN 'Edit user details, status and access'
+  WHEN 'users.delete'              THEN 'Remove existing user accounts'
+  WHEN 'roles.view'                THEN 'Browse roles and their permission sets'
+  WHEN 'roles.create'              THEN 'Create new roles'
+  WHEN 'roles.update'              THEN 'Edit role details and status'
+  WHEN 'roles.delete'              THEN 'Remove roles that are no longer needed'
+  WHEN 'permissions.view'          THEN 'Browse the full list of permissions'
+  WHEN 'roles.assign_permissions'  THEN 'Grant and revoke permissions on roles'
+  WHEN 'email_templates.view'      THEN 'Browse email templates and their content'
+  WHEN 'email_templates.create'    THEN 'Create new transactional email templates'
+  WHEN 'email_templates.update'    THEN 'Edit email template subjects and bodies'
+  WHEN 'email_templates.delete'    THEN 'Remove unused email templates'
+  WHEN 'settings.view'             THEN 'View panel settings and preferences'
+  WHEN 'settings.update'           THEN 'Change panel theme, branding and preferences'
+END
+WHERE description = ''
+  AND slug IN (
+    'users.view','users.create','users.update','users.delete',
+    'roles.view','roles.create','roles.update','roles.delete',
+    'permissions.view','roles.assign_permissions',
+    'email_templates.view','email_templates.create','email_templates.update','email_templates.delete',
+    'settings.view','settings.update'
+  );
+
+-- Backfill role descriptions on existing databases (idempotent)
+UPDATE roles SET description = CASE slug
+  WHEN 'super_admin' THEN 'Full access to every module'
+  WHEN 'admin'       THEN 'Full access to managed modules'
+  WHEN 'manager'     THEN 'Manages day-to-day operations'
+  WHEN 'staff'       THEN 'Limited operational access'
+END
+WHERE description = ''
+  AND slug IN ('super_admin', 'admin', 'manager', 'staff');
 
 -- role_has_permissions: effective permissions per role
 -- super_admin and admin get everything; manager gets a subset;

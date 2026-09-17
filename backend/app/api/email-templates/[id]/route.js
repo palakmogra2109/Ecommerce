@@ -5,6 +5,7 @@ import {
 } from "@/lib/models/emailTemplate";
 import { authorize } from "@/lib/authorization";
 import { EMAIL_TEMPLATE_PERMISSIONS } from "@shared/constants";
+import { isValidUuid, invalidUuidResponse } from "@/lib/uuid";
 
 export const runtime = "nodejs";
 
@@ -25,7 +26,11 @@ export async function GET(_request, { params }) {
 
     const { id } = await params;
 
-    const template = await EmailTemplate.findById(id);
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
+    const template = await EmailTemplate.findByUuid(id);
 
     if (!template) {
       return Response.json(
@@ -76,7 +81,11 @@ export async function PATCH(request, { params }) {
 
     const { id } = await params;
 
-    const template = await EmailTemplate.findById(id);
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
+    const template = await EmailTemplate.findByUuid(id);
 
     if (!template) {
       return Response.json(
@@ -195,7 +204,11 @@ export async function DELETE(_request, { params }) {
 
     const { id } = await params;
 
-    const template = await EmailTemplate.findById(id);
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
+    const template = await EmailTemplate.findByUuid(id);
 
     if (!template) {
       return Response.json(

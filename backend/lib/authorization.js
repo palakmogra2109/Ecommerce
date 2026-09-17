@@ -32,7 +32,9 @@ export async function authenticate() {
 
     const payload = await verifyToken(token);
 
-    const user = await User.findById(payload.userId);
+    // Internal lookup by the integer id carried in the JWT. The integer
+    // id is never sent to any client; it only exists inside the session.
+    const user = await User.getInternalById(payload.userId);
 
     if (!user || user.status !== USER_STATUS.ACTIVE) {
       return unauthorized("Account is inactive");

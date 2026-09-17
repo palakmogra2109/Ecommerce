@@ -69,7 +69,7 @@ export const RolePermission = {
   async listByRole(roleId) {
     const result = await pool.query(
       `
-      SELECT p.id,
+      SELECT p.uuid,
              p.name,
              p.slug,
              p.module,
@@ -88,20 +88,21 @@ export const RolePermission = {
   async listPermissionIdsByRole(roleId) {
     const result = await pool.query(
       `
-      SELECT permission_id
-      FROM ${TABLE}
-      WHERE role_id = $1
+      SELECT p.uuid
+      FROM ${TABLE} rhp
+      JOIN permissions p ON p.id = rhp.permission_id
+      WHERE rhp.role_id = $1
       `,
       [roleId]
     );
 
-    return result.rows.map((row) => row.permission_id);
+    return result.rows.map((row) => row.uuid);
   },
 
   async listByPermission(permissionId) {
     const result = await pool.query(
       `
-      SELECT r.id,
+      SELECT r.uuid,
              r.name,
              r.slug,
              r.status

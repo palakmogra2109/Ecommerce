@@ -2,6 +2,7 @@ import { corsHeaders } from "@/lib/cors";
 import { Permission } from "@/lib/models/permission";
 import { authorize } from "@/lib/authorization";
 import { KEY_PERMISSIONS } from "@shared/constants";
+import { isValidUuid, invalidUuidResponse } from "@/lib/uuid";
 
 export const runtime = "nodejs";
 
@@ -22,7 +23,11 @@ export async function GET(_request, { params }) {
 
     const { id } = await params;
 
-    const permission = await Permission.findById(id);
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
+    const permission = await Permission.findByUuid(id);
 
     if (!permission) {
       return Response.json(
@@ -73,11 +78,15 @@ export async function PATCH(request, { params }) {
 
     const { id } = await params;
 
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
     const body = await request.json();
 
     const { name, module: moduleName, description } = body;
 
-    const permission = await Permission.findById(id);
+    const permission = await Permission.findByUuid(id);
 
     if (!permission) {
       return Response.json(
@@ -135,7 +144,11 @@ export async function DELETE(_request, { params }) {
 
     const { id } = await params;
 
-    const permission = await Permission.findById(id);
+    if (!isValidUuid(id)) {
+      return invalidUuidResponse();
+    }
+
+    const permission = await Permission.findByUuid(id);
 
     if (!permission) {
       return Response.json(

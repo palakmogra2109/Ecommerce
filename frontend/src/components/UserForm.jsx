@@ -100,7 +100,7 @@ export default function UserForm({ userId = null }) {
              * Existing role
              */
             if (u.role) {
-              setRoleId(String(u.role.id));
+              setRoleId(String(u.role.uuid));
             } else if (u.roleId) {
               setRoleId(String(u.roleId));
             } else {
@@ -589,8 +589,8 @@ export default function UserForm({ userId = null }) {
 
                   {roles.filter((role) => !isSuperAdmin(role)).map((role) => (
                     <option
-                      key={role.id}
-                      value={role.id}
+                      key={role.uuid}
+                      value={role.uuid}
                     >
                       {role.name}
                     </option>

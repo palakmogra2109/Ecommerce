@@ -1,4 +1,5 @@
 import pool from "../db";
+import { UserRole } from "./userRole";
 
 const TABLE = "modules";
 
@@ -58,7 +59,12 @@ export const Module = {
   },
 
   // Modules the given user's roles can access via module_has_roles.
+  // Super admins can access every module.
   async listByUser(userId) {
+    if (await UserRole.isSuperAdmin(userId)) {
+      return await this.list();
+    }
+
     const result = await pool.query(
       `
       SELECT DISTINCT m.id,

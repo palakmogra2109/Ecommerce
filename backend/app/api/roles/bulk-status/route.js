@@ -1,7 +1,9 @@
 import { corsHeaders } from "@/lib/cors";
 import pool from "@/lib/db";
-import { ROLE_STATUSES } from "@/lib/models/role";
+import { Role, ROLE_STATUSES } from "@/lib/models/role";
 import { authorize } from "@/lib/authorization";
+import { ROLE_SLUGS } from "@shared/constants";
+import { isValidUuid } from "@/lib/uuid";
 
 export const runtime = "nodejs";
 
@@ -50,13 +52,43 @@ export async function POST(request) {
       );
     }
 
+    // Frontend sends role uuids; resolve them to internal ids first
+    // (same pattern as the users bulk-status route).
+    const internalIds = [];
+
+    for (const id of ids) {
+      if (!isValidUuid(String(id))) {
+        continue;
+      }
+
+      const internal = await Role.getInternalByUuid(String(id));
+
+      if (internal) {
+        internalIds.push(internal.id);
+      }
+    }
+
+    if (internalIds.length === 0) {
+      return Response.json(
+        {
+          success: false,
+          message: "No valid role ids provided",
+        },
+        {
+          status: 400,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
     const result = await pool.query(
       `
       UPDATE roles
       SET status = $1, updated_at = now()
       WHERE id = ANY($2::bigint[])
+        AND slug != $3
       `,
-      [status, ids.map(Number)]
+      [status, internalIds, ROLE_SLUGS.SUPER_ADMIN]
     );
 
     return Response.json(

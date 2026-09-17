@@ -128,3 +128,31 @@ export async function updateRolePermissions(id, permissionIds) {
 
   return await response.json();
 }
+
+export async function listUsersByRole(roleId, params = {}) {
+  const searchParams = new URLSearchParams();
+
+  if (params.search) {
+    searchParams.set("search", params.search);
+  }
+
+  if (params.page) {
+    searchParams.set("page", params.page);
+  }
+
+  if (params.limit) {
+    searchParams.set("limit", params.limit);
+  }
+
+  const query = searchParams.toString();
+
+  const response = await fetch(
+    `${API_URL}/roles/${roleId}/users${query ? `?${query}` : ""}`,
+    {
+      method: "GET",
+      credentials: "include",
+    }
+  );
+
+  return await response.json();
+}

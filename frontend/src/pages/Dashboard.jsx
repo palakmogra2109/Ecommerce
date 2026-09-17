@@ -11,7 +11,7 @@ export default function Dashboard() {
         <h2>Welcome, {user?.name}</h2>
 
         <p>Email: {user?.email}</p>
-        <p>User ID: {user?.id}</p>
+        <p>User ID: {user?.uuid}</p>
       </div>
 
       <div>

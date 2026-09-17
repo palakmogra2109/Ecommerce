@@ -22,6 +22,93 @@ import { STATUS } from "@shared/constants";
 //   onCreate         fn
 //   defaultLimit     number
 //   pageSizeOptions  array
+function FilterDropdown({ label, options, value, onChange }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    function handleClick(e) {
+      if (ref.current && !ref.current.contains(e.target)) {
+        setOpen(false);
+      }
+    }
+
+    document.addEventListener("mousedown", handleClick);
+
+    return () =>
+      document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const selected = options.find((o) => o.value === value);
+
+  return (
+    <div className="filament-filter-dd" ref={ref}>
+      <button
+        type="button"
+        className={`filament-filter-trigger${value ? " filament-filter-trigger-active" : ""}`}
+        aria-expanded={open}
+        onClick={() => setOpen((v) => !v)}
+      >
+        <svg viewBox="0 0 24 24" className="filament-filter-trigger-icon">
+          <path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z" />
+        </svg>
+        <span className="filament-filter-trigger-label">
+          {selected ? selected.label : label}
+        </span>
+        {value && <span className="filament-filter-trigger-dot" />}
+        <svg viewBox="0 0 24 24" className="filament-filter-chevron">
+          <path d="M7 10l5 5 5-5z" />
+        </svg>
+      </button>
+
+      {open && (
+        <div className="filament-filter-menu" role="menu">
+          <div className="filament-filter-menu-head">{label}</div>
+          <button
+            type="button"
+            role="menuitem"
+            className={`filament-filter-item${!value ? " filament-filter-item-selected" : ""}`}
+            onClick={() => {
+              onChange("");
+              setOpen(false);
+            }}
+          >
+            <span className="filament-filter-item-dot" />
+            <span className="filament-filter-item-label">{label}</span>
+            {!value && (
+              <svg viewBox="0 0 24 24" className="filament-filter-item-check">
+                <path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" />
+              </svg>
+            )}
+          </button>
+          {options.map((option) => (
+            <button
+              key={option.value}
+              type="button"
+              role="menuitem"
+              className={`filament-filter-item${value === option.value ? " filament-filter-item-selected" : ""}`}
+              onClick={() => {
+                onChange(option.value);
+                setOpen(false);
+              }}
+            >
+              <span className="filament-filter-item-dot" />
+              <span className="filament-filter-item-label">
+                {option.label}
+              </span>
+              {value === option.value && (
+                <svg viewBox="0 0 24 24" className="filament-filter-item-check">
+                  <path d="M9 16.2 4.8 12l-1.4 1.4L9 19 21 7l-1.4-1.4L9 16.2z" />
+                </svg>
+              )}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DataPage({
   title,
   breadcrumb,
@@ -29,7 +116,7 @@ export default function DataPage({
   filters = [],
   fetchData,
   dataKey = "data",
-  getKey = (row) => row.id,
+  getKey = (row) => row.uuid,
   columns = [],
   onStatusToggle = null,
   actions = [],
@@ -43,6 +130,8 @@ export default function DataPage({
   const [search, setSearch] = useState("");
   const [filterState, setFilterState] = useState({});
   const [selected, setSelected] = useState([]);
+  const [showBulkMenu, setShowBulkMenu] = useState(false);
+  const bulkMenuRef = useRef(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -132,6 +221,13 @@ export default function DataPage({
       ) {
         setShowColPicker(false);
       }
+
+      if (
+        bulkMenuRef.current &&
+        !bulkMenuRef.current.contains(e.target)
+      ) {
+        setShowBulkMenu(false);
+      }
     }
 
     document.addEventListener("mousedown", handleClick);
@@ -160,7 +256,7 @@ export default function DataPage({
               .includes(q);
           }
 
-          const keys = col.searchKeys || [];
+          const keys = [...(col.searchKeys || [])];
 
           if (col.sortKey) {
             keys.push(col.sortKey);
@@ -290,6 +386,7 @@ export default function DataPage({
 
     setBusy(true);
     setMessage("");
+    setShowBulkMenu(false);
 
     try {
       const result = await action.run(selected);
@@ -365,42 +462,6 @@ export default function DataPage({
           <div className="filament-card-header-left">
             <h1>{title}</h1>
           </div>
-          <div className="filament-card-header-center">
-            <div className="filament-search">
-              <svg
-                className="filament-search-icon"
-                viewBox="0 0 24 24"
-              >
-                <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
-              </svg>
-              <input
-                type="text"
-                placeholder={searchPlaceholder}
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-              />
-            </div>
-            {bulkActions.length > 0 && (
-              <div className="filament-bulk">
-                {bulkActions.map((action) => {
-                  const disabled = busy || selected.length === 0;
-
-                  return (
-                    <button
-                      key={action.label}
-                      type="button"
-                      className="filament-btn filament-btn-outline"
-                      disabled={disabled}
-                      onClick={() => handleBulk(action)}
-                    >
-                      {action.label}
-                      {selected.length > 0 ? ` (${selected.length})` : ""}
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-          </div>
           <div className="filament-card-header-right">
             {onCreate && (
               <button
@@ -420,35 +481,103 @@ export default function DataPage({
           </div>
         </div>
 
-        {/* Filters bar */}
+        {/* Filters bar: bulk actions + filters + search + column toggle */}
         <div className="filament-card-filters">
-          {filters.map((filter) => {
-            const options = filter.options || [];
+          {bulkActions.length > 0 && selected.length > 0 && (
+          <div className="filament-bulk-dd" ref={bulkMenuRef}>
+            <button
+              type="button"
+              className="filament-bulk-trigger"
+              disabled={busy || selected.length === 0}
+              aria-expanded={showBulkMenu}
+              onClick={() => setShowBulkMenu((v) => !v)}
+            >
+              <svg viewBox="0 0 24 24" className="filament-bulk-trigger-icon">
+                <path d="M3 6h18v2H3V6Zm3 5h12v2H6v-2Zm3 5h6v2H9v-2Z" />
+              </svg>
+              <span className="filament-bulk-trigger-label">
+                Bulk Actions
+              </span>
+              {selected.length > 0 && (
+                <span className="filament-bulk-count">{selected.length}</span>
+              )}
+              <svg viewBox="0 0 24 24" className="filament-bulk-chevron">
+                <path d="M7 10l5 5 5-5z" />
+              </svg>
+            </button>
 
-            return (
-              <select
+            {showBulkMenu && selected.length > 0 && (
+              <div className="filament-bulk-menu" role="menu">
+                <div className="filament-bulk-menu-head">
+                  <span>{selected.length} selected</span>
+                </div>
+                {bulkActions.map((action) => {
+                  const label = action.label.toLowerCase();
+                  const isPositive =
+                    label.includes("activate") || label.includes("active") ||
+                    label.includes("enable") || label.includes("approve");
+                  const isNegative =
+                    label.includes("deactivate") ||
+                    label.includes("disable") ||
+                    label.includes("inactive") ||
+                    label.includes("suspend") ||
+                    label.includes("delete") ||
+                    label.includes("reject");
+
+                  return (
+                    <button
+                      key={action.label}
+                      type="button"
+                      role="menuitem"
+                      className={`filament-bulk-item${isPositive ? " filament-bulk-item-positive" : ""}${isNegative ? " filament-bulk-item-negative" : ""}`}
+                      onClick={() => handleBulk(action)}
+                    >
+                      <span className="filament-bulk-item-dot" />
+                      <span className="filament-bulk-item-label">
+                        {action.label}
+                      </span>
+                      <svg viewBox="0 0 24 24" className="filament-bulk-item-arrow">
+                        <path d="M8.6 16.6 13.2 12 8.6 7.4l1.4-1.4 6 6-6 6-1.4-1.4z" />
+                      </svg>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          )}
+
+          <div className="filament-search">
+            <svg
+              className="filament-search-icon"
+              viewBox="0 0 24 24"
+            >
+              <path d="M15.5 14h-.79l-.28-.27A6.47 6.47 0 0 0 16 9.5 6.5 6.5 0 1 0 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z" />
+            </svg>
+            <input
+              type="text"
+              placeholder={searchPlaceholder}
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+            />
+          </div>
+
+          {[...filters]
+            .sort((a, b) => (a.key === "status") - (b.key === "status"))
+            .map((filter) => (
+              <FilterDropdown
                 key={filter.key}
-                className="filament-select"
+                label={filter.label}
+                options={filter.options || []}
                 value={filterState[filter.key] ?? ""}
-                onChange={(e) =>
+                onChange={(val) =>
                   setFilterState((prev) => ({
                     ...prev,
-                    [filter.key]: e.target.value,
+                    [filter.key]: val,
                   }))
                 }
-              >
-                <option value="">{filter.label}</option>
-                {options.map((option) => (
-                  <option
-                    key={option.value}
-                    value={option.value}
-                  >
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            );
-          })}
+              />
+            ))}
 
           {/* Column visibility toggle */}
           <div className="filament-col-picker" ref={colPickerRef}>
@@ -464,6 +593,7 @@ export default function DataPage({
             </button>
             {showColPicker && (
               <div className="filament-col-dropdown">
+                <div className="filament-col-menu-head">Columns</div>
                 {columns.map((col) => (
                   <label
                     key={col.label}
@@ -610,17 +740,26 @@ export default function DataPage({
                         <div className="filament-actions">
                           {actions.map((action) => {
                             if (action.type === "delete") {
+                              const isDisabled =
+                                action.disabled?.(row) ?? false;
+
+                              const disabledReason =
+                                typeof action.disabledReason ===
+                                "function"
+                                  ? action.disabledReason(row)
+                                  : action.disabledReason;
+
                               return (
                                 <button
                                   key={action.type}
                                   type="button"
                                   className="filament-action-btn filament-action-danger"
                                   title={
-                                    action.tooltip ?? "Delete"
+                                    isDisabled && disabledReason
+                                      ? disabledReason
+                                      : (action.tooltip ?? "Delete")
                                   }
-                                  disabled={action.disabled?.(
-                                    row
-                                  )}
+                                  disabled={isDisabled}
                                   onClick={() =>
                                     requestDelete(row)
                                   }
@@ -641,12 +780,30 @@ export default function DataPage({
                                 <path d="M3 17.25V21h3.75L17.8 9.94l-3.75-3.75L3 17.25Zm16.93-9.6a1 1 0 0 0 0-1.41L18.76 4.2a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.66-1.66Z" />
                               );
 
+                            const isDisabled =
+                              action.disabled?.(row) ?? false;
+
+                            const disabledReason =
+                              typeof action.disabledReason ===
+                              "function"
+                                ? action.disabledReason(row)
+                                : action.disabledReason;
+
                             return (
                               <Link
                                 key={action.type}
-                                className="filament-action-btn"
-                                title={action.tooltip}
-                                to={to}
+                                className={`filament-action-btn${isDisabled ? " filament-action-disabled" : ""}`}
+                                title={
+                                  isDisabled && disabledReason
+                                    ? disabledReason
+                                    : action.tooltip
+                                }
+                                to={isDisabled ? "#" : to}
+                                onClick={(e) => {
+                                  if (isDisabled) {
+                                    e.preventDefault();
+                                  }
+                                }}
                               >
                                 <svg viewBox="0 0 24 24">
                                   {svg}

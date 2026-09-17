@@ -1,7 +1,8 @@
 import { corsHeaders } from "@/lib/cors";
 import pool from "@/lib/db";
-import { USER_STATUSES } from "@/lib/models/user";
+import { User, USER_STATUSES } from "@/lib/models/user";
 import { authorize } from "@/lib/authorization";
+import { isValidUuid } from "@/lib/uuid";
 
 export const runtime = "nodejs";
 
@@ -50,6 +51,35 @@ export async function POST(request) {
       );
     }
 
+    const internalIds = [];
+
+    for (const id of ids) {
+      if (!isValidUuid(String(id))) {
+        continue;
+      }
+
+      const internal = await User.getInternalByUuid(String(id));
+
+      if (internal) {
+        internalIds.push(internal.id);
+      }
+    }
+
+    if (internalIds.length === 0) {
+      return Response.json(
+        {
+          success: false,
+          message: "No valid user ids provided",
+        },
+        {
+          status: 400,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
+    const authUserInternal = auth.user;
+
     const result = await pool.query(
       `
       UPDATE users
@@ -63,7 +93,7 @@ export async function POST(request) {
             AND r_excl.slug = 'super_admin'
         )
       `,
-      [status, ids.map(Number), Number(auth.user?.id)]
+      [status, internalIds, Number(authUserInternal?.id)]
     );
 
     return Response.json(

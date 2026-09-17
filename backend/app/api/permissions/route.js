@@ -2,7 +2,7 @@ import { corsHeaders } from "@/lib/cors";
 import { parsePagination } from "@/lib/pagination";
 import { Permission } from "@/lib/models/permission";
 import { Module } from "@/lib/models/module";
-import { authorize } from "@/lib/authorization";
+import { authorize, authorizeAny } from "@/lib/authorization";
 import { KEY_PERMISSIONS } from "@shared/constants";
 
 export const runtime = "nodejs";
@@ -16,7 +16,14 @@ export async function OPTIONS() {
 
 export async function GET(request) {
   try {
-    const auth = await authorize(KEY_PERMISSIONS.PERMISSIONS_VIEW);
+    // Listing permissions is needed both on the permission list page
+    // (permissions.view) and inside the role create form where an
+    // administrator decides which of those permissions to grant
+    // (roles.assign_permissions).
+    const auth = await authorizeAny([
+      KEY_PERMISSIONS.PERMISSIONS_VIEW,
+      KEY_PERMISSIONS.ROLES_ASSIGN_PERMISSIONS,
+    ]);
 
     if (!auth.ok) {
       return auth.response;

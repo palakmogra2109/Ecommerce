@@ -4,7 +4,10 @@ import { paginate } from "../pagination";
 const TABLE = "permissions";
 
 const PUBLIC_COLUMNS =
-  "id, name, slug, module, description, created_at";
+  "uuid, name, slug, module, description, created_at";
+
+const INTERNAL_COLUMNS =
+  "id, uuid, name, slug, module, description, created_at";
 
 function slugify(value) {
   return value
@@ -49,6 +52,33 @@ export const Permission = {
       WHERE id = $1
       `,
       [id]
+    );
+
+    return result.rows[0] || null;
+  },
+
+  async findByUuid(uuid) {
+    const result = await pool.query(
+      `
+      SELECT ${PUBLIC_COLUMNS}
+      FROM ${TABLE}
+      WHERE uuid = $1
+      `,
+      [uuid]
+    );
+
+    return result.rows[0] || null;
+  },
+
+  // Internal lookup that also returns the integer id.
+  async getInternalByUuid(uuid) {
+    const result = await pool.query(
+      `
+      SELECT ${INTERNAL_COLUMNS}
+      FROM ${TABLE}
+      WHERE uuid = $1
+      `,
+      [uuid]
     );
 
     return result.rows[0] || null;
@@ -99,8 +129,8 @@ export const Permission = {
     );
   },
 
-  async update(id, { name, module, description } = {}) {
-    const current = await this.findById(id);
+  async update(uuid, { name, module, description } = {}) {
+    const current = await this.findByUuid(uuid);
 
     if (!current) {
       return null;
@@ -112,28 +142,28 @@ export const Permission = {
       SET name = $1,
           module = $2,
           description = $3
-      WHERE id = $4
+      WHERE uuid = $4
       RETURNING ${PUBLIC_COLUMNS}
       `,
       [
         name !== undefined ? name.trim() : current.name,
         module !== undefined ? module : current.module,
         description !== undefined ? description : current.description,
-        id,
+        uuid,
       ]
     );
 
     return result.rows[0] || null;
   },
 
-  async remove(id) {
+  async remove(uuid) {
     const result = await pool.query(
       `
       DELETE FROM ${TABLE}
-      WHERE id = $1
-      RETURNING id
+      WHERE uuid = $1
+      RETURNING uuid
       `,
-      [id]
+      [uuid]
     );
 
     return result.rows[0] || null;

@@ -75,6 +75,64 @@ export const KEY_PERMISSIONS = Object.freeze({
   ROLES_ASSIGN_PERMISSIONS: "roles.assign_permissions",
 });
 
+// ---------- Modules ----------
+
+// Human-friendly module metadata used by the permission picker and
+// filter dropdowns across both the backend API and the admin panel.
+export const MODULES = Object.freeze({
+  USERS: { slug: "users", label: "Users", description: "Manage users, their accounts and access." },
+  ROLES: { slug: "roles", label: "Roles", description: "Manage roles and their permission sets." },
+  PERMISSIONS: { slug: "permissions", label: "Permissions", description: "Manage permissions across modules." },
+  DASHBOARD: { slug: "dashboard", label: "Dashboard", description: "View analytics and panel overview." },
+  PRODUCTS: { slug: "products", label: "Products", description: "Manage the product catalogue and inventory." },
+  ORDERS: { slug: "orders", label: "Orders", description: "Manage orders, payments and fulfilment." },
+  EMAIL_TEMPLATES: { slug: "email_templates", label: "Email Templates", description: "Manage email templates for transactional messages." },
+  SETTINGS: { slug: "settings", label: "Settings", description: "Manage panel settings and site preferences." },
+});
+
+export const MODULE_LABELS = Object.freeze(
+  Object.fromEntries(
+    Object.values(MODULES).map((m) => [m.slug, m.label])
+  )
+);
+
+export const MODULE_DESCRIPTIONS = Object.freeze(
+  Object.fromEntries(
+    Object.values(MODULES).map((m) => [m.slug, m.description])
+  )
+);
+
+// Module slugs ordered for the permission picker / filter UI.
+export const MODULE_SLUGS = Object.freeze(
+  Object.values(MODULES).map((m) => m.slug)
+);
+
+// ---------- Permission type helpers ----------
+// Classifies the create/update/delete/view suffix of a slug so the
+// picker can render a colour-coded badge per action.
+export const PERMISSION_TYPE_INFO = Object.freeze({
+  view: { label: "View", color: "#10b981" },   // emerald
+  create: { label: "Create", color: "#3b82f6" }, // blue
+  update: { label: "Update", color: "#f59e0b" }, // amber
+  delete: { label: "Delete", color: "#ef4444" }, // red
+  assign: { label: "Assign", color: "#8b5cf6" }, // violet
+  manage: { label: "Manage", color: "#14b8a6" }, // teal
+});
+
+export function permissionTypeFromSlug(slug) {
+  if (!slug || typeof slug !== "string") {
+    return null;
+  }
+
+  const parts = slug.split(".").pop() || "";
+
+  if (parts in PERMISSION_TYPE_INFO) {
+    return parts;
+  }
+
+  return null;
+}
+
 // ---------- Email templates ----------
 
 export const EMAIL_TEMPLATE_PERMISSIONS = Object.freeze({

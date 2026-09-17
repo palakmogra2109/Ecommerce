@@ -36,7 +36,7 @@ export async function POST(request) {
 
     const result = await pool.query(
       `
-      SELECT id, name, email, password, created_at
+      SELECT id, uuid, name, email, password, created_at
       FROM users
       WHERE email = $1
       `,
@@ -97,7 +97,7 @@ export async function POST(request) {
         success: true,
         message: "Login successful",
         user: {
-          id: user.id,
+          uuid: user.uuid,
           name: user.name,
           email: user.email,
           created_at: user.created_at,
