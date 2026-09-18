@@ -73,6 +73,41 @@ export const KEY_PERMISSIONS = Object.freeze({
   PERMISSIONS_UPDATE: "permissions.update",
   PERMISSIONS_DELETE: "permissions.delete",
   ROLES_ASSIGN_PERMISSIONS: "roles.assign_permissions",
+  CATEGORIES_VIEW: "categories.view",
+  CATEGORIES_CREATE: "categories.create",
+  CATEGORIES_UPDATE: "categories.update",
+  CATEGORIES_DELETE: "categories.delete",
+  BRANDS_VIEW: "brands.view",
+  BRANDS_CREATE: "brands.create",
+  BRANDS_UPDATE: "brands.update",
+  BRANDS_DELETE: "brands.delete",
+  ATTRIBUTES_VIEW: "attributes.view",
+  ATTRIBUTES_CREATE: "attributes.create",
+  ATTRIBUTES_UPDATE: "attributes.update",
+  ATTRIBUTES_DELETE: "attributes.delete",
+  PRODUCTS_VIEW: "products.view",
+  PRODUCTS_CREATE: "products.create",
+  PRODUCTS_UPDATE: "products.update",
+  PRODUCTS_DELETE: "products.delete",
+  CUSTOMERS_VIEW: "customers.view",
+  CUSTOMERS_CREATE: "customers.create",
+  CUSTOMERS_UPDATE: "customers.update",
+  CUSTOMERS_DELETE: "customers.delete",
+  ORDERS_VIEW: "orders.view",
+  ORDERS_UPDATE: "orders.update",
+  ORDERS_CANCEL: "orders.cancel",
+  ORDERS_DELETE: "orders.delete",
+  COUPONS_VIEW: "coupons.view",
+  COUPONS_CREATE: "coupons.create",
+  COUPONS_UPDATE: "coupons.update",
+  COUPONS_DELETE: "coupons.delete",
+  REVIEWS_VIEW: "reviews.view",
+  REVIEWS_MODERATE: "reviews.moderate",
+  REVIEWS_DELETE: "reviews.delete",
+  BANNERS_VIEW: "banners.view",
+  BANNERS_CREATE: "banners.create",
+  BANNERS_UPDATE: "banners.update",
+  BANNERS_DELETE: "banners.delete",
 });
 
 // ---------- Modules ----------
@@ -84,8 +119,15 @@ export const MODULES = Object.freeze({
   ROLES: { slug: "roles", label: "Roles", description: "Manage roles and their permission sets." },
   PERMISSIONS: { slug: "permissions", label: "Permissions", description: "Manage permissions across modules." },
   DASHBOARD: { slug: "dashboard", label: "Dashboard", description: "View analytics and panel overview." },
+  CATEGORIES: { slug: "categories", label: "Categories", description: "Organise products into a nested category tree." },
+  BRANDS: { slug: "brands", label: "Brands", description: "Manage product brands." },
+  ATTRIBUTES: { slug: "attributes", label: "Attributes", description: "Manage product attributes such as colour and size." },
   PRODUCTS: { slug: "products", label: "Products", description: "Manage the product catalogue and inventory." },
+  CUSTOMERS: { slug: "customers", label: "Customers", description: "Manage customer accounts and order history." },
   ORDERS: { slug: "orders", label: "Orders", description: "Manage orders, payments and fulfilment." },
+  COUPONS: { slug: "coupons", label: "Coupons", description: "Create discounts and run promotions." },
+  REVIEWS: { slug: "reviews", label: "Reviews", description: "Moderate customer product reviews." },
+  BANNERS: { slug: "banners", label: "Banners", description: "Manage promotional banners and offers." },
   EMAIL_TEMPLATES: { slug: "email_templates", label: "Email Templates", description: "Manage email templates for transactional messages." },
   SETTINGS: { slug: "settings", label: "Settings", description: "Manage panel settings and site preferences." },
 });
@@ -212,4 +254,213 @@ export function contrastText(hexColor) {
     0.2126 * linear(r) + 0.7152 * linear(g) + 0.0722 * linear(b);
 
   return luminance > 0.55 ? "#000000" : "#ffffff";
+}
+
+// ---------- Catalogue statuses ----------
+
+// Product lifecycle statuses.
+export const PRODUCT_STATUS = Object.freeze({
+  DRAFT: "DRAFT",
+  ACTIVE: "ACTIVE",
+  INACTIVE: "INACTIVE",
+  ARCHIVED: "ARCHIVED",
+});
+
+export const PRODUCT_STATUSES = Object.values(PRODUCT_STATUS);
+
+export const INVENTORY_MODE = Object.freeze({
+  SINGLE: "SINGLE",
+  PER_SKU: "PER_SKU",
+  BY_ATTRIBUTE: "BY_ATTRIBUTE",
+});
+
+export const INVENTORY_MODES = Object.values(INVENTORY_MODE);
+
+export const INVENTORY_MODE_LABELS = Object.freeze({
+  [INVENTORY_MODE.SINGLE]: "Single stock for all",
+  [INVENTORY_MODE.PER_SKU]: "Per SKU",
+  [INVENTORY_MODE.BY_ATTRIBUTE]: "By attribute",
+});
+
+export const CATEGORY_STATUS = STATUS;
+export const CATEGORY_STATUSES = STATUSES;
+
+export const BRAND_STATUS = STATUS;
+export const BRAND_STATUSES = STATUSES;
+
+export const ATTRIBUTE_STATUS = STATUS;
+export const ATTRIBUTE_STATUSES = STATUSES;
+
+export const CUSTOMER_STATUS = USER_STATUS;
+export const CUSTOMER_STATUSES = USER_STATUSES;
+
+// ---------- Orders ----------
+
+// Order lifecycle statuses.
+export const ORDER_STATUS = Object.freeze({
+  PENDING: "PENDING",
+  CONFIRMED: "CONFIRMED",
+  PROCESSING: "PROCESSING",
+  PACKED: "PACKED",
+  SHIPPED: "SHIPPED",
+  OUT_FOR_DELIVERY: "OUT_FOR_DELIVERY",
+  DELIVERED: "DELIVERED",
+  CANCELLED: "CANCELLED",
+  REFUNDED: "REFUNDED",
+});
+
+export const ORDER_STATUSES = Object.values(ORDER_STATUS);
+
+export const ORDER_STATUS_LABELS = Object.freeze({
+  [ORDER_STATUS.PENDING]: "Pending",
+  [ORDER_STATUS.CONFIRMED]: "Confirmed",
+  [ORDER_STATUS.PROCESSING]: "Processing",
+  [ORDER_STATUS.PACKED]: "Packed",
+  [ORDER_STATUS.SHIPPED]: "Shipped",
+  [ORDER_STATUS.OUT_FOR_DELIVERY]: "Out for delivery",
+  [ORDER_STATUS.DELIVERED]: "Delivered",
+  [ORDER_STATUS.CANCELLED]: "Cancelled",
+  [ORDER_STATUS.REFUNDED]: "Refunded",
+});
+
+// Ordered chain of fulfilment states used to validate that an order
+// can only move forward through the lifecycle.
+export const ORDER_FLOW = Object.freeze([
+  ORDER_STATUS.PENDING,
+  ORDER_STATUS.CONFIRMED,
+  ORDER_STATUS.PROCESSING,
+  ORDER_STATUS.PACKED,
+  ORDER_STATUS.SHIPPED,
+  ORDER_STATUS.OUT_FOR_DELIVERY,
+  ORDER_STATUS.DELIVERED,
+]);
+
+export const PAYMENT_STATUS = Object.freeze({
+  PENDING: "PENDING",
+  PAID: "PAID",
+  FAILED: "FAILED",
+  REFUNDED: "REFUNDED",
+});
+
+export const PAYMENT_STATUSES = Object.values(PAYMENT_STATUS);
+
+export const PAYMENT_STATUS_LABELS = Object.freeze({
+  [PAYMENT_STATUS.PENDING]: "Pending",
+  [PAYMENT_STATUS.PAID]: "Paid",
+  [PAYMENT_STATUS.FAILED]: "Failed",
+  [PAYMENT_STATUS.REFUNDED]: "Refunded",
+});
+
+export const ORDER_PAYMENT_METHODS = Object.freeze({
+  CARD: "card",
+  COD: "cod",
+  UPI: "upi",
+});
+
+export const ORDER_PAYMENT_METHODS_LABELS = Object.freeze({
+  [ORDER_PAYMENT_METHODS.CARD]: "Card",
+  [ORDER_PAYMENT_METHODS.COD]: "Cash on Delivery",
+  [ORDER_PAYMENT_METHODS.UPI]: "UPI",
+});
+
+// ---------- Coupons ----------
+
+export const COUPON_STATUS = STATUS;
+export const COUPON_STATUSES = STATUSES;
+
+export const COUPON_TYPE = Object.freeze({
+  PERCENTAGE: "PERCENTAGE",
+  FIXED: "FIXED",
+});
+
+export const COUPON_TYPES = Object.values(COUPON_TYPE);
+
+export const COUPON_TYPE_LABELS = Object.freeze({
+  [COUPON_TYPE.PERCENTAGE]: "Percentage (%)",
+  [COUPON_TYPE.FIXED]: "Fixed amount",
+});
+
+// Validation rules applied on the storefront/backend when a coupon is
+// used. Kept here so admin UI and checkout share the same limits.
+export const COUPON_LIMITS = Object.freeze({
+  MAX_CODE_LENGTH: 32,
+  MIN_PERCENTAGE: 1,
+  MAX_PERCENTAGE: 100,
+  MIN_FIXED_AMOUNT: 1,
+});
+
+// ---------- Reviews ----------
+
+// Moderation status for customer product reviews.
+export const REVIEW_STATUS = Object.freeze({
+  PENDING: "PENDING",
+  APPROVED: "APPROVED",
+  REJECTED: "REJECTED",
+});
+
+export const REVIEW_STATUSES = Object.values(REVIEW_STATUS);
+
+export const REVIEW_STATUS_LABELS = Object.freeze({
+  [REVIEW_STATUS.PENDING]: "Pending",
+  [REVIEW_STATUS.APPROVED]: "Approved",
+  [REVIEW_STATUS.REJECTED]: "Rejected",
+});
+
+// Rating bounds the storefront accepts.
+export const REVIEW_RATING = Object.freeze({ MIN: 1, MAX: 5 });
+
+// ---------- Banners ----------
+
+export const BANNER_STATUS = STATUS;
+export const BANNER_STATUSES = STATUSES;
+
+export const BANNER_POSITIONS = Object.freeze({
+  HERO: "hero",
+  PROMO: "promo",
+});
+
+export const BANNER_POSITIONS_LABELS = Object.freeze({
+  [BANNER_POSITIONS.HERO]: "Hero slider",
+  [BANNER_POSITIONS.PROMO]: "Promo strip",
+});
+
+// ---------- Shared helpers ----------
+
+// Builds a URL-safe slug from any text (used by categories, brands,
+// attributes and coupons in both admin UI and backend validation).
+export function slugify(value) {
+  return String(value || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+// Formats a JS Date to the compact "2026-09-17 12:30" shape used by
+// the admin tables.
+export function formatDateTime(value) {
+  if (!value) {
+    return "";
+  }
+
+  const d = new Date(value);
+
+  if (Number.isNaN(d.getTime())) {
+    return "";
+  }
+
+  const pad = (n) => String(n).padStart(2, "0");
+
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Formats a number as currency with the Indian Rupee symbol.
+export function formatCurrency(value) {
+  const n = Number(value || 0);
+
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: 0,
+  }).format(n);
 }

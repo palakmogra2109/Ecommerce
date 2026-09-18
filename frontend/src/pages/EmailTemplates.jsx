@@ -69,6 +69,12 @@ export default function EmailTemplates() {
 
         return updateEmailTemplate(row.uuid, { status: nextStatus });
       }}
+      permissions={{
+        view: "email_templates.view",
+        create: "email_templates.create",
+        update: "email_templates.update",
+        delete: "email_templates.delete",
+      }}
       actions={[
         {
           type: "edit",

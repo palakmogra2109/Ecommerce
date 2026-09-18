@@ -3,11 +3,13 @@ import { useParams, Link, useNavigate } from "react-router-dom";
 import { getUser } from "../services/users";
 import Avatar from "../components/Avatar";
 import Breadcrumb from "../components/Breadcrumb";
+import { useAuth } from "../context/AuthContext";
 import { formatDateTime } from "../utils/format";
 
 export default function UserView() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { can } = useAuth();
 
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -133,12 +135,14 @@ export default function UserView() {
             </div>
 
             <div className="view-actions">
+              {can("users.update") && (
               <Link
                 className="filament-btn filament-btn-primary"
                 to={`/users/${user.uuid}/edit`}
               >
                 Edit User
               </Link>
+            )}
             </div>
           </div>
         )}

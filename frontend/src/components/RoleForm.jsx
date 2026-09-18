@@ -11,6 +11,7 @@ import { listPermissions } from "../services/permissions";
 import PermissionPicker from "../components/PermissionPicker";
 import Breadcrumb from "../components/Breadcrumb";
 import { ROLE_SLUGS, ROLE_STATUS } from "@shared/constants";
+import { useAuth } from "../context/AuthContext";
 
 function slugify(value) {
   return (value ?? "")
@@ -26,6 +27,8 @@ export default function RoleForm({ roleId = null }) {
       ? null
       : roleId;
   const isEdit = Boolean(normalizedRoleId);
+  const { can } = useAuth();
+  const canSubmit = can(isEdit ? "roles.update" : "roles.create");
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
@@ -399,6 +402,7 @@ export default function RoleForm({ roleId = null }) {
               >
                 Cancel
               </button>
+              {canSubmit && (
               <button
                 type="submit"
                 className="filament-btn filament-btn-primary"
@@ -412,6 +416,7 @@ export default function RoleForm({ roleId = null }) {
                       ? "Save Changes"
                       : "Create Role"}
               </button>
+              )}
             </div>
           </form>
         )}

@@ -1,4 +1,24 @@
-import { NavLink, useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
+import {
+  FiBox,
+  FiChevronDown,
+  FiFileText,
+  FiGrid,
+  FiImage,
+  FiLayout,
+  FiLogOut,
+  FiMail,
+  FiPercent,
+  FiSettings,
+  FiShoppingBag,
+  FiShoppingCart,
+  FiStar,
+  FiTag,
+  FiTruck,
+  FiUsers,
+  FiUserCheck,
+} from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
 
 const MODULES = [
@@ -6,42 +26,159 @@ const MODULES = [
     slug: "dashboard",
     path: "/dashboard",
     label: "Dashboard",
+    icon: FiLayout,
   },
   {
     slug: "users",
     path: "/users",
     label: "Users",
+    icon: FiUsers,
   },
   {
     slug: "roles",
     path: "/roles",
     label: "Roles",
+    icon: FiUserCheck,
   },
   {
     slug: "email_templates",
     path: "/email-templates",
     label: "Email Templates",
+    icon: FiMail,
   },
   {
-    slug: "products",
-    path: "/products",
+    slug: "product_management",
     label: "Products",
+    icon: FiShoppingBag,
+    children: [
+      {
+        slug: "products",
+        path: "/products",
+        label: "All Products",
+        icon: FiBox,
+      },
+      {
+        slug: "categories",
+        path: "/categories",
+        label: "Categories",
+        icon: FiGrid,
+      },
+      {
+        slug: "sub_categories",
+        path: "/sub-categories",
+        label: "Sub Categories",
+        icon: FiGrid,
+      },
+      {
+        slug: "brands",
+        path: "/brands",
+        label: "Brands",
+        icon: FiTag,
+      },
+      {
+        slug: "attributes",
+        path: "/attributes",
+        label: "Attributes",
+        icon: FiFileText,
+      },
+      {
+        slug: "inventory",
+        path: "/inventory",
+        label: "Stock & Price",
+        icon: FiTruck,
+      },
+    ],
   },
   {
     slug: "orders",
     path: "/orders",
     label: "Orders",
+    icon: FiShoppingCart,
+  },
+  {
+    slug: "customers",
+    path: "/customers",
+    label: "Customers",
+    icon: FiUsers,
+  },
+  {
+    slug: "coupons",
+    path: "/coupons",
+    label: "Coupons",
+    icon: FiPercent,
+  },
+  {
+    slug: "reviews",
+    path: "/reviews",
+    label: "Reviews",
+    icon: FiStar,
+  },
+  {
+    slug: "banners",
+    path: "/banners",
+    label: "Banners",
+    icon: FiImage,
   },
   {
     slug: "settings",
     path: "/settings",
     label: "Settings",
+    icon: FiSettings,
   },
 ];
+
+function SidebarGroup({ module, pathname }) {
+  const isActive = module.children.some(
+    (child) => pathname === child.path || pathname.startsWith(`${child.path}/`)
+  );
+  const [isOpen, setIsOpen] = useState(isActive);
+  const submenuId = `sidebar-${module.slug}`;
+  const Icon = module.icon;
+  const Chevron = FiChevronDown;
+
+  return (
+    <div className="sidebar-group">
+      <button
+        type="button"
+        className={`sidebar-link sidebar-toggle${isActive ? " active" : ""}`}
+        aria-expanded={isOpen}
+        aria-controls={submenuId}
+        onClick={() => setIsOpen((open) => !open)}
+      >
+        <span className="sidebar-label">
+          {Icon && <Icon className="sidebar-item-icon" aria-hidden="true" />}
+          {module.label}
+        </span>
+        <Chevron className="sidebar-chevron" aria-hidden="true" />
+      </button>
+      <div id={submenuId} className="sidebar-submenu" hidden={!isOpen}>
+        {module.children.map((child) => {
+          const ChildIcon = child.icon;
+
+          return (
+            <NavLink
+              key={child.slug}
+              to={child.path}
+              className={({ isActive }) =>
+                isActive ? "sidebar-link active" : "sidebar-link"
+              }
+            >
+              {ChildIcon && (
+                <ChildIcon className="sidebar-item-icon" aria-hidden="true" />
+              )}
+              {child.label}
+            </NavLink>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 export default function Sidebar() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   async function handleLogout() {
     const data = await logout();
@@ -56,17 +193,28 @@ export default function Sidebar() {
       <div className="sidebar-brand">Earth धान्य</div>
 
       <nav className="sidebar-nav">
-        {MODULES.map((module) => (
-          <NavLink
-            key={module.slug}
-            to={module.path}
-            className={({ isActive }) =>
-              isActive ? "sidebar-link active" : "sidebar-link"
-            }
-          >
-            {module.label}
-          </NavLink>
-        ))}
+        {MODULES.map((module) => {
+          const Icon = module.icon;
+
+          return module.children ? (
+            <SidebarGroup
+              key={`${module.slug}:${pathname}`}
+              module={module}
+              pathname={pathname}
+            />
+          ) : (
+            <NavLink
+              key={module.slug}
+              to={module.path}
+              className={({ isActive }) =>
+                isActive ? "sidebar-link active" : "sidebar-link"
+              }
+            >
+              {Icon && <Icon className="sidebar-item-icon" aria-hidden="true" />}
+              <span className="sidebar-label">{module.label}</span>
+            </NavLink>
+          );
+        })}
       </nav>
 
       <div className="sidebar-footer">
@@ -76,6 +224,7 @@ export default function Sidebar() {
           className="sidebar-logout"
           onClick={handleLogout}
         >
+          <FiLogOut className="sidebar-item-icon" aria-hidden="true" />
           Logout
         </button>
       </div>

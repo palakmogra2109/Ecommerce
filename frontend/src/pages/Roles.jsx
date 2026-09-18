@@ -39,6 +39,12 @@ export default function Roles() {
         }
         dataKey="roles"
         getKey={(row) => row.uuid ?? row.id}
+        permissions={{
+          view: "roles.view",
+          create: "roles.create",
+          update: "roles.update",
+          delete: "roles.delete",
+        }}
         createLabel="Add Role"
         onCreate={() => navigate("/roles/new")}
         columns={[

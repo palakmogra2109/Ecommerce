@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import Breadcrumb from "../components/Breadcrumb";
 import { useSettings } from "../context/SettingsContext";
+import { useAuth } from "../context/AuthContext";
 import {
   contrastText,
   THEME_COLOR_PRESETS,
@@ -11,6 +12,8 @@ const HEX_PATTERN = /^#[0-9a-fA-F]{6}$/;
 
 export default function Settings() {
   const { settings, loading, save } = useSettings();
+  const { can } = useAuth();
+  const canUpdateSettings = can("settings.update");
 
   const [themeColor, setThemeColor] = useState(settings.theme_color);
   const [mode, setMode] = useState(
@@ -99,14 +102,16 @@ export default function Settings() {
                 {message}
               </span>
             )}
-            <button
-              type="button"
-              className="filament-btn filament-btn-primary"
-              disabled={saving || !!hexError || loading}
-              onClick={handleSave}
-            >
-              {saving ? "Saving..." : "Save Settings"}
-            </button>
+            {canUpdateSettings && (
+              <button
+                type="button"
+                className="filament-btn filament-btn-primary"
+                disabled={saving || !!hexError || loading}
+                onClick={handleSave}
+              >
+                {saving ? "Saving..." : "Save Settings"}
+              </button>
+            )}
           </div>
         </div>
 

@@ -102,6 +102,14 @@ export function AuthProvider({ children }) {
     }
   }
 
+  function can(slug) {
+    if (!slug) {
+      return true;
+    }
+
+    return (user?.permissions || []).includes(slug);
+  }
+
   return (
     <AuthContext.Provider
       value={{
@@ -110,6 +118,7 @@ export function AuthProvider({ children }) {
         login,
         register,
         logout,
+        can,
       }}
     >
       {children}

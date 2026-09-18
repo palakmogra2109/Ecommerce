@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import Breadcrumb from "./Breadcrumb";
 import Pagination from "./Pagination";
+import { useAuth } from "../context/AuthContext";
 import { STATUS } from "@shared/constants";
 
 // Reusable Filament-style data-list page.
@@ -18,6 +19,10 @@ import { STATUS } from "@shared/constants";
 //   onStatusToggle   fn
 //   actions          array
 //   bulkActions      array
+//   permissions      object { view, create, update, delete } — permission slugs
+//                    used to hide actions the current user cannot perform.
+//                    Row actions default to view/create/update/delete by type,
+//                    bulk actions and status toggles default to `update`.
 //   createLabel      string
 //   onCreate         fn
 //   defaultLimit     number
@@ -109,6 +114,8 @@ function FilterDropdown({ label, options, value, onChange }) {
   );
 }
 
+const ACTION_PERMISSIONS = { view: "view", edit: "update", delete: "delete" };
+
 export default function DataPage({
   title,
   breadcrumb,
@@ -121,6 +128,7 @@ export default function DataPage({
   onStatusToggle = null,
   actions = [],
   bulkActions = [],
+  permissions = {},
   createLabel = "Add",
   onCreate = null,
   defaultLimit = 20,
@@ -145,6 +153,25 @@ export default function DataPage({
   });
   const [page, setPage] = useState(1);
   const [limit, setLimit] = useState(defaultLimit);
+
+  const { can } = useAuth();
+
+  function actionPermission(action) {
+    if (action.permission) {
+      return action.permission;
+    }
+
+    return permissions[ACTION_PERMISSIONS[action.type]] ?? null;
+  }
+
+  // Row actions and bulk actions the current user is allowed to see.
+  const allowedActions = actions.filter((action) => can(actionPermission(action)));
+  const allowedBulkActions = bulkActions.filter((action) =>
+    can(action.permission || permissions.update)
+  );
+  const canCreate = can(permissions.create);
+  const canToggleStatus =
+    Boolean(onStatusToggle) && can(permissions.update);
 
   // Sorting
   const [sortKey, setSortKey] = useState(null);
@@ -405,7 +432,7 @@ export default function DataPage({
   }
 
   function requestDelete(row) {
-    const action = actions.find((a) => a.type === "delete");
+    const action = allowedActions.find((a) => a.type === "delete");
 
     if (action) {
       setDeletingRow(row);
@@ -417,7 +444,7 @@ export default function DataPage({
       return;
     }
 
-    const action = actions.find((a) => a.type === "delete");
+    const action = allowedActions.find((a) => a.type === "delete");
 
     if (!action) {
       setDeletingRow(null);
@@ -463,7 +490,7 @@ export default function DataPage({
             <h1>{title}</h1>
           </div>
           <div className="filament-card-header-right">
-            {onCreate && (
+            {onCreate && canCreate && (
               <button
                 type="button"
                 className="filament-btn filament-btn-primary"
@@ -483,7 +510,7 @@ export default function DataPage({
 
         {/* Filters bar: bulk actions + filters + search + column toggle */}
         <div className="filament-card-filters">
-          {bulkActions.length > 0 && selected.length > 0 && (
+          {allowedBulkActions.length > 0 && selected.length > 0 && (
           <div className="filament-bulk-dd" ref={bulkMenuRef}>
             <button
               type="button"
@@ -511,7 +538,7 @@ export default function DataPage({
                 <div className="filament-bulk-menu-head">
                   <span>{selected.length} selected</span>
                 </div>
-                {bulkActions.map((action) => {
+                {allowedBulkActions.map((action) => {
                   const label = action.label.toLowerCase();
                   const isPositive =
                     label.includes("activate") || label.includes("active") ||
@@ -713,7 +740,7 @@ export default function DataPage({
                                 <span className="filament-badge-dot" />
                                 {row.status}
                               </span>
-                              {onStatusToggle && (
+                              {canToggleStatus && (
                                 <button
                                   type="button"
                                   className={`filament-toggle ${row.status === STATUS.ACTIVE ? "filament-toggle-on" : ""}`}
@@ -738,7 +765,7 @@ export default function DataPage({
 
                       <td>
                         <div className="filament-actions">
-                          {actions.map((action) => {
+                          {allowedActions.map((action) => {
                             if (action.type === "delete") {
                               const isDisabled =
                                 action.disabled?.(row) ?? false;

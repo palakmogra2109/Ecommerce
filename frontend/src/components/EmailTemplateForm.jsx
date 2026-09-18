@@ -7,6 +7,7 @@ import {
 } from "../services/emailTemplates";
 import Breadcrumb from "../components/Breadcrumb";
 import { useSettings } from "../context/SettingsContext";
+import { useAuth } from "../context/AuthContext";
 import { STATUS, contrastText } from "@shared/constants";
 
 const SAMPLE_VALUES = {
@@ -72,6 +73,8 @@ function getPlaceholderSpans(source) {
 
 export default function EmailTemplateForm({ templateId = null }) {
   const isEdit = Boolean(templateId);
+  const { can } = useAuth();
+  const canSubmit = can(isEdit ? "email_templates.update" : "email_templates.create");
   const navigate = useNavigate();
   const { settings: ctxSettings } = useSettings();
 
@@ -704,6 +707,7 @@ export default function EmailTemplateForm({ templateId = null }) {
               >
                 Cancel
               </button>
+              {canSubmit && (
               <button
                 type="submit"
                 className="filament-btn filament-btn-primary"
@@ -715,6 +719,7 @@ export default function EmailTemplateForm({ templateId = null }) {
                     ? "Save Changes"
                     : "Create Template"}
               </button>
+              )}
             </div>
           </form>
         )}

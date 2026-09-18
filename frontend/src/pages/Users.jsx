@@ -40,6 +40,12 @@ export default function Users() {
         })
       }
       dataKey="users"
+      permissions={{
+        view: "users.view",
+        create: "users.create",
+        update: "users.update",
+        delete: "users.delete",
+      }}
       createLabel="Add User"
       onCreate={() => navigate("/users/new")}
       columns={[

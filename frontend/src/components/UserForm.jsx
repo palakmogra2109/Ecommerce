@@ -18,9 +18,12 @@ import Avatar from "../components/Avatar";
 import PhoneInput from "../components/PhoneInput";
 import { validateMobile } from "../utils/validation";
 import { isSuperAdmin } from "@shared/constants";
+import { useAuth } from "../context/AuthContext";
 
 export default function UserForm({ userId = null }) {
   const isEdit = Boolean(userId);
+  const { can } = useAuth();
+  const canSubmit = can(isEdit ? "users.update" : "users.create");
   const navigate = useNavigate();
 
   const [form, setForm] = useState({
@@ -652,6 +655,7 @@ export default function UserForm({ userId = null }) {
                 Cancel
               </button>
 
+              {canSubmit && (
               <button
                 type="submit"
                 className="
@@ -669,6 +673,7 @@ export default function UserForm({ userId = null }) {
                     ? "Save Changes"
                     : "Create User"}
               </button>
+              )}
 
             </div>
 
