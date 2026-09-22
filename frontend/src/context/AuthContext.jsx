@@ -32,6 +32,26 @@ function setCachedUser(user) {
   }
 }
 
+// Default landing pages in priority order. After login (or on an
+// authenticated visit to a public route) the user is sent to the
+// first module they are allowed to open.
+const LANDING_MODULES = [
+  { path: "/dashboard", permission: "dashboard.view" },
+  { path: "/users", permission: "users.view" },
+  { path: "/roles", permission: "roles.view" },
+  { path: "/email-templates", permission: "email_templates.view" },
+  { path: "/products", permission: "products.view" },
+  { path: "/orders", permission: "orders.view" },
+  { path: "/customers", permission: "customers.view" },
+  { path: "/categories", permission: "categories.view" },
+  { path: "/brands", permission: "brands.view" },
+  { path: "/attributes", permission: "attributes.view" },
+  { path: "/coupons", permission: "coupons.view" },
+  { path: "/reviews", permission: "reviews.view" },
+  { path: "/banners", permission: "banners.view" },
+  { path: "/settings", permission: "settings.view" },
+];
+
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(getCachedUser);
   const [loading, setLoading] = useState(() => !getCachedUser());
@@ -107,7 +127,18 @@ export function AuthProvider({ children }) {
       return true;
     }
 
+    if ((user?.roles || []).includes("super_admin")) {
+      return true;
+    }
+
     return (user?.permissions || []).includes(slug);
+  }
+
+  // First module this user is allowed to open, fallback to dashboard.
+  function getLandingPath() {
+    const found = LANDING_MODULES.find((module) => can(module.permission));
+
+    return found ? found.path : "/dashboard";
   }
 
   return (
@@ -119,6 +150,7 @@ export function AuthProvider({ children }) {
         register,
         logout,
         can,
+        getLandingPath,
       }}
     >
       {children}

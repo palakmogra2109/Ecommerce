@@ -21,6 +21,26 @@ import {
 } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
 
+// Permission slug that grants access to each sidebar module.
+const MODULE_VIEW_PERMISSIONS = {
+  dashboard: "dashboard.view",
+  users: "users.view",
+  roles: "roles.view",
+  email_templates: "email_templates.view",
+  products: "products.view",
+  categories: "categories.view",
+  sub_categories: "categories.view",
+  brands: "brands.view",
+  attributes: "attributes.view",
+  inventory: "products.view",
+  orders: "orders.view",
+  customers: "customers.view",
+  coupons: "coupons.view",
+  reviews: "reviews.view",
+  banners: "banners.view",
+  settings: "settings.view",
+};
+
 const MODULES = [
   {
     slug: "dashboard",
@@ -176,9 +196,28 @@ function SidebarGroup({ module, pathname }) {
 }
 
 export default function Sidebar() {
-  const { user, logout } = useAuth();
+  const { user, logout, can } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+
+  // Non-super-admin users only see the modules their permissions allow.
+  // Users with no permissions see no modules at all.
+  const visibleModules = MODULES.map((module) => {
+    if (module.children) {
+      return {
+        ...module,
+        children: module.children.filter((child) =>
+          can(MODULE_VIEW_PERMISSIONS[child.slug])
+        ),
+      };
+    }
+
+    return module;
+  }).filter((module) =>
+    module.children
+      ? module.children.length > 0
+      : can(MODULE_VIEW_PERMISSIONS[module.slug])
+  );
 
   async function handleLogout() {
     const data = await logout();
@@ -193,28 +232,36 @@ export default function Sidebar() {
       <div className="sidebar-brand">Earth धान्य</div>
 
       <nav className="sidebar-nav">
-        {MODULES.map((module) => {
-          const Icon = module.icon;
+        {visibleModules.length === 0 ? (
+          <p className="sidebar-empty">
+            No modules are assigned to your account.
+          </p>
+        ) : (
+          visibleModules.map((module) => {
+            const Icon = module.icon;
 
-          return module.children ? (
-            <SidebarGroup
-              key={`${module.slug}:${pathname}`}
-              module={module}
-              pathname={pathname}
-            />
-          ) : (
-            <NavLink
-              key={module.slug}
-              to={module.path}
-              className={({ isActive }) =>
-                isActive ? "sidebar-link active" : "sidebar-link"
-              }
-            >
-              {Icon && <Icon className="sidebar-item-icon" aria-hidden="true" />}
-              <span className="sidebar-label">{module.label}</span>
-            </NavLink>
-          );
-        })}
+            return module.children ? (
+              <SidebarGroup
+                key={`${module.slug}:${pathname}`}
+                module={module}
+                pathname={pathname}
+              />
+            ) : (
+              <NavLink
+                key={module.slug}
+                to={module.path}
+                className={({ isActive }) =>
+                  isActive ? "sidebar-link active" : "sidebar-link"
+                }
+              >
+                {Icon && (
+                  <Icon className="sidebar-item-icon" aria-hidden="true" />
+                )}
+                <span className="sidebar-label">{module.label}</span>
+              </NavLink>
+            );
+          })
+        )}
       </nav>
 
       <div className="sidebar-footer">

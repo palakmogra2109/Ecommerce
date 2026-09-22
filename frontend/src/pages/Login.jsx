@@ -8,7 +8,7 @@ import {
 import PasswordInput from "../components/PasswordInput";
 
 export default function Login() {
-  const { login } = useAuth();
+  const { login, getLandingPath } = useAuth();
 
   const navigate = useNavigate();
 
@@ -81,7 +81,7 @@ export default function Login() {
 
         setErrors({});
 
-        navigate("/dashboard");
+        navigate(getLandingPath());
       } else {
         setMessage(data.message);
       }

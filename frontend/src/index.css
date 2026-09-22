@@ -243,6 +243,17 @@ body {
   gap: 2px;
 }
 
+.sidebar-empty {
+  margin: 16px 20px;
+  padding: 14px 16px;
+  border: 1px dashed rgba(255, 255, 255, 0.18);
+  border-radius: 8px;
+  color: #9aa3b2;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: center;
+}
+
 .sidebar-link {
   display: flex;
   align-items: center;
@@ -354,6 +365,146 @@ body {
   padding: 28px;
   background: var(--bg);
   min-width: 0;
+}
+
+/* 403 - Access denied (full page, no sidebar) */
+
+.forbidden {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+  background:
+    radial-gradient(circle at 20% 20%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 40%),
+    radial-gradient(circle at 80% 80%, color-mix(in srgb, #ef4444 8%, transparent), transparent 40%),
+    var(--bg);
+}
+
+.forbidden-card {
+  width: 460px;
+  max-width: 95%;
+  padding: 44px 40px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.08);
+  text-align: center;
+}
+
+.forbidden-icon-wrap {
+  width: 64px;
+  height: 64px;
+  margin: 0 auto 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, #ef4444 14%, var(--surface));
+  color: #ef4444;
+}
+
+.forbidden-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.forbidden-code {
+  font-size: 52px;
+  font-weight: 800;
+  line-height: 1;
+  color: var(--text);
+  letter-spacing: 2px;
+}
+
+.forbidden-title {
+  margin: 8px 0 10px;
+  font-size: 22px;
+  color: var(--text);
+}
+
+.forbidden-message {
+  margin: 0 0 18px;
+  font-size: 15px;
+  line-height: 1.6;
+  color: var(--text-muted);
+}
+
+.forbidden-message strong {
+  color: var(--text);
+  font-weight: 700;
+}
+
+.forbidden-required {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 26px;
+  padding: 8px 12px;
+  background: var(--surface-3);
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.forbidden-required code {
+  padding: 2px 8px;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  font-size: 12px;
+  color: var(--text);
+  word-break: break-all;
+}
+
+.forbidden-actions {
+  display: flex;
+  gap: 12px;
+  justify-content: center;
+}
+
+.forbidden-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 20px;
+  border: none;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-decoration: none;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+
+.forbidden-btn:hover {
+  transform: translateY(-1px);
+}
+
+.forbidden-btn-primary {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.forbidden-btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.forbidden-btn-ghost {
+  background: transparent;
+  border: 1px solid var(--border-strong);
+  color: var(--text-body);
+}
+
+.forbidden-btn-ghost:hover {
+  background: var(--surface-3);
+}
+
+.forbidden-btn-icon {
+  font-size: 15px;
 }
 
 .dashboard h1 {

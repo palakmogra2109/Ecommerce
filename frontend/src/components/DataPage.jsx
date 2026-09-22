@@ -685,16 +685,18 @@ export default function DataPage({
                     </span>
                   </th>
                 ))}
-                <th className="filament-th-actions">
-                  Actions
-                </th>
+                {allowedActions.length > 0 && (
+                  <th className="filament-th-actions">
+                    Actions
+                  </th>
+                )}
               </tr>
             </thead>
             <tbody>
               {loading ? (
                 <tr>
                   <td
-                    colSpan={visibleColumns.length + 2}
+                    colSpan={visibleColumns.length + 1 + (allowedActions.length > 0 ? 1 : 0)}
                     className="filament-empty"
                   >
                     <div className="filament-spinner" />
@@ -703,7 +705,7 @@ export default function DataPage({
               ) : data.length === 0 ? (
                 <tr>
                   <td
-                    colSpan={visibleColumns.length + 2}
+                    colSpan={visibleColumns.length + 1 + (allowedActions.length > 0 ? 1 : 0)}
                     className="filament-empty"
                   >
                     No {title.toLowerCase()} found.
@@ -763,6 +765,7 @@ export default function DataPage({
                         </td>
                       ))}
 
+                      {allowedActions.length > 0 && (
                       <td>
                         <div className="filament-actions">
                           {allowedActions.map((action) => {
@@ -840,6 +843,7 @@ export default function DataPage({
                           })}
                         </div>
                       </td>
+                      )}
                     </tr>
                   );
                 })
