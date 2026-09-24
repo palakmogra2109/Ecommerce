@@ -43,6 +43,9 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import PublicRoute from "./components/PublicRoute";
 import AdminLayout from "./components/AdminLayout";
 import PermissionRoute from "./components/PermissionRoute";
+import StorePanel from "./pages/StorePanel";
+import StoreRegister from "./pages/StoreRegister";
+import StoreOnboarding from "./pages/StoreOnboarding";
 
 function UserEditRoute() {
   const { id } = useParams();
@@ -185,6 +188,16 @@ export default function App() {
       />
 
       {/* /register → Register if logged out */}
+      {/* /register/store → Store Registration */}
+      <Route
+        path="/register/store"
+        element={
+          <PublicRoute>
+            <StoreRegister />
+          </PublicRoute>
+        }
+      />
+
       <Route
         path="/register"
         element={
@@ -473,6 +486,15 @@ export default function App() {
         <Route
           path="/settings"
           element={adminGuard("settings.view", "Settings", <Settings />)}
+        />
+        {/* Store Manager */}
+        <Route
+          path="/manager"
+          element={<StorePanel />}
+        />
+        <Route
+          path="/manager/onboarding"
+          element={<StoreOnboarding />}
         />
       </Route>
 

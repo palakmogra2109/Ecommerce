@@ -37,6 +37,7 @@ function setCachedUser(user) {
 // first module they are allowed to open.
 const LANDING_MODULES = [
   { path: "/dashboard", permission: "dashboard.view" },
+  { path: "/manager", permission: "store_dashboard.view" },
   { path: "/users", permission: "users.view" },
   { path: "/roles", permission: "roles.view" },
   { path: "/email-templates", permission: "email_templates.view" },
@@ -136,6 +137,18 @@ export function AuthProvider({ children }) {
 
   // First module this user is allowed to open, fallback to dashboard.
   function getLandingPath() {
+    // Store managers go straight to their store panel.
+    const storeBranches = user?.branches?.length ? user.branches : null;
+
+    if (storeBranches) {
+      // Don't coach admin users that happen to manage a branch into the
+      // store panel unless they can't open anything else.
+      const adminAble = LANDING_MODULES.some(
+        (m) => m.path !== "/manager" && can(m.permission)
+      );
+      if (!adminAble) return "/manager";
+    }
+
     const found = LANDING_MODULES.find((module) => can(module.permission));
 
     return found ? found.path : "/dashboard";
@@ -149,6 +162,7 @@ export function AuthProvider({ children }) {
         login,
         register,
         logout,
+        refresh: checkAuth,
         can,
         getLandingPath,
       }}

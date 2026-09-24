@@ -162,6 +162,13 @@ export default function Login() {
             Register
           </Link>
         </p>
+
+        <p>
+          Want to open a store?{" "}
+          <Link to="/register/store">
+            Register your store
+          </Link>
+        </p>
       </form>
     </div>
   );

@@ -2,7 +2,7 @@ import { cookies } from "next/headers";
 import pool from "@/lib/db";
 import { verifyToken } from "@/lib/auth";
 import { corsHeaders } from "@/lib/cors";
-import { getUserAccess } from "@/lib/authorization";
+import { getUserAccess, getUserBranches } from "@/lib/authorization";
 
 export const runtime = "nodejs";
 
@@ -58,7 +58,10 @@ export async function GET() {
 
     const user = result.rows[0];
 
-    const access = await getUserAccess(user.id);
+    const [access, branches] = await Promise.all([
+      getUserAccess(user.id),
+      getUserBranches(user.id),
+    ]);
 
     return Response.json(
       {
@@ -71,6 +74,7 @@ export async function GET() {
           roles: access.roles,
           permissions: access.permissions,
           modules: access.modules,
+          branches,
         },
       },
       {

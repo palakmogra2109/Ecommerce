@@ -489,3 +489,174 @@ CREATE INDEX IF NOT EXISTS banners_schedule_idx ON banners(status, position, sta
 ALTER TABLE banners ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ;
 ALTER TABLE banners ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS banners_uuid_key ON banners(uuid);
+
+-- =============================================================
+-- branches
+-- A branch is a physical store the customer can order from. Store
+-- managers (branch_users rows) manage its products, stock and orders
+-- from the store panel.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS branches (
+  id                  BIGSERIAL PRIMARY KEY,
+  uuid                UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  name                TEXT NOT NULL,
+  code                TEXT NOT NULL UNIQUE,
+  phone               TEXT,
+  email               TEXT,
+  address             TEXT,
+  addressLine1        TEXT,
+  addressLine2        TEXT,
+  city                TEXT,
+  state               TEXT,
+  country             TEXT NOT NULL DEFAULT 'India',
+  postalCode          TEXT,
+  latitude            NUMERIC(10,7),
+  longitude           NUMERIC(10,7),
+  openingTime         TIME,
+  closingTime         TIME,
+  timezone            TEXT NOT NULL DEFAULT 'Asia/Kolkata',
+  status              TEXT NOT NULL DEFAULT 'ACTIVE'
+                      CHECK (status IN ('ACTIVE', 'INACTIVE')),
+  deliveryEnabled     BOOLEAN NOT NULL DEFAULT TRUE,
+  pickupEnabled       BOOLEAN NOT NULL DEFAULT TRUE,
+  deliveryRadius      NUMERIC(10,2),
+  description         TEXT,
+  logo                TEXT,
+  onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS logo TEXT;
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE;
+CREATE UNIQUE INDEX IF NOT EXISTS branches_uuid_key ON branches(uuid);
+CREATE INDEX IF NOT EXISTS branches_city_idx ON branches(city);
+CREATE INDEX IF NOT EXISTS branches_postal_code_idx ON branches(postalCode);
+
+-- =============================================================
+-- branch_users
+-- Maps a user to the branch(es) they manage.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS branch_users (
+  id         BIGSERIAL PRIMARY KEY,
+  uuid       UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  branchId   BIGINT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+  userId     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  role       TEXT NOT NULL DEFAULT 'BRANCH_MANAGER',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (branchId, userId)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS branch_users_uuid_key ON branch_users(uuid);
+CREATE INDEX IF NOT EXISTS bu_branch_idx ON branch_users(branchId);
+CREATE INDEX IF NOT EXISTS bu_user_idx ON branch_users(userId);
+
+-- =============================================================
+-- branch_products
+-- Per-branch pricing and stock for a product (or variant).
+-- =============================================================
+CREATE TABLE IF NOT EXISTS branch_products (
+  id                BIGSERIAL PRIMARY KEY,
+  uuid              UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  branchId          BIGINT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+  productId         BIGINT REFERENCES products(id) ON DELETE CASCADE,
+  productUuid       UUID REFERENCES products(uuid),
+  variantId         TEXT,
+  sellingPrice      NUMERIC(12,2),
+  compareAtPrice    NUMERIC(12,2),
+  costPrice         NUMERIC(12,2),
+  stockQuantity     INTEGER NOT NULL DEFAULT 0,
+  reservedQuantity  INTEGER NOT NULL DEFAULT 0,
+  availableQuantity INTEGER GENERATED ALWAYS AS (stockQuantity - reservedQuantity) STORED,
+  lowStockThreshold INTEGER NOT NULL DEFAULT 5,
+  isAvailable       BOOLEAN NOT NULL DEFAULT TRUE,
+  status            TEXT NOT NULL DEFAULT 'ACTIVE'
+                    CHECK (status IN ('ACTIVE', 'INACTIVE', 'OUT_OF_STOCK', 'DISCONTINUED')),
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (branchId, productId)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS branch_products_uuid_key ON branch_products(uuid);
+CREATE INDEX IF NOT EXISTS bp_branch_idx ON branch_products(branchId);
+CREATE INDEX IF NOT EXISTS bp_product_idx ON branch_products(productId);
+CREATE INDEX IF NOT EXISTS bp_status_idx ON branch_products(status);
+CREATE INDEX IF NOT EXISTS bp_variant_idx ON branch_products(variantId);
+
+-- =============================================================
+-- branch_inventory_transactions
+-- Ledger of stock changes per branch (purchases, orders, returns, ...).
+-- =============================================================
+CREATE TABLE IF NOT EXISTS branch_inventory_transactions (
+  id              BIGSERIAL PRIMARY KEY,
+  uuid            UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  branchId        BIGINT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+  productId       BIGINT REFERENCES products(id) ON DELETE SET NULL,
+  productUuid     UUID REFERENCES products(uuid),
+  variantId       TEXT,
+  transactionType TEXT NOT NULL
+                  CHECK (transactionType IN ('PURCHASE','ORDER','RETURN','DAMAGE','ADJUSTMENT','TRANSFER_IN','TRANSFER_OUT')),
+  quantity        INTEGER NOT NULL,
+  previousStock   INTEGER NOT NULL DEFAULT 0,
+  newStock        INTEGER NOT NULL DEFAULT 0,
+  referenceType   TEXT,
+  referenceId     UUID,
+  reason          TEXT,
+  createdBy       BIGINT REFERENCES users(id),
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS branch_inventory_transactions_uuid_key ON branch_inventory_transactions(uuid);
+CREATE INDEX IF NOT EXISTS bit_branch_idx ON branch_inventory_transactions(branchId);
+CREATE INDEX IF NOT EXISTS bit_product_idx ON branch_inventory_transactions(productId);
+CREATE INDEX IF NOT EXISTS bit_created_idx ON branch_inventory_transactions(created_at);
+CREATE INDEX IF NOT EXISTS bit_reference_idx ON branch_inventory_transactions(referenceType, referenceId);
+CREATE INDEX IF NOT EXISTS bit_transaction_type_idx ON branch_inventory_transactions(transactionType);
+
+-- =============================================================
+-- branch_stock_transfers + branch_transfer_items
+-- Move stock between branches.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS branch_stock_transfers (
+  id                  BIGSERIAL PRIMARY KEY,
+  uuid                UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  transferNumber      TEXT NOT NULL UNIQUE,
+  sourceBranchId      BIGINT NOT NULL REFERENCES branches(id),
+  destinationBranchId BIGINT NOT NULL REFERENCES branches(id),
+  status              TEXT NOT NULL DEFAULT 'REQUESTED'
+                      CHECK (status IN ('REQUESTED','APPROVED','IN_TRANSIT','RECEIVED','CANCELLED')),
+  requestedById       BIGINT REFERENCES users(id),
+  approvedById        BIGINT REFERENCES users(id),
+  receivedById        BIGINT REFERENCES users(id),
+  reason              TEXT,
+  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS branch_stock_transfers_uuid_key ON branch_stock_transfers(uuid);
+CREATE INDEX IF NOT EXISTS bst_source_idx ON branch_stock_transfers(sourceBranchId);
+CREATE INDEX IF NOT EXISTS bst_dest_idx ON branch_stock_transfers(destinationBranchId);
+CREATE INDEX IF NOT EXISTS bst_status_idx ON branch_stock_transfers(status);
+
+CREATE TABLE IF NOT EXISTS branch_transfer_items (
+  id                BIGSERIAL PRIMARY KEY,
+  uuid              UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  transferId        BIGINT NOT NULL REFERENCES branch_stock_transfers(id) ON DELETE CASCADE,
+  productId         BIGINT REFERENCES products(id) ON DELETE SET NULL,
+  productUuid       UUID REFERENCES products(uuid),
+  variantId         TEXT,
+  quantity          INTEGER NOT NULL,
+  previousStockSource INTEGER,
+  previousStockDest INTEGER,
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS branch_transfer_items_uuid_key ON branch_transfer_items(uuid);
+CREATE INDEX IF NOT EXISTS bti_transfer_idx ON branch_transfer_items(transferId);
+CREATE INDEX IF NOT EXISTS bti_product_idx ON branch_transfer_items(productId);
+
+-- Orders belong to a branch when placed against one.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS branchId BIGINT REFERENCES branches(id);
+CREATE INDEX IF NOT EXISTS orders_branch_idx ON orders(branchId);
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS branchId BIGINT REFERENCES branches(id);

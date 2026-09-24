@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { verifyToken } from "./auth";
 import { corsHeaders } from "./cors";
+import pool from "./db";
 import { User } from "./models/user";
 import { UserRole } from "./models/userRole";
 import { UserPermission } from "./models/userPermission";
@@ -74,6 +75,76 @@ export async function getUserAccess(userId) {
     roles,
     permissions: [...new Set([...permissions, ...userPermissions])],
     modules,
+  };
+}
+
+// Branches the user belongs to (via branch_users), surfaced in the
+// auth/user payloads so the store panel knows which store to manage.
+export async function getUserBranches(userId) {
+  const result = await pool.query(
+    `SELECT b.uuid, b.name, b.code, b.city, b.phone, b.email, b.status,
+            COALESCE(b.onboarding_completed, FALSE) AS onboarding_completed
+     FROM branch_users bu
+     JOIN branches b ON b.id = bu.branchId
+     WHERE bu.userId = $1 AND b.status = 'ACTIVE'
+     ORDER BY b.name ASC`,
+    [userId]
+  );
+  return result.rows.map((r) => ({
+    uuid: r.uuid,
+    name: r.name,
+    code: r.code,
+    city: r.city,
+    phone: r.phone,
+    email: r.email,
+    status: r.status,
+    onboardingCompleted: Boolean(r.onboarding_completed),
+  }));
+}
+
+// Authenticates the request and verifies the given branch uuid belongs
+// to the current user. Returns { ok:true, user, branchId, branch } on
+// success or { ok:false, response } when access is denied.
+export async function requireBranchAccess(branchUuid) {
+  const auth = await authenticate();
+
+  if (!auth.ok) {
+    return auth;
+  }
+
+  if (!branchUuid || typeof branchUuid !== "string") {
+    return {
+      ok: false,
+      response: Response.json(
+        { success: false, message: "branchId is required" },
+        { status: 400, headers: corsHeaders() }
+      ),
+    };
+  }
+
+  const result = await pool.query(
+    `SELECT b.id, b.uuid, b.name, b.code
+     FROM branch_users bu
+     JOIN branches b ON b.id = bu.branchId
+     WHERE bu.userId = $1 AND b.uuid = $2 AND b.status = 'ACTIVE'`,
+    [auth.user.id, branchUuid]
+  );
+
+  if (result.rows.length === 0) {
+    return {
+      ok: false,
+      response: Response.json(
+        { success: false, message: "Store not found for this account" },
+        { status: 403, headers: corsHeaders() }
+      ),
+    };
+  }
+
+  return {
+    ok: true,
+    user: auth.user,
+    branchId: result.rows[0].id,
+    branch: result.rows[0],
   };
 }
 
