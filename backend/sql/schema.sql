@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
   password    TEXT NOT NULL,
   mobile      TEXT,
   avatar      TEXT,
+  parent_id   BIGINT REFERENCES users(id) ON DELETE SET NULL,
   status      TEXT NOT NULL DEFAULT 'ACTIVE'
               CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -28,6 +29,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS status    TEXT NOT NULL DEFAULT 'ACTI
 ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile     TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar     TEXT;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_id  BIGINT REFERENCES users(id) ON DELETE SET NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS users_uuid_key ON users(uuid);
 
 -- =============================================================

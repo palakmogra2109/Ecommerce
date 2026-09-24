@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listBrands(params = {}) {
   const searchParams = new URLSearchParams();
@@ -27,7 +29,8 @@ export async function listBrands(params = {}) {
 
   const response = await fetch(
     `${API_URL}/brands${query ? `?${query}` : ""}`,
-    { method: "GET", credentials: "include" }
+    {
+    headers: authHeaders(), method: "GET", credentials: "include" }
   );
 
   return await response.json();
@@ -36,7 +39,8 @@ export async function listBrands(params = {}) {
 export async function bulkUpdateBrandStatus(ids, status) {
   const response = await fetch(`${API_URL}/brands/bulk-status`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ ids, status }),
   });
@@ -46,6 +50,7 @@ export async function bulkUpdateBrandStatus(ids, status) {
 
 export async function getBrand(id) {
   const response = await fetch(`${API_URL}/brands/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -56,7 +61,8 @@ export async function getBrand(id) {
 export async function createBrand(data) {
   const response = await fetch(`${API_URL}/brands`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -67,7 +73,8 @@ export async function createBrand(data) {
 export async function updateBrand(id, data) {
   const response = await fetch(`${API_URL}/brands/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -77,6 +84,7 @@ export async function updateBrand(id, data) {
 
 export async function deleteBrand(id) {
   const response = await fetch(`${API_URL}/brands/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });

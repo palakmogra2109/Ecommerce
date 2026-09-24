@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listUsers(params = {}) {
   const searchParams = new URLSearchParams();
@@ -24,6 +26,7 @@ export async function listUsers(params = {}) {
   const response = await fetch(
     `${API_URL}/users${query ? `?${query}` : ""}`,
     {
+      headers: authHeaders(),
       method: "GET",
       credentials: "include",
     }
@@ -34,6 +37,7 @@ export async function listUsers(params = {}) {
 
 export async function getUser(id) {
   const response = await fetch(`${API_URL}/users/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -46,6 +50,7 @@ export async function createUser(data) {
     method: "POST",
 
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
 
@@ -62,6 +67,7 @@ export async function updateUser(id, data) {
     method: "PATCH",
 
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
 
@@ -75,6 +81,7 @@ export async function updateUser(id, data) {
 
 export async function deleteUser(id) {
   const response = await fetch(`${API_URL}/users/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });
@@ -86,6 +93,7 @@ export async function getUserPermissions(id) {
   const response = await fetch(
     `${API_URL}/users/${id}/permissions`,
     {
+      headers: authHeaders(),
       method: "GET",
       credentials: "include",
     }
@@ -101,6 +109,7 @@ export async function updateUserPermissions(id, permissionIds) {
       method: "PUT",
 
       headers: {
+        ...authHeaders(),
         "Content-Type": "application/json",
       },
 
@@ -120,6 +129,7 @@ export async function bulkUpdateUserStatus(ids, status) {
       method: "POST",
 
       headers: {
+        ...authHeaders(),
         "Content-Type": "application/json",
       },
 

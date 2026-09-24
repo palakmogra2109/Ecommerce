@@ -2,10 +2,11 @@ import { useEffect, useState } from "react";
 import {
   FiHome, FiShoppingCart, FiTruck, FiUser, FiSearch,
   FiChevronLeft, FiChevronRight, FiPlus, FiMinus, FiTrash2,
-  FiShield, FiCreditCard, FiRefreshCw, FiStar, FiMapPin,
+  FiShield, FiCreditCard, FiRefreshCw, FiStar, FiMapPin, FiShoppingBag,
 } from "react-icons/fi";
 
 const BACKEND_BASE = "/api/store";
+const ADMIN_BASE = "/api";
 
 async function api(path, options = {}) {
   const res = await fetch(`${BACKEND_BASE}${path}`, {
@@ -14,6 +15,15 @@ async function api(path, options = {}) {
   });
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, data };
+}
+
+async function adminApi(path, options = {}) {
+  const res = await fetch(`${ADMIN_BASE}${path}`, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options,
+  });
+  const data = await res.json().catch(() => ({}));
+  return data;
 }
 
 const VIEWS = { CATALOG: 1, DETAIL: 2, CART: 3, CHECKOUT: 4, TRACK: 5, ACCOUNT: 6 };
@@ -61,6 +71,11 @@ export default function Storefront() {
       return [];
     }
   });
+  const [selectedBranch, setSelectedBranch] = useState(() => {
+    try { return localStorage.getItem("sf_branch") ? JSON.parse(localStorage.getItem("sf_branch")) : null; } catch { return null; }
+  });
+  const [branchList, setBranchList] = useState([]);
+  const [showBranchSelector, setShowBranchSelector] = useState(false);
   const [toast, setToast] = useState(null);
   const [placedOrder, setPlacedOrder] = useState(null);
 
@@ -80,6 +95,7 @@ export default function Storefront() {
     const qs = new URLSearchParams({ page, limit: 12 });
     if (search.trim()) qs.set("search", search.trim());
     if (category) qs.set("category", category);
+    if (selectedBranch) qs.set("branchId", selectedBranch.uuid);
     const { ok, data } = await api(`/products?${qs}`);
     if (!ok) {
       setError(data.message || "Could not load products");
@@ -94,6 +110,27 @@ export default function Storefront() {
     loadProducts();
   }, [page, category]);
 
+  // Load branch list when selector is shown
+  async function loadBranches() {
+    try {
+      const res = await fetch(`${ADMIN_BASE}/branches?limit=100`, { credentials: "include" });
+      const data = await res.json();
+      if (data.success) setBranchList(data.branches || []);
+    } catch {}
+  }
+
+  function handleBranchSelect(branch) {
+    setSelectedBranch(branch);
+    localStorage.setItem("sf_branch", JSON.stringify(branch));
+    setShowBranchSelector(false);
+    setPage(1);
+    loadProducts();
+  }
+
+  useEffect(() => {
+    loadProducts();
+  }, [selectedBranch]);
+
   function goCatalog() {
     setView(VIEWS.CATALOG);
     setCurrent(null);
@@ -106,9 +143,9 @@ export default function Storefront() {
     const variantName = variant?.name || null;
     const variantPrice = variant?.price != null ? Number(variant.price) : Number(product.price);
     const variantStock = variant?.stock ?? product.stock;
-    const variantDiscount = variant?.discount_price != null
-      ? Number(variant.discount_price)
-      : Number(product.discount_price || 0);
+    const variantDiscount = (variant?.discount_price ?? variant?.discountPrice) != null
+      ? Number((variant?.discount_price ?? variant?.discountPrice) ?? 0)
+      : Number((product.discount_price ?? product.discountPrice) || 0);
     const hasDiscount = variantDiscount > 0 && variantDiscount < variantPrice;
     const effectivePrice = hasDiscount ? variantDiscount : variantPrice;
     setCart((prev) => {
@@ -128,7 +165,7 @@ export default function Storefront() {
           ...product,
           quantity: Math.min(q, variantStock || 99),
           price: effectivePrice,
-          discount_price: hasDiscount ? variantDiscount : product.discount_price,
+          discount_price: hasDiscount ? variantDiscount : (product.discount_price ?? product.discountPrice),
           _variant: variantName,
           _variantSku: variant?.sku || product.sku,
         },
@@ -151,7 +188,7 @@ export default function Storefront() {
     (s, i) =>
       s +
       Number(i.quantity || 0) *
-        (Number(i.discount_price != null && Number(i.discount_price) > 0 ? i.discount_price : i.price) || 0),
+        (Number((i.discount_price ?? i.discountPrice) != null && Number((i.discount_price ?? i.discountPrice)) > 0 ? (i.discount_price ?? i.discountPrice) : i.price) || 0),
     0
   );
 
@@ -225,6 +262,23 @@ export default function Storefront() {
             <span>Cart</span>
             {cartCount > 0 && <b>{cartCount}</b>}
           </button>
+          <button className="sf-branch-btn" onClick={() => { loadBranches(); setShowBranchSelector(!showBranchSelector); }}>
+            <FiShoppingBag />
+            <span>{selectedBranch ? selectedBranch.name : "Select Store"}</span>
+          </button>
+          {showBranchSelector && (
+            <div className="sf-branch-dropdown">
+              <button className="sf-branch-option" onClick={() => { setSelectedBranch(null); localStorage.removeItem("sf_branch"); setShowBranchSelector(false); setPage(1); loadProducts(); }}>
+                All Stores
+              </button>
+              {branchList.map((b) => (
+                <button key={b.uuid} className={`sf-branch-option${selectedBranch?.uuid === b.uuid ? " on" : ""}`} onClick={() => handleBranchSelect(b)}>
+                  <strong>{b.name}</strong>
+                  <span>{b.city}{b.code ? ` (${b.code})` : ""}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       </header>
 
@@ -409,12 +463,41 @@ export default function Storefront() {
 
 function ProductCard({ p, onOpen, onAdd }) {
   const variants = Array.isArray(p.variants) && p.variants.length > 0 ? p.variants : [];
-  const useDisc = p.discount_price !== null && Number(p.discount_price) > 0;
-  const price = useDisc ? Number(p.discount_price) : Number(p.price);
-  const off =
-    useDisc && Number(p.price) > 0
-      ? Math.round((1 - Number(p.discount_price) / Number(p.price)) * 100)
-      : 0;
+
+  // Branch-specific pricing takes priority when branch is selected
+  const branchPrice = p.effectivePrice != null && Number(p.effectivePrice) > 0 ? Number(p.effectivePrice) : null;
+  const branchCompare = p.effectiveCompareAtPrice != null ? Number(p.effectiveCompareAtPrice) : null;
+
+  const productDisc = p.discount_price ?? p.discountPrice;
+  const productUseDisc = productDisc != null && Number(productDisc) > 0;
+  const discountVariants = variants.filter((v) => {
+    const d = v.discount_price ?? v.discountPrice;
+    return d != null && Number(d) > 0 && Number(d) < Number(v.price);
+  });
+
+  let mrp = Number(p.price) || 0;
+  let price = Number(p.price) || 0;
+
+  if (branchPrice != null) {
+    price = branchPrice;
+    mrp = branchCompare != null && branchCompare > branchPrice ? branchCompare : (Number(p.price) || 0);
+  } else if (productUseDisc) {
+    mrp = Number(p.price) || 0;
+    price = Number(productDisc);
+  } else if (discountVariants.length > 0) {
+    const best = discountVariants.reduce((a, b) =>
+      (Number(a.discount_price ?? a.discountPrice) / Number(a.price)) <
+        (Number(b.discount_price ?? b.discountPrice) / Number(b.price))
+        ? a : b
+    );
+    mrp = Number(best.price);
+    price = Number(best.discount_price ?? best.discountPrice);
+  }
+
+  const useDisc = mrp > 0 && price < mrp;
+  const off = useDisc && Number(mrp) > 0
+    ? Math.round((1 - price / mrp) * 100)
+    : 0;
   const out = p.stock <= 0;
   const img = p.images && p.images[0] ? p.images[0] : PH;
   const variantLabels = variants.map((v) => v.name);
@@ -443,7 +526,7 @@ function ProductCard({ p, onOpen, onAdd }) {
         )}
         <div className="sf-price">
           <span className="sf-now">{inr(price)}</span>
-          {useDisc && <span className="sf-was">{inr(p.price)}</span>}
+          {useDisc && <span className="sf-was">{inr(mrp)}</span>}
         </div>
         <div className={out ? "sf-stock low" : "sf-stock ok"}>
           {out ? "Out of stock" : variants.length > 0 ? `${variants.length} options` : `${p.stock} in stock`}
@@ -589,8 +672,8 @@ function ProductDetail({ product: initial, onAdd, onBack, onBuy }) {
   const hasVariants = variants.length > 0;
   const activeVariant = hasVariants ? variants[selectedVariantIdx] || variants[0] : null;
   const variantBasePrice = activeVariant?.price != null ? Number(activeVariant.price) : Number(p.price);
-  const variantDiscount = activeVariant?.discount_price != null
-    ? Number(activeVariant.discount_price)
+  const variantDiscount = (activeVariant?.discount_price ?? activeVariant?.discountPrice) != null
+    ? Number((activeVariant?.discount_price ?? activeVariant?.discountPrice) ?? 0)
     : Number(p.discount_price || 0);
   const hasDiscount = variantDiscount > 0 && variantDiscount < variantBasePrice;
   const price = hasDiscount ? variantDiscount : variantBasePrice;
@@ -765,8 +848,8 @@ function CartView({ lines, onBack, onUpdate, onRemove, onCheckout, onShop, total
           <div className="sf-lines">
             {lines.map((l) => {
               const useDisc =
-                l.discount_price != null && Number(l.discount_price) > 0;
-              const price = useDisc ? Number(l.discount_price) : Number(l.price);
+                (l.discount_price ?? l.discountPrice) != null && Number((l.discount_price ?? l.discountPrice)) > 0;
+              const price = useDisc ? Number((l.discount_price ?? l.discountPrice)) : Number(l.price);
               const img = l.images && l.images[0] ? l.images[0] : PH;
               const variantLabel = l._variant ? l._variant : null;
               const variantSku = l._variantSku ? l._variantSku : l.sku;
@@ -975,8 +1058,8 @@ function CheckoutForm({ lines, subtotal, onDone, onBack }) {
           <h3>Order summary</h3>
           {lines.map((l) => {
             const price =
-              l.discount_price != null && Number(l.discount_price) > 0
-                ? Number(l.discount_price)
+              (l.discount_price ?? l.discountPrice) != null && Number((l.discount_price ?? l.discountPrice)) > 0
+                ? Number((l.discount_price ?? l.discountPrice))
                 : Number(l.price);
             return (
               <div className="sf-totals-row" key={l.uuid}>
@@ -1260,6 +1343,17 @@ const CSS = `
 .sf-cart-btn{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:9px 14px;cursor:pointer;font-size:14px;font-weight:600;position:relative}
 .sf-cart-btn:hover{border-color:var(--sf-ac);background:#f0fdf4}
 .sf-cart-btn b{position:absolute;top:-7px;right:-7px;background:var(--sf-red);color:#fff;border-radius:50%;min-width:19px;height:19px;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid #fff}
+.sf-branch-btn{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:9px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--sf-ink);position:relative;z-index:10}
+.sf-branch-btn:hover{border-color:var(--sf-ac);background:#f0fdf4}
+.sf-branch-dropdown{position:absolute;top:calc(100% + 6px);right:0;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.12);min-width:240px;z-index:50;overflow:hidden}
+.sf-branch-option{display:block;width:100%;text-align:left;background:none;border:0;padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid #f3f4f6}
+.sf-branch-option:last-child{border-bottom:0}
+.sf-branch-option:hover{background:#f0fdf4}
+.sf-branch-option.on{background:#f0fdf4;color:var(--sf-ac);font-weight:700}
+.sf-branch-option strong{display:block;font-size:14px;color:var(--sf-ink)}
+.sf-branch-option span{display:block;font-size:11.5px;color:var(--sf-mut)}
+.sf-branch-option.on strong{color:var(--sf-ac)}
+.sf-branch-option.on span{color:var(--sf-ac)}
 
 /* Body / footer */
 .sf-body{flex:1;max-width:1140px;margin:0 auto;padding:24px 20px 60px;width:100%}

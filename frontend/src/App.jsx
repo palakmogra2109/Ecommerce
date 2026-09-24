@@ -32,6 +32,7 @@ import BannerView from "./pages/BannerView";
 import Settings from "./pages/Settings";
 import ProductForm from "./components/ProductForm";
 import ProductView from "./pages/ProductView";
+import VariantPricing from "./components/VariantPricing";
 import CategoriesForm from "./components/CategoriesForm";
 import BrandForm from "./components/BrandForm";
 import AttributeForm from "./components/AttributeForm";
@@ -43,6 +44,12 @@ import ProtectedRoute from "./components/ProtectedRoute";
 import PublicRoute from "./components/PublicRoute";
 import AdminLayout from "./components/AdminLayout";
 import PermissionRoute from "./components/PermissionRoute";
+import Branches from "./pages/Branches";
+import Stores from "./pages/Stores";
+import BranchForm from "./components/BranchForm";
+import BranchInventory from "./pages/BranchInventory";
+import BranchDashboard from "./pages/BranchDashboard";
+import BranchOrders from "./pages/BranchOrders";
 import StorePanel from "./pages/StorePanel";
 import StoreRegister from "./pages/StoreRegister";
 import StoreOnboarding from "./pages/StoreOnboarding";
@@ -188,16 +195,6 @@ export default function App() {
       />
 
       {/* /register → Register if logged out */}
-      {/* /register/store → Store Registration */}
-      <Route
-        path="/register/store"
-        element={
-          <PublicRoute>
-            <StoreRegister />
-          </PublicRoute>
-        }
-      />
-
       <Route
         path="/register"
         element={
@@ -222,6 +219,16 @@ export default function App() {
         element={
           <PublicRoute>
             <ResetPassword />
+          </PublicRoute>
+        }
+      />
+
+      {/* /register/store → Store Registration */}
+      <Route
+        path="/register/store"
+        element={
+          <PublicRoute>
+            <StoreRegister />
           </PublicRoute>
         }
       />
@@ -304,6 +311,10 @@ export default function App() {
         <Route
           path="/products/:id"
           element={adminGuard("products.view", "Products", <ProductView />)}
+        />
+        <Route
+          path="/products/:id/variant-pricing"
+          element={adminGuard("products.update", "Update Products", <VariantPricing />)}
         />
         <Route
           path="/products/:id/edit"
@@ -487,6 +498,39 @@ export default function App() {
           path="/settings"
           element={adminGuard("settings.view", "Settings", <Settings />)}
         />
+
+        {/* Branches */}
+        <Route
+          path="/branches"
+          element={adminGuard("branches.view", "Branches", <Branches />)}
+        />
+        <Route
+          path="/branches/stores"
+          element={adminGuard("branches.view", "Stores", <Stores />)}
+        />
+        <Route
+          path="/branches/new"
+          element={adminGuard("branches.create", "Create Branches", <BranchForm />)}
+        />
+        <Route
+          path="/branches/:id"
+          element={adminGuard("branches.view", "Branches", <BranchDashboard />)}
+        />
+        <Route
+          path="/branches/:id/edit"
+          element={
+            adminGuard("branches.update", "Update Branches", <BranchForm branchId />)
+          }
+        />
+        <Route
+          path="/branches/:id/inventory"
+          element={adminGuard("branches.inventory.view", "Branches Inventory", <BranchInventory />)}
+        />
+        <Route
+          path="/branches/:id/orders"
+          element={adminGuard("branches.orders.update", "Branch Orders", <BranchOrders />)}
+        />
+
         {/* Store Manager */}
         <Route
           path="/manager"

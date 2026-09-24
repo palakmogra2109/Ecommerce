@@ -30,7 +30,7 @@ function baseDraft(product) {
   return {
     price: product.price == null ? "" : String(product.price),
     discountPrice:
-      product.discount_price == null ? "" : String(product.discount_price),
+      (product.discount_price ?? product.discountPrice) == null ? "" : String((product.discount_price ?? product.discountPrice)),
     stock: product.stock == null ? "0" : String(product.stock),
     variants: Array.isArray(product.variants)
       ? product.variants.map((variant) => ({
@@ -410,7 +410,7 @@ export default function Inventory() {
       uuid,
       price: draft.price === "" ? 0 : Number(draft.price),
       discountPrice:
-        draft.discountPrice === "" ? null : Number(draft.discountPrice),
+        (!draft.discountPrice || draft.discountPrice === "") ? null : Number(draft.discountPrice),
       stock: parseInt(draft.stock, 10) || 0,
       variants: draft.variants.map((variant) => ({
         ...variant,
@@ -691,9 +691,9 @@ export default function Inventory() {
                   const price = draft ? draft.price : String(product.price);
                   const discount = draft
                     ? draft.discountPrice
-                    : product.discount_price == null
+                    : (product.discount_price ?? product.discountPrice) == null
                       ? ""
-                      : String(product.discount_price);
+                      : String((product.discount_price ?? product.discountPrice));
                   const stock = draft ? draft.stock : String(product.stock);
                   const variants = draft
                     ? draft.variants

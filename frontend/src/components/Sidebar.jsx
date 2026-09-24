@@ -6,6 +6,7 @@ import {
   FiFileText,
   FiGrid,
   FiImage,
+  FiInbox,
   FiLayout,
   FiLogOut,
   FiMail,
@@ -18,6 +19,7 @@ import {
   FiTruck,
   FiUsers,
   FiUserCheck,
+  FiMapPin,
 } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
 
@@ -39,6 +41,12 @@ const MODULE_VIEW_PERMISSIONS = {
   reviews: "reviews.view",
   banners: "banners.view",
   settings: "settings.view",
+  branches: "branches.view",
+  branches_orders: "branches.orders.view",
+  stores: "branches.view",
+  manager_dashboard: "store_dashboard.view",
+  manager_products: "store_products.view",
+  manager_orders: "store_orders.view",
 };
 
 const MODULES = [
@@ -145,6 +153,31 @@ const MODULES = [
     label: "Settings",
     icon: FiSettings,
   },
+  {
+    slug: "branch_management",
+    label: "Branches",
+    icon: FiMapPin,
+    children: [
+      {
+        slug: "branches",
+        path: "/branches",
+        label: "Branches",
+        icon: FiMapPin,
+      },
+      {
+        slug: "stores",
+        path: "/branches/stores",
+        label: "Stores",
+        icon: FiShoppingBag,
+      },
+    ],
+  },
+  {
+    slug: "manager_dashboard",
+    path: "/manager",
+    label: "My Store",
+    icon: FiInbox,
+   },
 ];
 
 function SidebarGroup({ module, pathname }) {

@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listPermissions(params = {}) {
   const searchParams = new URLSearchParams();
@@ -24,6 +26,7 @@ export async function listPermissions(params = {}) {
   const response = await fetch(
     `${API_URL}/permissions${query ? `?${query}` : ""}`,
     {
+      headers: authHeaders(),
       method: "GET",
       credentials: "include",
     }
@@ -36,6 +39,7 @@ export async function getPermission(id) {
   const response = await fetch(
     `${API_URL}/permissions/${id}`,
     {
+      headers: authHeaders(),
       method: "GET",
       credentials: "include",
     }
@@ -49,6 +53,7 @@ export async function createPermission(data) {
     method: "POST",
 
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
 
@@ -67,6 +72,7 @@ export async function updatePermission(id, data) {
       method: "PATCH",
 
       headers: {
+        ...authHeaders(),
         "Content-Type": "application/json",
       },
 
@@ -83,6 +89,7 @@ export async function deletePermission(id) {
   const response = await fetch(
     `${API_URL}/permissions/${id}`,
     {
+      headers: authHeaders(),
       method: "DELETE",
       credentials: "include",
     }

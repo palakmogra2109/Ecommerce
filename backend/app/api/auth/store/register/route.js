@@ -60,14 +60,28 @@ export async function POST(request) {
       [branch.id, user.id]
     );
 
-    // Grant the manager role when one exists, so the account has a role.
+    // Grant the "store" role so store accounts are clearly separated
+    // from admin sub-users and only managed via the Branches module.
+    const roleSlot = await pool.query(
+      `SELECT id FROM roles WHERE slug = 'store'`
+    );
+
+    let storeRoleId = roleSlot.rows[0]?.id;
+
+    if (!storeRoleId) {
+      const created = await pool.query(
+        `INSERT INTO roles (name, slug, description)
+         VALUES ('Store', 'store', 'Store panel owner: manages a branch via the store panel')
+         RETURNING id`
+      );
+      storeRoleId = created.rows[0].id;
+    }
+
     await pool.query(
       `INSERT INTO user_has_roles (user_id, role_id)
-       SELECT $1, id FROM roles WHERE slug IN ('branch_manager', 'manager', 'staff')
-       ORDER BY CASE slug WHEN 'branch_manager' THEN 0 WHEN 'manager' THEN 1 ELSE 2 END
-       LIMIT 1
+       VALUES ($1, $2)
        ON CONFLICT DO NOTHING`,
-      [user.id]
+      [user.id, storeRoleId]
     );
 
     const tokenValue = await createToken(user);

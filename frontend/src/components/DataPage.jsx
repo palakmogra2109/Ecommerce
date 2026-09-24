@@ -133,10 +133,11 @@ export default function DataPage({
   onCreate = null,
   defaultLimit = 20,
   pageSizeOptions = [10, 20, 50, 100],
+  defaultFilters = {},
 }) {
   const [rawData, setRawData] = useState([]);
   const [search, setSearch] = useState("");
-  const [filterState, setFilterState] = useState({});
+  const [filterState, setFilterState] = useState(defaultFilters);
   const [selected, setSelected] = useState([]);
   const [showBulkMenu, setShowBulkMenu] = useState(false);
   const bulkMenuRef = useRef(null);

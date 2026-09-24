@@ -36,8 +36,16 @@ export async function GET(_request, { params }) {
       );
     }
 
+    const variants = Array.isArray(product.variants)
+      ? product.variants.map((v) => ({
+          ...v,
+          price: Number(v.price) || 0,
+          stock: Number(v.stock) || 0,
+        }))
+      : [];
+
     return Response.json(
-      { success: true, product },
+      { success: true, product: { ...product, variants } },
       { status: 200, headers: corsHeaders() }
     );
   } catch (error) {

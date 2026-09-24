@@ -1,14 +1,14 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders, getStoredToken } from "./http";
+
+const API_URL = "/api";
 
 export async function registerUser(data) {
   const response = await fetch(`${API_URL}/auth/register`, {
     method: "POST",
 
-    headers: {
+    headers: authHeaders({
       "Content-Type": "application/json",
-    },
-
-    credentials: "include",
+    }),
 
     body: JSON.stringify(data),
   });
@@ -20,11 +20,9 @@ export async function loginUser(data) {
   const response = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
 
-    headers: {
+    headers: authHeaders({
       "Content-Type": "application/json",
-    },
-
-    credentials: "include",
+    }),
 
     body: JSON.stringify(data),
   });
@@ -36,7 +34,7 @@ export async function logoutUser() {
   const response = await fetch(`${API_URL}/auth/logout`, {
     method: "POST",
 
-    credentials: "include",
+    headers: authHeaders(),
   });
 
   return await response.json();
@@ -48,11 +46,9 @@ export async function forgotPassword(email) {
     {
       method: "POST",
 
-      headers: {
+      headers: authHeaders({
         "Content-Type": "application/json",
-      },
-
-      credentials: "include",
+      }),
 
       body: JSON.stringify({ email }),
     }
@@ -67,11 +63,9 @@ export async function resetPassword(email, password) {
     {
       method: "POST",
 
-      headers: {
+      headers: authHeaders({
         "Content-Type": "application/json",
-      },
-
-      credentials: "include",
+      }),
 
       body: JSON.stringify({ email, password }),
     }
@@ -81,6 +75,13 @@ export async function resetPassword(email, password) {
 }
 
 export async function getCurrentUser(timeoutMs = 5000) {
+  // Each panel keeps its own token in per-app storage. Without one the app
+  // is logged out by definition: never fall back to the shared cookie, or a
+  // login in the other panel would surface here.
+  if (!getStoredToken()) {
+    return { success: false, message: "Not authenticated", status: 401 };
+  }
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
@@ -89,7 +90,7 @@ export async function getCurrentUser(timeoutMs = 5000) {
       `${API_URL}/auth/me`,
       {
         method: "GET",
-        credentials: "include",
+        headers: authHeaders(),
         signal: controller.signal,
       }
     );

@@ -11,6 +11,7 @@ import {
   logoutUser,
   registerUser,
 } from "../services/auth";
+import { clearToken, getStoredToken, storeToken } from "../services/http";
 
 const AuthContext = createContext();
 const CACHE_KEY = "auth_user";
@@ -58,6 +59,13 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(() => !getCachedUser());
 
   async function checkAuth() {
+    if (!getStoredToken()) {
+      setUser(null);
+      setCachedUser(null);
+      setLoading(false);
+      return;
+    }
+
     try {
       const data = await getCurrentUser();
 
@@ -87,6 +95,7 @@ export function AuthProvider({ children }) {
     });
 
     if (data.success) {
+      storeToken(data.token);
       setUser(data.user);
       setCachedUser(data.user);
     }
@@ -103,19 +112,17 @@ export function AuthProvider({ children }) {
   }
 
   async function logout() {
+    // Local logout is authoritative for this app: clear this app's own
+    // token even if the network call fails. The other panel keeps its own
+    // token, so both stay independent.
+    clearToken();
+    setCachedUser(null);
+    setUser(null);
+
     try {
       const data = await logoutUser();
-
-      if (data.success) {
-        setCachedUser(null);
-        setUser(null);
-      }
-
       return data;
     } catch (error) {
-      setCachedUser(null);
-      setUser(null);
-
       return {
         success: false,
         message: "Unable to logout. Please try again.",

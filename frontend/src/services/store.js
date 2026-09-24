@@ -1,9 +1,12 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function storeRegister(data) {
   const response = await fetch(`${API_URL}/auth/store/register`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -13,7 +16,8 @@ export async function storeRegister(data) {
 export async function storeLogin(email, password) {
   const response = await fetch(`${API_URL}/auth/login`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ email, password }),
   });
@@ -23,7 +27,8 @@ export async function storeLogin(email, password) {
 export async function storeDashboard(branchId) {
   const response = await fetch(`${API_URL}/store/dashboard`, {
     method: "GET",
-    headers: { "x-branch-id": branchId },
+    headers: {
+    ...authHeaders(), "x-branch-id": branchId },
     credentials: "include",
   });
   return await response.json();
@@ -37,7 +42,8 @@ export async function storeProducts(branchId, params = {}) {
   const qs = searchParams.toString();
   const response = await fetch(`${API_URL}/store/my/products?${qs}`, {
     method: "GET",
-    headers: { "x-branch-id": branchId },
+    headers: {
+    ...authHeaders(), "x-branch-id": branchId },
     credentials: "include",
   });
   return await response.json();
@@ -46,7 +52,8 @@ export async function storeProducts(branchId, params = {}) {
 export async function storeUpdateProduct(branchId, uuid, data) {
   const response = await fetch(`${API_URL}/store/my/products/${uuid}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", "x-branch-id": branchId },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json", "x-branch-id": branchId },
     credentials: "include",
     body: JSON.stringify({ ...data, branchId }),
   });
@@ -63,7 +70,8 @@ export async function storeOrders(branchId, params = {}) {
   const qs = searchParams.toString();
   const response = await fetch(`${API_URL}/store/my/orders?${qs}`, {
     method: "GET",
-    headers: { "x-branch-id": branchId },
+    headers: {
+    ...authHeaders(), "x-branch-id": branchId },
     credentials: "include",
   });
   return await response.json();
@@ -72,7 +80,8 @@ export async function storeOrders(branchId, params = {}) {
 export async function storeUpdateOrder(branchId, uuid, data) {
   const response = await fetch(`${API_URL}/store/my/orders/${uuid}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", "x-branch-id": branchId },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json", "x-branch-id": branchId },
     credentials: "include",
     body: JSON.stringify({ ...data, branchId }),
   });
@@ -82,7 +91,8 @@ export async function storeUpdateOrder(branchId, uuid, data) {
 export async function storeOrderDetail(branchId, uuid) {
   const response = await fetch(`${API_URL}/store/my/orders/${uuid}`, {
     method: "GET",
-    headers: { "x-branch-id": branchId },
+    headers: {
+    ...authHeaders(), "x-branch-id": branchId },
     credentials: "include",
   });
   return await response.json();
@@ -91,7 +101,8 @@ export async function storeOrderDetail(branchId, uuid) {
 export async function storeProfile(branchId) {
   const response = await fetch(`${API_URL}/store/me`, {
     method: "GET",
-    headers: { "x-branch-id": branchId },
+    headers: {
+    ...authHeaders(), "x-branch-id": branchId },
     credentials: "include",
   });
   return await response.json();
@@ -100,9 +111,20 @@ export async function storeProfile(branchId) {
 export async function storeUpdateProfile(branchId, data) {
   const response = await fetch(`${API_URL}/store/me`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", "x-branch-id": branchId },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json", "x-branch-id": branchId },
     credentials: "include",
     body: JSON.stringify({ ...data, branchId }),
+  });
+  return await response.json();
+}
+
+export async function storeCancelOrder(branchId, uuid) {
+  const response = await fetch(`${API_URL}/store/my/orders/${uuid}`, {
+    method: "DELETE",
+    headers: {
+    ...authHeaders(), "x-branch-id": branchId },
+    credentials: "include",
   });
   return await response.json();
 }

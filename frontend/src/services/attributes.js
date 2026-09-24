@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listAttributes(params = {}) {
   const searchParams = new URLSearchParams();
@@ -27,7 +29,8 @@ export async function listAttributes(params = {}) {
 
   const response = await fetch(
     `${API_URL}/attributes${query ? `?${query}` : ""}`,
-    { method: "GET", credentials: "include" }
+    {
+    headers: authHeaders(), method: "GET", credentials: "include" }
   );
 
   return await response.json();
@@ -35,6 +38,7 @@ export async function listAttributes(params = {}) {
 
 export async function getAttribute(id) {
   const response = await fetch(`${API_URL}/attributes/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -45,7 +49,8 @@ export async function getAttribute(id) {
 export async function createAttribute(data) {
   const response = await fetch(`${API_URL}/attributes`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -56,7 +61,8 @@ export async function createAttribute(data) {
 export async function updateAttribute(id, data) {
   const response = await fetch(`${API_URL}/attributes/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -66,6 +72,7 @@ export async function updateAttribute(id, data) {
 
 export async function deleteAttribute(id) {
   const response = await fetch(`${API_URL}/attributes/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });

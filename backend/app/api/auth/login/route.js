@@ -99,6 +99,7 @@ export async function POST(request) {
       {
         success: true,
         message: "Login successful",
+        token,
         user: {
           uuid: user.uuid,
           name: user.name,

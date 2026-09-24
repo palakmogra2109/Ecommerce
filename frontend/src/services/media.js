@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function uploadMedia(file) {
   const formData = new FormData();
@@ -6,6 +8,7 @@ export async function uploadMedia(file) {
   formData.append("file", file);
 
   const response = await fetch(`${API_URL}/media/upload`, {
+    headers: authHeaders(),
     method: "POST",
     credentials: "include",
     body: formData,

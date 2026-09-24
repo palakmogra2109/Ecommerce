@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listCoupons(params = {}) {
   const searchParams = new URLSearchParams();
@@ -27,7 +29,8 @@ export async function listCoupons(params = {}) {
 
   const response = await fetch(
     `${API_URL}/coupons${query ? `?${query}` : ""}`,
-    { method: "GET", credentials: "include" }
+    {
+    headers: authHeaders(), method: "GET", credentials: "include" }
   );
 
   return await response.json();
@@ -36,7 +39,8 @@ export async function listCoupons(params = {}) {
 export async function bulkUpdateCouponStatus(ids, status) {
   const response = await fetch(`${API_URL}/coupons/bulk-status`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ ids, status }),
   });
@@ -46,6 +50,7 @@ export async function bulkUpdateCouponStatus(ids, status) {
 
 export async function getCoupon(id) {
   const response = await fetch(`${API_URL}/coupons/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -56,7 +61,8 @@ export async function getCoupon(id) {
 export async function createCoupon(data) {
   const response = await fetch(`${API_URL}/coupons`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -67,7 +73,8 @@ export async function createCoupon(data) {
 export async function updateCoupon(id, data) {
   const response = await fetch(`${API_URL}/coupons/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -77,6 +84,7 @@ export async function updateCoupon(id, data) {
 
 export async function deleteCoupon(id) {
   const response = await fetch(`${API_URL}/coupons/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });

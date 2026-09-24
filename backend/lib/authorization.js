@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import { verifyToken } from "./auth";
 import { corsHeaders } from "./cors";
 import pool from "./db";
@@ -19,13 +19,26 @@ function unauthorized(message) {
   };
 }
 
-// Reads the request cookie, verifies the JWT and returns the user.
-// Returns { ok:false, response } if not authenticated.
+// Reads the Authorization header or the request cookie, verifies the JWT
+// and returns the user. Returns { ok:false, response } if not authenticated.
+//
+// Each panel (admin store) keeps its own JWT in per-app storage and sends it
+// as a bearer token. When a bearer header is present it wins and the shared
+// cookie is ignored, so logging out of one panel never leaks another panel's
+// session. The cookie is kept as a fallback for legacy clients.
 export async function authenticate() {
   try {
-    const cookieStore = await cookies();
+    const [headerStore, cookieStore] = await Promise.all([
+      headers(),
+      cookies(),
+    ]);
 
-    const token = cookieStore.get("token")?.value;
+    const authorization = headerStore.get("authorization");
+    const bearerToken = authorization
+      ?.replace(/^Bearer\s+/i, "")
+      ?.trim();
+
+    const token = bearerToken || cookieStore.get("token")?.value;
 
     if (!token) {
       return unauthorized("Not authenticated");

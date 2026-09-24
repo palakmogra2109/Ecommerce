@@ -107,12 +107,20 @@ export default function ProductView() {
               ← Back
             </button>
             {product && can("products.update") && (
-              <Link
-                className="filament-btn filament-btn-primary"
-                to={`/products/${product.uuid}/edit`}
-              >
-                Edit
-              </Link>
+              <>
+                <Link
+                  className="filament-btn filament-btn-primary"
+                  to={`/products/${product.uuid}/edit`}
+                >
+                  Edit
+                </Link>
+                <Link
+                  className="filament-btn filament-btn-outline"
+                  to={`/products/${product.uuid}/variant-pricing`}
+                >
+                  Variant Pricing
+                </Link>
+              </>
             )}
           </div>
         </div>
@@ -213,9 +221,9 @@ export default function ProductView() {
               <div className="view-box">
                 <span className="view-box-label">Discount Price</span>
                 <span className="view-box-value">
-                  {product.discount_price == null
+                  {(product.discount_price ?? product.discountPrice) == null
                     ? "—"
-                    : formatCurrency(product.discount_price)}
+                    : formatCurrency((product.discount_price ?? product.discountPrice))}
                 </span>
               </div>
               <div className="view-box">
@@ -323,6 +331,12 @@ export default function ProductView() {
                         )}
                         {combo.length > 0 && <br />}
                         {variant.sku || "—"} · {formatCurrency(variant.price)} ·
+                        {(() => {
+                          const vd = variant.discount_price ?? variant.discountPrice;
+                          return vd != null && Number(vd) > 0
+                            ? ` Discount ${formatCurrency(vd)} ·`
+                            : "";
+                        })()}{" "}
                         stock {variant.stock ?? 0}
                       </span>
                     </div>

@@ -29,10 +29,21 @@ export async function GET(request) {
     const { searchParams } = new URL(request.url);
 
     if (searchParams.get("all") === "1") {
-      const products = await Product.all({
+      const rawProducts = await Product.all({
         status: searchParams.get("status") ?? "",
         search: searchParams.get("search") ?? "",
       });
+
+      const products = rawProducts.map((p) => ({
+        ...p,
+        variants: Array.isArray(p.variants)
+          ? p.variants.map((v) => ({
+              ...v,
+              price: Number(v.price) || 0,
+              stock: Number(v.stock) || 0,
+            }))
+          : [],
+      }));
 
       return Response.json(
         { success: true, products },
@@ -47,7 +58,7 @@ export async function GET(request) {
     const featured = searchParams.get("featured") ?? "";
     const { page, limit } = parsePagination(searchParams);
 
-    const { rows: products, pagination } = await Product.list({
+    const { rows: rawProducts, pagination } = await Product.list({
       search,
       status,
       categoryUuid,
@@ -56,6 +67,17 @@ export async function GET(request) {
       page,
       limit,
     });
+
+    const products = rawProducts.map((p) => ({
+      ...p,
+      variants: Array.isArray(p.variants)
+        ? p.variants.map((v) => ({
+            ...v,
+            price: Number(v.price) || 0,
+            stock: Number(v.stock) || 0,
+          }))
+        : [],
+    }));
 
     return Response.json(
       { success: true, products, pagination },

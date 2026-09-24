@@ -64,7 +64,7 @@ export default function StoreOnboarding({ mode = "wizard" }) {
       return;
     }
     if (branches.length === 0) {
-      navigate("/");
+      navigate("/no-store");
       return;
     }
     const activeId = branchId || branches[0].uuid || branches[0].id || "";
@@ -190,7 +190,7 @@ export default function StoreOnboarding({ mode = "wizard" }) {
   function renderDetails() {
     return (
       <>
-        <SectionTitle icon={FiStore} title="Store identity" />
+        <SectionTitle icon={FiShoppingBag} title="Store identity" />
         <div className="store-field-grid">
           <label className="store-field">
             <span>Store name *</span>

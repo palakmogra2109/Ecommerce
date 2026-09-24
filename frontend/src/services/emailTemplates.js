@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listEmailTemplates(params = {}) {
   const searchParams = new URLSearchParams();
@@ -24,6 +26,7 @@ export async function listEmailTemplates(params = {}) {
   const response = await fetch(
     `${API_URL}/email-templates${query ? `?${query}` : ""}`,
     {
+      headers: authHeaders(),
       method: "GET",
       credentials: "include",
     }
@@ -39,6 +42,7 @@ export async function bulkUpdateEmailTemplateStatus(ids, status) {
       method: "POST",
 
       headers: {
+        ...authHeaders(),
         "Content-Type": "application/json",
       },
 
@@ -53,6 +57,7 @@ export async function bulkUpdateEmailTemplateStatus(ids, status) {
 
 export async function getEmailTemplate(id) {
   const response = await fetch(`${API_URL}/email-templates/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -65,6 +70,7 @@ export async function createEmailTemplate(data) {
     method: "POST",
 
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
 
@@ -81,6 +87,7 @@ export async function updateEmailTemplate(id, data) {
     method: "PATCH",
 
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
 
@@ -94,6 +101,7 @@ export async function updateEmailTemplate(id, data) {
 
 export async function deleteEmailTemplate(id) {
   const response = await fetch(`${API_URL}/email-templates/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });

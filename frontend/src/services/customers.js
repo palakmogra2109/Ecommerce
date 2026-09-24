@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listCustomers(params = {}) {
   const searchParams = new URLSearchParams();
@@ -23,7 +25,8 @@ export async function listCustomers(params = {}) {
 
   const response = await fetch(
     `${API_URL}/customers${query ? `?${query}` : ""}`,
-    { method: "GET", credentials: "include" }
+    {
+    headers: authHeaders(), method: "GET", credentials: "include" }
   );
 
   return await response.json();
@@ -31,6 +34,7 @@ export async function listCustomers(params = {}) {
 
 export async function getCustomer(id) {
   const response = await fetch(`${API_URL}/customers/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -41,7 +45,8 @@ export async function getCustomer(id) {
 export async function updateCustomer(id, data) {
   const response = await fetch(`${API_URL}/customers/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -51,6 +56,7 @@ export async function updateCustomer(id, data) {
 
 export async function deleteCustomer(id) {
   const response = await fetch(`${API_URL}/customers/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });

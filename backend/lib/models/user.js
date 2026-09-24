@@ -16,16 +16,16 @@ const PUBLIC_COLUMNS =
 // Internal columns used for authorization and joins. The integer id is
 // never sent to the client.
 const INTERNAL_COLUMNS =
-  "id, uuid, name, email, mobile, avatar, status, created_at, updated_at";
+  "id, uuid, name, email, mobile, avatar, parent_id, status, created_at, updated_at";
 
 export const User = {
   TABLE,
 
-  async create({ name, email, password, mobile = null, avatar = null, status = "ACTIVE" }) {
+  async create({ name, email, password, mobile = null, avatar = null, status = "ACTIVE", parentId = null }) {
     const result = await pool.query(
       `
-      INSERT INTO ${TABLE} (name, email, password, mobile, avatar, status)
-      VALUES ($1, $2, $3, $4, $5, $6)
+      INSERT INTO ${TABLE} (name, email, password, mobile, avatar, status, parent_id)
+      VALUES ($1, $2, $3, $4, $5, $6, $7)
       RETURNING ${PUBLIC_COLUMNS}
       `,
       [
@@ -35,6 +35,7 @@ export const User = {
         mobile ?? null,
         avatar ?? null,
         status,
+        parentId ?? null,
       ]
     );
 
@@ -96,7 +97,7 @@ export const User = {
     return result.rows[0] || null;
   },
 
-  async list({ search = "", status = "", page = 1, limit = 20, excludeUuids = [] } = {}) {
+  async list({ search = "", status = "", page = 1, limit = 20, excludeUuids = [], includeStoreRole = false } = {}) {
     const conditions = [];
     const params = [];
 
@@ -127,6 +128,19 @@ export const User = {
           AND r_excl.slug = 'super_admin'
       )`
     );
+
+    // Store-role accounts are owned by the Branches module. By default the
+    // general Users module hides them; branch management opts in explicitly.
+    if (!includeStoreRole) {
+      conditions.push(
+        `NOT EXISTS (
+          SELECT 1 FROM user_has_roles uhr_store
+          JOIN roles r_store ON r_store.id = uhr_store.role_id
+          WHERE uhr_store.user_id = ${TABLE}.id
+            AND r_store.slug = 'store'
+        )`
+      );
+    }
 
     const where =
       conditions.length > 0

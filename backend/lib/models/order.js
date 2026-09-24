@@ -6,21 +6,24 @@ const TABLE = "orders";
 const PUBLIC_COLUMNS =
   "uuid, order_number, customer_name, customer_email, customer_mobile," +
   " shipping_address, subtotal, discount, total, coupon_code, payment_method," +
-  " payment_status, status, created_at, updated_at";
+  " payment_status, status, branchid, branch_uuid, created_at, updated_at";
 
 const INTERNAL_COLUMNS =
   "id, uuid, order_number, customer_id, customer_name, customer_email," +
   " customer_mobile, shipping_address, subtotal, discount, total, coupon_id," +
-  " coupon_code, payment_method, payment_status, status, created_at, updated_at";
+  " coupon_code, payment_method, payment_status, status, branchid," +
+  " created_at, updated_at";
 
 const BASE_SELECT = `
   SELECT o.uuid, o.order_number, o.customer_name, o.customer_email,
          o.customer_mobile, o.shipping_address, o.subtotal, o.discount,
          o.total, o.coupon_code, o.payment_method, o.payment_status, o.status,
-         o.created_at, o.updated_at,
-         c.uuid AS customer_uuid
+         o.branchid, o.created_at, o.updated_at,
+         c.uuid AS customer_uuid,
+         b.uuid AS branch_uuid, b.name AS branch_name, b.code AS branch_code
   FROM orders o
   LEFT JOIN customers c ON c.id = o.customer_id
+  LEFT JOIN branches b ON b.id = o.branchid
 `;
 
 export const Order = {
@@ -51,6 +54,7 @@ export const Order = {
       couponCode = null,
       paymentMethod = "cod",
       paymentStatus = "PENDING",
+      branchId = null,
     } = data;
 
     const orderNumber = await this.nextOrderNumber();
@@ -60,8 +64,8 @@ export const Order = {
       INSERT INTO ${TABLE}
         (order_number, customer_id, customer_name, customer_email,
          customer_mobile, shipping_address, subtotal, discount, total,
-         coupon_id, coupon_code, payment_method, payment_status)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         coupon_id, coupon_code, payment_method, payment_status, branchid)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
       RETURNING uuid
       `,
       [
@@ -82,6 +86,7 @@ export const Order = {
         couponCode || null,
         paymentMethod,
         paymentStatus,
+        branchId,
       ]
     );
 
@@ -126,7 +131,7 @@ export const Order = {
     };
   },
 
-  async list({ search = "", status = "", paymentStatus = "", page = 1, limit = 20 } = {}) {
+  async list({ search = "", status = "", paymentStatus = "", branchId = "", page = 1, limit = 20 } = {}) {
     const conditions = [];
     const params = [];
 
@@ -147,15 +152,19 @@ export const Order = {
       conditions.push(`o.payment_status = $${params.length}`);
     }
 
-    const where =
-      conditions.length > 0
-        ? `WHERE ${conditions.join(" AND ")}`
-        : "";
+    if (branchId) {
+      params.push(branchId);
+      conditions.push(
+        `o.branchid = (SELECT id FROM branches WHERE uuid = $${params.length})`
+      );
+    }
+
+    const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
 
     return paginate(
       {
         baseSql: `${BASE_SELECT} ${where}`,
-        countSql: `SELECT COUNT(*)::int AS count FROM orders o ${where}`,
+        countSql: `SELECT COUNT(*)::int FROM orders o ${where}`,
         params,
         orderBy: "ORDER BY o.created_at DESC, o.id DESC",
       },
@@ -184,6 +193,10 @@ export const Order = {
 
     if (updates.paymentStatus !== undefined) {
       set("payment_status", updates.paymentStatus);
+    }
+
+    if (updates.branchId !== undefined) {
+      set("branchid", updates.branchId);
     }
 
     values.push(uuid);

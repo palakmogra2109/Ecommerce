@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listCategories(params = {}) {
   const searchParams = new URLSearchParams();
@@ -35,7 +37,8 @@ export async function listCategories(params = {}) {
 
   const response = await fetch(
     `${API_URL}/categories${query ? `?${query}` : ""}`,
-    { method: "GET", credentials: "include" }
+    {
+    headers: authHeaders(), method: "GET", credentials: "include" }
   );
 
   return await response.json();
@@ -44,7 +47,8 @@ export async function listCategories(params = {}) {
 export async function bulkUpdateCategoryStatus(ids, status) {
   const response = await fetch(`${API_URL}/categories/bulk-status`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ ids, status }),
   });
@@ -54,6 +58,7 @@ export async function bulkUpdateCategoryStatus(ids, status) {
 
 export async function getCategory(id) {
   const response = await fetch(`${API_URL}/categories/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -64,7 +69,8 @@ export async function getCategory(id) {
 export async function createCategory(data) {
   const response = await fetch(`${API_URL}/categories`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -75,7 +81,8 @@ export async function createCategory(data) {
 export async function updateCategory(id, data) {
   const response = await fetch(`${API_URL}/categories/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -85,6 +92,7 @@ export async function updateCategory(id, data) {
 
 export async function deleteCategory(id) {
   const response = await fetch(`${API_URL}/categories/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });

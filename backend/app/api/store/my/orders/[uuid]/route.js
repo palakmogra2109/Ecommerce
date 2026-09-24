@@ -9,6 +9,42 @@ export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders() });
 }
 
+export async function DELETE(request, { params }) {
+  try {
+    const { uuid } = await params;
+    const branchUuid = request.headers.get("x-branch-id") || "";
+    const access = await requireBranchAccess(branchUuid);
+    if (!access.ok) return access.response;
+
+    const orderResult = await pool.query(
+      `SELECT o.uuid, o.status FROM orders o WHERE o.uuid = $1 AND o.branchid = $2`,
+      [uuid, access.branchId]
+    );
+
+    if (orderResult.rows.length === 0) {
+      return Response.json({ success: false, message: "Order not found for this store" }, { status: 404, headers: corsHeaders() });
+    }
+
+    if (orderResult.rows[0].status === "DELIVERED" || orderResult.rows[0].status === "CANCELLED") {
+      return Response.json({ success: false, message: `Cannot cancel a ${orderResult.rows[0].status} order` }, { status: 400, headers: corsHeaders() });
+    }
+
+    const result = await pool.query(
+      `UPDATE orders SET status = 'CANCELLED', updated_at = now() WHERE uuid = $1 RETURNING uuid, status, order_number`,
+      [uuid]
+    );
+
+    return Response.json({
+      success: true,
+      message: "Order cancelled",
+      order: { uuid: result.rows[0].uuid, status: result.rows[0].status, orderNumber: result.rows[0].order_number },
+    }, { status: 200, headers: corsHeaders() });
+  } catch (error) {
+    console.error("Store cancel order error:", error);
+    return Response.json({ success: false, message: "Internal server error" }, { status: 500, headers: corsHeaders() });
+  }
+}
+
 export async function GET(request, { params }) {
   try {
     const { uuid } = await params;

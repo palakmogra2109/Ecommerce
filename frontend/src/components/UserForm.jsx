@@ -17,7 +17,7 @@ import Breadcrumb from "../components/Breadcrumb";
 import Avatar from "../components/Avatar";
 import PhoneInput from "../components/PhoneInput";
 import { validateMobile } from "../utils/validation";
-import { isSuperAdmin } from "@shared/constants";
+import { isSuperAdmin, isStoreRole } from "@shared/constants";
 import { useAuth } from "../context/AuthContext";
 
 export default function UserForm({ userId = null }) {
@@ -590,7 +590,7 @@ export default function UserForm({ userId = null }) {
                     Select role
                   </option>
 
-                  {roles.filter((role) => !isSuperAdmin(role)).map((role) => (
+                  {roles.filter((role) => !isSuperAdmin(role) && !isStoreRole(role)).map((role) => (
                     <option
                       key={role.uuid}
                       value={role.uuid}

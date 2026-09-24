@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listReviews(params = {}) {
   const searchParams = new URLSearchParams();
@@ -27,7 +29,8 @@ export async function listReviews(params = {}) {
 
   const response = await fetch(
     `${API_URL}/reviews${query ? `?${query}` : ""}`,
-    { method: "GET", credentials: "include" }
+    {
+    headers: authHeaders(), method: "GET", credentials: "include" }
   );
 
   return await response.json();
@@ -38,7 +41,8 @@ export async function moderateReview(id, status, note) {
     `${API_URL}/reviews/${id}?action=moderate`,
     {
       method: "PATCH",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+      ...authHeaders(), "Content-Type": "application/json" },
       credentials: "include",
       body: JSON.stringify({ status, note }),
     }
@@ -50,7 +54,8 @@ export async function moderateReview(id, status, note) {
 export async function updateReview(id, data) {
   const response = await fetch(`${API_URL}/reviews/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -60,6 +65,7 @@ export async function updateReview(id, data) {
 
 export async function deleteReview(id) {
   const response = await fetch(`${API_URL}/reviews/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });

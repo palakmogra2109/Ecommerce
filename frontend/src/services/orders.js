@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listOrders(params = {}) {
   const searchParams = new URLSearchParams();
@@ -27,7 +29,8 @@ export async function listOrders(params = {}) {
 
   const response = await fetch(
     `${API_URL}/orders${query ? `?${query}` : ""}`,
-    { method: "GET", credentials: "include" }
+    {
+    headers: authHeaders(), method: "GET", credentials: "include" }
   );
 
   return await response.json();
@@ -35,6 +38,7 @@ export async function listOrders(params = {}) {
 
 export async function getOrder(id) {
   const response = await fetch(`${API_URL}/orders/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -45,7 +49,8 @@ export async function getOrder(id) {
 export async function updateOrder(id, data) {
   const response = await fetch(`${API_URL}/orders/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -55,6 +60,7 @@ export async function updateOrder(id, data) {
 
 export async function cancelOrder(id) {
   const response = await fetch(`${API_URL}/orders/${id}`, {
+    headers: authHeaders(),
     method: "POST",
     credentials: "include",
   });
@@ -64,6 +70,7 @@ export async function cancelOrder(id) {
 
 export async function deleteOrder(id) {
   const response = await fetch(`${API_URL}/orders/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });

@@ -69,9 +69,29 @@ export async function GET(request) {
       }
     }
 
+    // Resolve the parent account (the admin this user was created under)
+    // for the user hierarchy.
+    const parentResult = userUuids.length
+      ? await pool.query(
+          `SELECT u.uuid, p.uuid AS parent_uuid, p.name AS parent_name
+           FROM users u
+           LEFT JOIN users p ON p.id = u.parent_id
+           WHERE u.uuid = ANY($1)`,
+          [userUuids]
+        )
+      : { rows: [] };
+
+    const parentMap = {};
+    for (const row of parentResult.rows) {
+      parentMap[row.uuid] = row.parent_uuid
+        ? { uuid: row.parent_uuid, name: row.parent_name }
+        : null;
+    }
+
     const enriched = users.map((u) => ({
       ...u,
       role: roleMap[u.uuid] || null,
+      parent: parentMap[u.uuid] ?? null,
     }));
 
     return Response.json(
@@ -266,6 +286,9 @@ export async function POST(request) {
       mobile: mobile.trim(),
       avatar: avatar ?? null,
       status: userStatus,
+      // Admin-created accounts are sub-users of the creating admin so the
+      // whole user hierarchy can be traced through users.parent_id.
+      parentId: auth.user.id,
     });
 
     // Assign role

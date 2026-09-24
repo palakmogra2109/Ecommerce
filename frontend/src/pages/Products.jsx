@@ -44,6 +44,7 @@ export default function Products() {
           limit,
         })
       }
+      defaultFilters={{ status: PRODUCT_STATUS.ACTIVE }}
       dataKey="products"
       columns={[
         {
@@ -84,10 +85,20 @@ export default function Products() {
           label: "Price",
           sortKey: "price",
           render: (row) => {
-            if (row.discount_price) {
+            const variants = Array.isArray(row.variants) ? row.variants : [];
+            const discountVariants = variants.filter((v) => {
+              const d = v.discount_price ?? v.discountPrice;
+              return d != null && Number(d) > 0 && Number(d) < Number(v.price);
+            });
+            const salePrice =
+              discountVariants.length > 0
+                ? Math.min(...discountVariants.map((v) => Number(v.discount_price ?? v.discountPrice)))
+                : (row.discount_price ?? row.discountPrice);
+            const showDisc = salePrice != null && Number(salePrice) > 0;
+            if (showDisc) {
               return (
                 <span>
-                  <strong>{formatCurrency(row.discount_price)}</strong>{" "}
+                  <strong>{formatCurrency(salePrice)}</strong>{" "}
                   <span className="price-old">{formatCurrency(row.price)}</span>
                 </span>
               );

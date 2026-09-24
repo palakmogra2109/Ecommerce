@@ -86,7 +86,7 @@ function pricingGroup(state) {
 }
 
 // Builds the per-attribute-value price/stock table used by the
-// "by attribute" inventory mode, seeded from the product's variants.
+// "by attribute" and "per SKU" inventory modes, seeded from the product's variants.
 function buildOptionInventory(groups, variants, pricingUuid) {
   const group = (groups || []).find(
     (attr) => (attr.attribute_uuid || attr.attributeUuid) === pricingUuid
@@ -111,6 +111,7 @@ function buildOptionInventory(groups, variants, pricingUuid) {
 
     table[value] = {
       price: variant.price == null ? "" : String(variant.price),
+      discount_price: variant.discountPrice ?? variant.discount_price ?? "",
       stock: variant.stock == null ? "" : String(variant.stock),
     };
   }
@@ -135,6 +136,10 @@ function optionFor(state, combo) {
   return state.optionInventory[match.value] || null;
 }
 
+// For PER_SKU mode, builds a per-attribute-value price/stock table
+// from all attribute groups so each variant can have its own price/stock.
+
+
 export default function ProductForm({ productId = null }) {
   const isEdit = Boolean(productId);
   const { can } = useAuth();
@@ -148,7 +153,7 @@ export default function ProductForm({ productId = null }) {
     shortDescription: "",
     description: "",
     price: "",
-    discountPrice: "",
+    discountPrice: "", discount_price: null,
     stock: 0,
     lowStockThreshold: 5,
     brandUuid: "",
@@ -227,9 +232,28 @@ export default function ProductForm({ productId = null }) {
           const groupedAttributes = groupAttributes(
             Array.isArray(p.attributes) ? p.attributes : []
           );
-          const loadedVariants = Array.isArray(p.variants) ? p.variants : [];
+          const loadedVariants = Array.isArray(p.variants)
+            ? p.variants.map((v) => ({
+                ...v,
+                discountPrice: v.discountPrice ?? v.discount_price ?? "", discount_price: v.discount_price ?? v.discountPrice ?? null,
+              }))
+            : [];
           const inventoryMode = p.inventory_mode || INVENTORY_MODE.SINGLE;
           const pricingAttribute = p.pricing_attribute_uuid || "";
+          const groups = Array.isArray(p.attributes)
+            ? groupAttributes(p.attributes).filter(
+              (attr) => (attr.values || []).length > 0
+            )
+            : [];
+
+          const optionInventory =
+            inventoryMode === INVENTORY_MODE.BY_ATTRIBUTE
+              ? buildOptionInventory(
+                groupAttributes(Array.isArray(p.attributes) ? p.attributes : []),
+                loadedVariants,
+                pricingAttribute
+              )
+              : {};
 
           setForm({
             name: p.name,
@@ -250,14 +274,7 @@ export default function ProductForm({ productId = null }) {
             status: p.status,
             inventoryMode,
             pricingAttribute,
-            optionInventory:
-              inventoryMode === INVENTORY_MODE.BY_ATTRIBUTE
-                ? buildOptionInventory(
-                    groupedAttributes,
-                    loadedVariants,
-                    pricingAttribute
-                  )
-                : {},
+            optionInventory,
             expiryDate: p.expiry_date
               ? String(p.expiry_date).slice(0, 10)
               : "",
@@ -302,10 +319,11 @@ export default function ProductForm({ productId = null }) {
     setForm((prev) => {
       const next = { ...prev, inventoryMode: mode };
 
+      const groups = prev.attributes.filter(
+        (attr) => (attr.values || []).length > 0
+      );
+
       if (mode === INVENTORY_MODE.BY_ATTRIBUTE) {
-        const groups = prev.attributes.filter(
-          (attr) => (attr.values || []).length > 0
-        );
         const selected = (prev.attributes || []).find(
           (attr) =>
             (attr.attribute_uuid || attr.attributeUuid) ===
@@ -324,6 +342,8 @@ export default function ProductForm({ productId = null }) {
           prev.variants,
           uuid
         );
+      } else if (mode === INVENTORY_MODE.PER_SKU) {
+        next.optionInventory = {};
       }
 
       return next;
@@ -349,10 +369,10 @@ export default function ProductForm({ productId = null }) {
 
       const variants = group
         ? prev.variants.map((variant) =>
-            (variant.attributes || {})[group.name] === value
-              ? { ...variant, [field]: raw }
-              : variant
-          )
+          (variant.attributes || {})[group.name] === value
+            ? { ...variant, [field]: raw }
+            : variant
+        )
         : prev.variants;
 
       return { ...prev, optionInventory, variants };
@@ -457,13 +477,13 @@ export default function ProductForm({ productId = null }) {
       const isPricingAttribute =
         prev.inventoryMode === INVENTORY_MODE.BY_ATTRIBUTE &&
         (current.attribute_uuid || current.attributeUuid) ===
-          prev.pricingAttribute;
+        prev.pricingAttribute;
 
       const variants =
         isPricingAttribute && removed != null
           ? prev.variants.filter(
-              (variant) => (variant.attributes || {})[current.name] !== removed
-            )
+            (variant) => (variant.attributes || {})[current.name] !== removed
+          )
           : prev.variants;
 
       return {
@@ -488,7 +508,7 @@ export default function ProductForm({ productId = null }) {
       ...prev,
       variants: [
         ...prev.variants,
-        { name: "", sku: "", price: prev.price || "", stock: 0, attributes: {} },
+        { name: "", sku: "", price: prev.price || "", stock: 0, discountPrice: "", discount_price: null, attributes: {} },
       ],
     }));
   }
@@ -683,6 +703,25 @@ export default function ProductForm({ productId = null }) {
         newErrors.variants = "Every variant needs a valid price.";
         break;
       }
+
+      if (
+        form.inventoryMode === INVENTORY_MODE.PER_SKU &&
+        variant.discountPrice !== "" &&
+        Number(variant.discountPrice) < 0
+      ) {
+        newErrors.variants = "Discount price cannot be negative.";
+        break;
+      }
+
+      if (
+        form.inventoryMode === INVENTORY_MODE.PER_SKU &&
+        variant.discountPrice !== "" &&
+        variant.price !== "" &&
+        Number(variant.discountPrice) >= Number(variant.price)
+      ) {
+        newErrors.variants = "Discount price must be lower than price.";
+        break;
+      }
     }
 
     setErrors(newErrors);
@@ -731,18 +770,23 @@ export default function ProductForm({ productId = null }) {
           sku: (variant.sku || "").trim(),
           price: variant.price === "" ? 0 : Number(variant.price),
           stock: parseInt(variant.stock, 10) || 0,
+          discountPrice: variant.discountPrice === "" ? null : Number(variant.discountPrice),
           attributes:
             variant.attributes && Object.keys(variant.attributes).length > 0
               ? variant.attributes
               : {},
         })),
-        featured: form.featured,
-        status: form.status,
         inventoryMode: form.inventoryMode,
         pricingAttributeUuid:
           form.inventoryMode === INVENTORY_MODE.BY_ATTRIBUTE
             ? form.pricingAttribute || null
             : null,
+        optionInventory:
+          form.inventoryMode === INVENTORY_MODE.BY_ATTRIBUTE
+            ? form.optionInventory
+            : {},
+        featured: form.featured,
+        status: form.status,
         expiryDate: form.expiryDate || null,
         metaTitle: form.metaTitle,
         metaDescription: form.metaDescription,
@@ -910,20 +954,22 @@ export default function ProductForm({ productId = null }) {
                 </select>
               </div>
 
+              {form.inventoryMode === INVENTORY_MODE.SINGLE && (
+              <>
               <div className="form-row">
                 <label className="form-label">
                   Price {!hasVariants && <span className="required">*</span>}
                 </label>
-                <input
-                  type="number"
-                  name="price"
-                  step="0.01"
-                  min="0"
-                  value={hasVariants ? derivedPrice : form.price}
-                  onChange={handleChange}
-                  readOnly={hasVariants}
-                  className={hasVariants ? "input-readonly" : ""}
-                />
+                 <input
+                   type="number"
+                   name="price"
+                   step="0.01"
+                   min="0"
+                   value={hasVariants ? derivedPrice : form.price}
+                   onChange={handleChange}
+                   readOnly={hasVariants || isEdit}
+                   className={hasVariants ? "input-readonly" : ""}
+                 />
                 {hasVariants ? (
                   <p className="input-hint">
                     Lowest variant price. Edit individual prices in Variants
@@ -939,14 +985,15 @@ export default function ProductForm({ productId = null }) {
                   Discount Price{" "}
                   <span className="optional">(leave blank if none)</span>
                 </label>
-                <input
-                  type="number"
-                  name="discountPrice"
-                  step="0.01"
-                  min="0"
-                  value={form.discountPrice}
-                  onChange={handleChange}
-                />
+                 <input
+                   type="number"
+                   name="discountPrice"
+                   step="0.01"
+                   min="0"
+                   value={form.discountPrice}
+                   onChange={handleChange}
+                   readOnly={isEdit}
+                 />
                 {errors.discountPrice && (
                   <p className="input-error">{errors.discountPrice}</p>
                 )}
@@ -954,15 +1001,15 @@ export default function ProductForm({ productId = null }) {
 
               <div className="form-row">
                 <label className="form-label">Stock</label>
-                <input
-                  type="number"
-                  name="stock"
-                  min="0"
-                  value={hasVariants ? variantStockTotal : form.stock}
-                  onChange={handleChange}
-                  readOnly={hasVariants}
-                  className={hasVariants ? "input-readonly" : ""}
-                />
+                 <input
+                   type="number"
+                   name="stock"
+                   min="0"
+                   value={hasVariants ? variantStockTotal : form.stock}
+                   onChange={handleChange}
+                   readOnly={hasVariants || isEdit}
+                   className={hasVariants ? "input-readonly" : ""}
+                 />
                 {hasVariants && (
                   <p className="input-hint">
                     Total of all variant stock. Edit stock in Variants below.
@@ -970,16 +1017,30 @@ export default function ProductForm({ productId = null }) {
                 )}
               </div>
 
-              <div className="form-row">
-                <label className="form-label">Low Stock Threshold</label>
-                <input
-                  type="number"
-                  name="lowStockThreshold"
-                  min="0"
-                  value={form.lowStockThreshold}
-                  onChange={handleChange}
-                />
-              </div>
+               <div className="form-row">
+                 <label className="form-label">Low Stock Threshold</label>
+                 <input
+                   type="number"
+                   name="lowStockThreshold"
+                   min="0"
+                   value={form.lowStockThreshold}
+                   onChange={handleChange}
+                   readOnly={isEdit}
+                 />
+               </div>
+              </>
+              )}
+
+              {form.inventoryMode !== INVENTORY_MODE.SINGLE && (
+                <div className="form-row">
+                  <p className="input-hint">
+                    Price, stock, and discount are managed per variant below.
+                    {form.inventoryMode === INVENTORY_MODE.PER_SKU
+                      ? ` Each of ${form.variants.length} variant(s) has its own price, stock, and discount price.`
+                      : " Prices and stock are shared across attribute values in the table below."}
+                  </p>
+                </div>
+              )}
 
               <div className="form-row">
                 <label className="form-label">Inventory Mode</label>
@@ -1224,6 +1285,7 @@ export default function ProductForm({ productId = null }) {
                             <tr>
                               <th>{activePricingGroup.name}</th>
                               <th>Price</th>
+                              <th>Discount Price</th>
                               <th>Stock</th>
                             </tr>
                           </thead>
@@ -1242,6 +1304,7 @@ export default function ProductForm({ productId = null }) {
                                     value={
                                       form.optionInventory[value]?.price ?? ""
                                     }
+                                    readOnly={isEdit}
                                     onChange={(e) =>
                                       updateOptionInventory(
                                         value,
@@ -1255,10 +1318,30 @@ export default function ProductForm({ productId = null }) {
                                   <input
                                     type="number"
                                     min="0"
+                                    step="0.01"
+                                    placeholder="Discount"
+                                    value={
+                                      form.optionInventory[value]?.discount_price ?? ""
+                                    }
+                                    readOnly={isEdit}
+                                    onChange={(e) =>
+                                      updateOptionInventory(
+                                        value,
+                                        "discount_price",
+                                        e.target.value
+                                      )
+                                    }
+                                  />
+                                </td>
+                                <td>
+                                  <input
+                                    type="number"
+                                    min="0"
                                     placeholder="Stock"
                                     value={
                                       form.optionInventory[value]?.stock ?? ""
                                     }
+                                    readOnly={isEdit}
                                     onChange={(e) =>
                                       updateOptionInventory(
                                         value,
@@ -1277,12 +1360,21 @@ export default function ProductForm({ productId = null }) {
                   </div>
                 )}
 
+                {form.inventoryMode === INVENTORY_MODE.PER_SKU && (
+                  <div className="option-pricing">
+                    <p className="input-hint">
+                      Each variant has its own price and stock. Edit them
+                      individually in the variant table below.
+                    </p>
+                  </div>
+                )}
+
                 <div className="variant-toolbar">
                   <button
                     type="button"
                     className="filament-btn filament-btn-primary"
                     onClick={generateVariants}
-                    disabled={valueGroups.length === 0}
+                    disabled={valueGroups.length === 0 || isEdit}
                   >
                     Generate from attributes
                     {valueGroups.length > 0 ? ` (${combinationCount})` : ""}
@@ -1292,6 +1384,7 @@ export default function ProductForm({ productId = null }) {
                       type="button"
                       className="filament-btn filament-btn-outline"
                       onClick={addVariant}
+                      disabled={isEdit}
                     >
                       + Add manually
                     </button>
@@ -1333,28 +1426,31 @@ export default function ProductForm({ productId = null }) {
                 {form.inventoryMode === INVENTORY_MODE.PER_SKU &&
                   form.variants.length > 0 && (
                     <div className="variant-bulk">
-                      <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        placeholder="Bulk price"
-                        value={bulkPrice}
-                        onChange={(e) => setBulkPrice(e.target.value)}
-                      />
-                      <button
-                        type="button"
-                        className="filament-btn filament-btn-outline"
-                        onClick={applyBulkPrice}
-                      >
-                        Apply to all
-                      </button>
-                      <button
-                        type="button"
-                        className="filament-btn filament-btn-outline"
-                        onClick={useBasePrice}
-                      >
-                        Use base price
-                      </button>
+                       <input
+                         type="number"
+                         min="0"
+                         step="0.01"
+                         placeholder="Bulk price"
+                         value={bulkPrice}
+                         readOnly={isEdit}
+                         onChange={(e) => setBulkPrice(e.target.value)}
+                       />
+                       <button
+                         type="button"
+                         className="filament-btn filament-btn-outline"
+                         onClick={applyBulkPrice}
+                         disabled={isEdit}
+                       >
+                         Apply to all
+                       </button>
+                       <button
+                         type="button"
+                         className="filament-btn filament-btn-outline"
+                         onClick={useBasePrice}
+                         disabled={isEdit}
+                       >
+                         Use base price
+                       </button>
                     </div>
                   )}
 
@@ -1365,109 +1461,126 @@ export default function ProductForm({ productId = null }) {
                   </p>
                 )}
 
-            {form.variants.length > 0 && (
-              <div className="variant-table-wrap">
-                <table className="variant-edit-table">
-                  <thead>
-                    <tr>
-                      <th>Variant</th>
-                      <th>SKU</th>
-                      <th>Price</th>
-                      <th>Stock</th>
-                      <th />
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {form.variants.map((variant, index) => (
-                      <tr key={index}>
-                        <td>
-                          {variant.attributes &&
-                          Object.keys(variant.attributes).length > 0 ? (
-                            <div className="variant-combo">
-                              {Object.entries(variant.attributes).map(
-                                ([name, value]) => (
-                                  <span className="variant-chip" key={name}>
-                                    <em>{name}</em> {value}
-                                  </span>
-                                )
+                {form.variants.length > 0 && (
+                  <div className="variant-table-wrap">
+                    <table className="variant-edit-table">
+                      <thead>
+                        <tr>
+                          <th>Variant</th>
+                          <th>SKU</th>
+                          <th>Price</th>
+                          <th>Discount Price</th>
+                          <th>Stock</th>
+                          <th />
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {form.variants.map((variant, index) => (
+                          <tr key={index}>
+                            <td>
+                              {variant.attributes &&
+                                Object.keys(variant.attributes).length > 0 ? (
+                                <div className="variant-combo">
+                                  {Object.entries(variant.attributes).map(
+                                    ([name, value]) => (
+                                      <span className="variant-chip" key={name}>
+                                        <em>{name}</em> {value}
+                                      </span>
+                                    )
+                                  )}
+                                </div>
+                              ) : (
+                                <input
+                                  type="text"
+                                  placeholder='Variant name, e.g. "5kg"'
+                                  value={variant.name}
+                                  onChange={(e) =>
+                                    updateVariant(index, "name", e.target.value)
+                                  }
+                                />
                               )}
-                            </div>
-                          ) : (
-                            <input
-                              type="text"
-                              placeholder='Variant name, e.g. "5kg"'
-                              value={variant.name}
-                              onChange={(e) =>
-                                updateVariant(index, "name", e.target.value)
-                              }
-                            />
-                          )}
-                        </td>
-                        <td>
-                          <input
-                            type="text"
-                            className="variant-input-sku"
-                            placeholder="SKU"
-                            value={variant.sku}
-                            onChange={(e) =>
-                              updateVariant(index, "sku", e.target.value)
-                            }
-                          />
-                        </td>
-                        <td>
-                          {form.inventoryMode ===
-                          INVENTORY_MODE.BY_ATTRIBUTE ? (
-                            <span className="variant-readonly">
-                              {variant.price === "" ? "—" : variant.price}
-                            </span>
-                          ) : (
-                            <input
-                              type="number"
-                              min="0"
-                              step="0.01"
-                              placeholder="Price"
-                              value={variant.price}
-                              onChange={(e) =>
-                                updateVariant(index, "price", e.target.value)
-                              }
-                            />
-                          )}
-                        </td>
-                        <td>
-                          {form.inventoryMode ===
-                          INVENTORY_MODE.BY_ATTRIBUTE ? (
-                            <span className="variant-readonly">
-                              {variant.stock === "" ? "0" : variant.stock}
-                            </span>
-                          ) : (
-                            <input
-                              type="number"
-                              min="0"
-                              placeholder="Stock"
-                              value={variant.stock}
-                              onChange={(e) =>
-                                updateVariant(index, "stock", e.target.value)
-                              }
-                            />
-                          )}
-                        </td>
-                        <td>
-                          <button
-                            type="button"
-                            className="filament-action-btn filament-action-danger"
-                            title="Remove"
-                            onClick={() => removeVariant(index)}
-                          >
-                            <svg viewBox="0 0 24 24">
-                              <path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12ZM8 9h8v10H8V9Zm7.5-5-1-1h-5l-1 1H5v2h14V4h-3.5Z" />
-                            </svg>
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                            </td>
+                            <td>
+                              <input
+                                type="text"
+                                className="variant-input-sku"
+                                placeholder="SKU"
+                                value={variant.sku}
+                                onChange={(e) =>
+                                  updateVariant(index, "sku", e.target.value)
+                                }
+                              />
+                            </td>
+                            <td>
+                              {form.inventoryMode ===
+                                INVENTORY_MODE.BY_ATTRIBUTE ? (
+                                <span className="variant-readonly">
+                                  {variant.price === "" ? "—" : variant.price}
+                                </span>
+                               ) : (
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  placeholder="Price"
+                                  value={variant.price}
+                                  readOnly={isEdit}
+                                  onChange={(e) =>
+                                    updateVariant(index, "price", e.target.value)
+                                  }
+                                />
+                              )}
+                            </td>
+                            <td>
+                              {form.inventoryMode ===
+                                INVENTORY_MODE.BY_ATTRIBUTE ? (
+                                <span className="variant-readonly">
+                                  {(variant.discount_price || variant.discountPrice) ?? ""}
+                                </span>
+                               ) : (
+                                <input
+                                  type="number"
+                                  min="0"
+                                  step="0.01"
+                                  placeholder="Discount"
+                                  value={variant.discountPrice ?? variant.discount_price ?? ""}
+                                  readOnly={isEdit}
+                                  onChange={(e) =>
+                                    updateVariant(index, "discountPrice", e.target.value)
+                                  }
+                                />
+                              )}
+                            </td>
+                            <td>
+                               <input
+                                 type="number"
+                                 min="0"
+                                 placeholder="Stock"
+                                 value={variant.stock}
+                                 readOnly={isEdit}
+                                 onChange={(e) =>
+                                   updateVariant(index, "stock", e.target.value)
+                                 }
+                               />
+                            </td>
+                            <td>
+                              <button
+                                type="button"
+                                className="filament-action-btn filament-action-danger"
+                                title="Remove"
+                                onClick={() => removeVariant(index)}
+                                disabled={isEdit}
+                              >
+                                <svg viewBox="0 0 24 24">
+                                  <path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12ZM8 9h8v10H8V9Zm7.5-5-1-1h-5l-1 1H5v2h14V4h-3.5Z" />
+                                </svg>
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 )}
               </>
             )}
@@ -1520,7 +1633,7 @@ export default function ProductForm({ productId = null }) {
               >
                 Cancel
               </button>
-{canSubmit && (
+              {canSubmit && (
                 <button
                   type="submit"
                   className="filament-btn filament-btn-primary"
@@ -1532,7 +1645,7 @@ export default function ProductForm({ productId = null }) {
                       ? "Save Changes"
                       : "Create Product"}
                 </button>
-                )}
+              )}
             </div>
           </form>
         )}

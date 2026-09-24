@@ -18,7 +18,10 @@ VALUES
   ('Reviews',  'reviews'),
   ('Banners',  'banners'),
   ('Email Templates', 'email_templates'),
-  ('Settings', 'settings')
+  ('Settings', 'settings'),
+  ('Store Dashboard', 'store_dashboard'),
+  ('Store Products',   'store_products'),
+  ('Store Orders',     'store_orders')
 ON CONFLICT (slug) DO NOTHING;
 
 -- Roles
@@ -27,7 +30,8 @@ VALUES
   ('Super Admin', 'super_admin', 'Full access to every module'),
   ('Admin',       'admin',       'Full access to managed modules'),
   ('Manager',     'manager',     'Manages day-to-day operations'),
-  ('Staff',       'staff',       'Limited operational access')
+  ('Staff',       'staff',       'Limited operational access'),
+  ('Store',       'store',       'Store panel owner: manages a branch via the store panel')
 ON CONFLICT (slug) DO NOTHING;
 
 -- module_has_roles: which roles each module can use
@@ -142,6 +146,17 @@ END
 WHERE description = ''
   AND slug IN ('super_admin', 'admin', 'manager', 'staff');
 
+-- Store permissions (used by the store panel and the store sidebar
+-- entries). Kept idempotent for fresh and existing databases.
+INSERT INTO permissions (name, slug, module, description)
+VALUES
+  ('View Store Dashboard', 'store_dashboard.view', 'store_dashboard', 'View store statistics and overview'),
+  ('View Store Products',  'store_products.view',  'store_products',  'View store product pricing and stock'),
+  ('Update Store Products','store_products.update','store_products',  'Update store product pricing and stock'),
+  ('View Store Orders',    'store_orders.view',    'store_orders',    'View store orders'),
+  ('Update Store Orders',  'store_orders.update',  'store_orders',    'Update store order status')
+ON CONFLICT (slug) DO NOTHING;
+
 -- role_has_permissions: effective permissions per role
 -- super_admin and admin get everything; manager gets a subset;
 -- staff currently has a single permission (users.view) so the
@@ -154,7 +169,38 @@ JOIN permissions p
   OR (r.slug = 'manager' AND p.slug IN
      ('users.view', 'users.update', 'roles.view', 'permissions.view'))
   OR (r.slug = 'staff' AND p.slug = 'users.view')
+  OR (r.slug = 'store' AND p.slug IN
+     ('store_dashboard.view', 'store_products.view', 'store_products.update',
+      'store_orders.view', 'store_orders.update'))
 ON CONFLICT (role_id, permission_id) DO NOTHING;
+
+-- Link the store modules to the roles that can manage them.
+INSERT INTO module_has_roles (module_id, role_id)
+SELECT m.id, r.id
+FROM modules m
+JOIN roles r ON r.slug IN ('store', 'super_admin', 'admin')
+WHERE m.slug IN ('store_dashboard', 'store_products', 'store_orders')
+ON CONFLICT (module_id, role_id) DO NOTHING;
+
+-- Backfill role descriptions on existing databases (idempotent)
+UPDATE roles SET description = CASE slug
+  WHEN 'super_admin' THEN 'Full access to every module'
+  WHEN 'admin'       THEN 'Full access to managed modules'
+  WHEN 'manager'     THEN 'Manages day-to-day operations'
+  WHEN 'staff'       THEN 'Limited operational access'
+  WHEN 'store'       THEN 'Store panel owner: manages a branch via the store panel'
+END
+WHERE description = ''
+  AND slug IN ('super_admin', 'admin', 'manager', 'staff', 'store');
+
+-- Migrate existing store accounts (any user linked to a branch) to the
+-- store role so every branch user maps to the "Store" role going forward.
+INSERT INTO user_has_roles (user_id, role_id)
+SELECT DISTINCT bu.userid, r.id
+FROM branch_users bu
+CROSS JOIN roles r
+WHERE r.slug = 'store'
+ON CONFLICT (user_id, role_id) DO NOTHING;
 
 -- =============================================================
 -- email_templates

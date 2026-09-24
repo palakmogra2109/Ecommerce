@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listProducts(params = {}) {
   const searchParams = new URLSearchParams();
@@ -35,7 +37,8 @@ export async function listProducts(params = {}) {
 
   const response = await fetch(
     `${API_URL}/products${query ? `?${query}` : ""}`,
-    { method: "GET", credentials: "include" }
+    {
+    headers: authHeaders(), method: "GET", credentials: "include" }
   );
 
   return await response.json();
@@ -43,6 +46,7 @@ export async function listProducts(params = {}) {
 
 export async function getProduct(id) {
   const response = await fetch(`${API_URL}/products/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -53,7 +57,8 @@ export async function getProduct(id) {
 export async function createProduct(data) {
   const response = await fetch(`${API_URL}/products`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -64,7 +69,8 @@ export async function createProduct(data) {
 export async function updateProduct(id, data) {
   const response = await fetch(`${API_URL}/products/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -74,6 +80,7 @@ export async function updateProduct(id, data) {
 
 export async function deleteProduct(id) {
   const response = await fetch(`${API_URL}/products/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });
@@ -84,9 +91,22 @@ export async function deleteProduct(id) {
 export async function bulkUpdateInventory(items) {
   const response = await fetch(`${API_URL}/products/bulk-inventory`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ items }),
+  });
+
+  return await response.json();
+}
+
+export async function updateProductVariantPricing(id, data) {
+  const response = await fetch(`${API_URL}/products/${id}/variant-pricing`, {
+    method: "PATCH",
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(data),
   });
 
   return await response.json();

@@ -6,11 +6,15 @@
 export const ROLE_SLUGS = Object.freeze({
   SUPER_ADMIN: "super_admin",
   ADMIN: "admin",
+  BRANCH_MANAGER: "branch_manager",
+  STORE: "store",
 });
 
 export const ROLE_NAMES = Object.freeze({
   SUPER_ADMIN: "Super Admin",
   ADMIN: "Admin",
+  BRANCH_MANAGER: "Branch Manager",
+  STORE: "Store",
 });
 
 // Returns true when the given role row (with slug/name) or the
@@ -30,6 +34,26 @@ export function isSuperAdmin(role) {
   return (
     role.slug === ROLE_SLUGS.SUPER_ADMIN ||
     role.name?.toLowerCase() === ROLE_NAMES.SUPER_ADMIN.toLowerCase()
+  );
+}
+
+// Returns true when the given role row (with slug/name) or the given
+// slug string refers to the store role (managed via Branches, not Users).
+export function isStoreRole(role) {
+  if (typeof role === "string") {
+    return (
+      role === ROLE_SLUGS.STORE ||
+      role.toLowerCase() === ROLE_NAMES.STORE.toLowerCase()
+    );
+  }
+
+  if (!role) {
+    return false;
+  }
+
+  return (
+    role.slug === ROLE_SLUGS.STORE ||
+    role.name?.toLowerCase() === ROLE_NAMES.STORE.toLowerCase()
   );
 }
 
@@ -108,6 +132,21 @@ export const KEY_PERMISSIONS = Object.freeze({
   BANNERS_CREATE: "banners.create",
   BANNERS_UPDATE: "banners.update",
   BANNERS_DELETE: "banners.delete",
+  BRANCHES_VIEW: "branches.view",
+  BRANCHES_CREATE: "branches.create",
+  BRANCHES_UPDATE: "branches.update",
+  BRANCHES_DELETE: "branches.delete",
+  BRANCH_INVENTORY_VIEW: "branches.inventory.view",
+  BRANCH_INVENTORY_UPDATE: "branches.inventory.update",
+  BRANCH_ORDERS_VIEW: "branches.orders.view",
+  BRANCH_ORDERS_UPDATE: "branches.orders.update",
+  BRANCH_PRICE_VIEW: "branches.price.view",
+  BRANCH_PRICE_UPDATE: "branches.price.update",
+  STORE_DASHBOARD_VIEW: "store.dashboard.view",
+  STORE_PRODUCTS_VIEW: "store.products.view",
+  STORE_PRODUCTS_UPDATE: "store.products.update",
+  STORE_ORDERS_VIEW: "store.orders.view",
+  STORE_ORDERS_UPDATE: "store.orders.update",
 });
 
 // ---------- Modules ----------
@@ -130,6 +169,10 @@ export const MODULES = Object.freeze({
   BANNERS: { slug: "banners", label: "Banners", description: "Manage promotional banners and offers." },
   EMAIL_TEMPLATES: { slug: "email_templates", label: "Email Templates", description: "Manage email templates for transactional messages." },
   SETTINGS: { slug: "settings", label: "Settings", description: "Manage panel settings and site preferences." },
+  BRANCHES: { slug: "branches", label: "Branches", description: "Manage branches, inventory, orders, and pricing." },
+  STORE_DASHBOARD: { slug: "store_dashboard", label: "Store Dashboard", description: "View store statistics and overview." },
+  STORE_PRODUCTS: { slug: "store_products", label: "Store Products", description: "Manage store product pricing and stock." },
+  STORE_ORDERS: { slug: "store_orders", label: "Store Orders", description: "Manage store orders from accept to delivered." },
 });
 
 export const MODULE_LABELS = Object.freeze(

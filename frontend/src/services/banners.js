@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listBanners(params = {}) {
   const searchParams = new URLSearchParams();
@@ -27,7 +29,8 @@ export async function listBanners(params = {}) {
 
   const response = await fetch(
     `${API_URL}/banners${query ? `?${query}` : ""}`,
-    { method: "GET", credentials: "include" }
+    {
+    headers: authHeaders(), method: "GET", credentials: "include" }
   );
 
   return await response.json();
@@ -36,7 +39,8 @@ export async function listBanners(params = {}) {
 export async function bulkUpdateBannerStatus(ids, status) {
   const response = await fetch(`${API_URL}/banners/bulk-status`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify({ ids, status }),
   });
@@ -46,6 +50,7 @@ export async function bulkUpdateBannerStatus(ids, status) {
 
 export async function getBanner(id) {
   const response = await fetch(`${API_URL}/banners/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -56,7 +61,8 @@ export async function getBanner(id) {
 export async function createBanner(data) {
   const response = await fetch(`${API_URL}/banners`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -67,7 +73,8 @@ export async function createBanner(data) {
 export async function updateBanner(id, data) {
   const response = await fetch(`${API_URL}/banners/${id}`, {
     method: "PATCH",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+    ...authHeaders(), "Content-Type": "application/json" },
     credentials: "include",
     body: JSON.stringify(data),
   });
@@ -77,6 +84,7 @@ export async function updateBanner(id, data) {
 
 export async function deleteBanner(id) {
   const response = await fetch(`${API_URL}/banners/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });

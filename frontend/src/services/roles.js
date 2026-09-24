@@ -1,4 +1,6 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function listRoles(params = {}) {
   const searchParams = new URLSearchParams();
@@ -24,6 +26,7 @@ export async function listRoles(params = {}) {
   const response = await fetch(
     `${API_URL}/roles${query ? `?${query}` : ""}`,
     {
+      headers: authHeaders(),
       method: "GET",
       credentials: "include",
     }
@@ -37,6 +40,7 @@ export async function bulkUpdateRoleStatus(ids, status) {
     method: "POST",
 
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
 
@@ -50,6 +54,7 @@ export async function bulkUpdateRoleStatus(ids, status) {
 
 export async function getRole(id) {
   const response = await fetch(`${API_URL}/roles/${id}`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -62,6 +67,7 @@ export async function createRole(data) {
     method: "POST",
 
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
 
@@ -78,6 +84,7 @@ export async function updateRole(id, data) {
     method: "PATCH",
 
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
 
@@ -91,6 +98,7 @@ export async function updateRole(id, data) {
 
 export async function deleteRole(id) {
   const response = await fetch(`${API_URL}/roles/${id}`, {
+    headers: authHeaders(),
     method: "DELETE",
     credentials: "include",
   });
@@ -102,6 +110,7 @@ export async function getRolePermissions(id) {
   const response = await fetch(
     `${API_URL}/roles/${id}/permissions`,
     {
+      headers: authHeaders(),
       method: "GET",
       credentials: "include",
     }
@@ -117,6 +126,7 @@ export async function updateRolePermissions(id, permissionIds) {
       method: "PUT",
 
       headers: {
+        ...authHeaders(),
         "Content-Type": "application/json",
       },
 
@@ -149,6 +159,7 @@ export async function listUsersByRole(roleId, params = {}) {
   const response = await fetch(
     `${API_URL}/roles/${roleId}/users${query ? `?${query}` : ""}`,
     {
+      headers: authHeaders(),
       method: "GET",
       credentials: "include",
     }

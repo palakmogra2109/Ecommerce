@@ -90,6 +90,18 @@ export default function Users() {
           },
         },
         {
+          label: "Parent",
+          sortKey: "parent",
+          searchKeys: ["parent"],
+          render: (row) => {
+            if (!row.parent) return "—";
+
+            return (
+              <Link to={`/users/${row.parent.uuid}`}>{row.parent.name}</Link>
+            );
+          },
+        },
+        {
           label: "Created",
           sortKey: "created_at",
           searchKeys: ["created_at"],

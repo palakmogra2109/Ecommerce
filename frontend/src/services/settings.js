@@ -1,7 +1,10 @@
-const API_URL = "http://localhost:3000/api";
+import { authHeaders } from "./http";
+
+const API_URL = "/api";
 
 export async function getSettings() {
   const response = await fetch(`${API_URL}/settings`, {
+    headers: authHeaders(),
     method: "GET",
     credentials: "include",
   });
@@ -13,6 +16,7 @@ export async function updateSettings(data) {
   const response = await fetch(`${API_URL}/settings`, {
     method: "PUT",
     headers: {
+      ...authHeaders(),
       "Content-Type": "application/json",
     },
     credentials: "include",

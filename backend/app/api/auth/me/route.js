@@ -1,4 +1,4 @@
-import { cookies } from "next/headers";
+import { cookies, headers } from "next/headers";
 import pool from "@/lib/db";
 import { verifyToken } from "@/lib/auth";
 import { corsHeaders } from "@/lib/cors";
@@ -15,9 +15,17 @@ export async function OPTIONS() {
 
 export async function GET() {
   try {
-    const cookieStore = await cookies();
+    const [headerStore, cookieStore] = await Promise.all([
+      headers(),
+      cookies(),
+    ]);
 
-    const token = cookieStore.get("token")?.value;
+    const authorization = headerStore.get("authorization");
+    const bearerToken = authorization
+      ?.replace(/^Bearer\s+/i, "")
+      ?.trim();
+
+    const token = bearerToken || cookieStore.get("token")?.value;
 
     if (!token) {
       return Response.json(
