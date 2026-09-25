@@ -4,6 +4,7 @@ import {
   getOrder,
   updateOrder,
   cancelOrder,
+  downloadInvoice,
 } from "../services/orders";
 import Breadcrumb from "../components/Breadcrumb";
 import { useAuth } from "../context/AuthContext";
@@ -33,6 +34,7 @@ export default function OrderView() {
 
   const [order, setOrder] = useState(null);
   const [orderFlow, setOrderFlow] = useState([]);
+  const [invoiceBusy, setInvoiceBusy] = useState(false);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -121,6 +123,26 @@ export default function OrderView() {
     await save({ status: orderFlow[idx + 1] });
   }
 
+  // Downloads the order bill PDF and saves it via a temporary object URL.
+  async function handleDownloadInvoice() {
+    setInvoiceBusy(true);
+    try {
+      const blob = await downloadInvoice(id);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoice-${order?.order_number || id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setMessage("Could not download the invoice. Please try again.");
+    } finally {
+      setInvoiceBusy(false);
+    }
+  }
+
   async function handleCancel() {
     const confirmed = window.confirm(
       "Cancel this order? This cannot be undone."
@@ -205,6 +227,14 @@ export default function OrderView() {
               onClick={() => navigate("/orders")}
             >
               ← Back
+            </button>
+            <button
+              type="button"
+              className="filament-btn filament-btn-secondary"
+              disabled={invoiceBusy}
+              onClick={handleDownloadInvoice}
+            >
+              {invoiceBusy ? "Preparing…" : "Download Bill (PDF)"}
             </button>
             {canCancelOrder && !terminal && (
               <button

@@ -3,6 +3,7 @@ import {
   FiHome, FiShoppingCart, FiTruck, FiUser, FiSearch,
   FiChevronLeft, FiChevronRight, FiPlus, FiMinus, FiTrash2,
   FiShield, FiCreditCard, FiRefreshCw, FiStar, FiMapPin, FiShoppingBag,
+  FiArrowRight, FiChevronDown, FiClock, FiPhoneCall, FiMail, FiCheckCircle,
 } from "react-icons/fi";
 
 const BACKEND_BASE = "/api/store";
@@ -36,6 +37,29 @@ const PH =
 
 const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
 
+// Coerce anything (stale localStorage carts may hold objects) to safe text.
+const asText = (v) => {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  if (typeof v === "object" && v.name != null) return String(v.name);
+  return "";
+};
+
+// Repair cart lines persisted by older builds (e.g. _variant stored as an
+// object rendered as "[object Object]"). Runs on every load.
+function sanitizeCartLine(l) {
+  if (!l || typeof l !== "object" || !l.uuid) return null;
+  return {
+    ...l,
+    name: asText(l.name) || "Product",
+    _variant: asText(l._variant) || null,
+    _variantSku: asText(l._variantSku) || null,
+    price: Number(l.price) || 0,
+    quantity: Math.max(1, Number(l.quantity) || 1),
+  };
+}
+
 function Stars({ rating, reviews }) {
   const r = Math.round(Number(rating) || 0);
   if (!Number(reviews)) return null;
@@ -66,7 +90,9 @@ export default function Storefront() {
     try {
       const raw = localStorage.getItem("sf_cart");
       const parsed = raw ? JSON.parse(raw) : [];
-      return Array.isArray(parsed) ? parsed : [];
+      return Array.isArray(parsed)
+        ? parsed.map(sanitizeCartLine).filter(Boolean)
+        : [];
     } catch {
       return [];
     }
@@ -140,7 +166,7 @@ export default function Storefront() {
 
   function addToCart(product, quantity = 1, variant = null) {
     const q = Math.max(1, parseInt(quantity, 10) || 1);
-    const variantName = variant?.name || null;
+    const variantName = variant?.name != null ? asText(variant.name) : null;
     const variantPrice = variant?.price != null ? Number(variant.price) : Number(product.price);
     const variantStock = variant?.stock ?? product.stock;
     const variantDiscount = (variant?.discount_price ?? variant?.discountPrice) != null
@@ -220,6 +246,7 @@ export default function Storefront() {
       <CheckoutForm
         lines={cart}
         subtotal={cartTotal}
+        selectedBranch={selectedBranch}
         onDone={(order) => {
           setPlacedOrder(order);
           setCart([]);
@@ -239,7 +266,13 @@ export default function Storefront() {
       <style>{CSS}</style>
 
       <div className="sf-announce">
-        Free delivery on orders above ₹499 · Cash on Delivery available · Easy returns
+        <span className="sf-announce-in">
+          <span className="sf-announce-item"><FiTruck /> Free delivery on orders above ₹499</span>
+          <span className="sf-announce-dot" />
+          <span className="sf-announce-item">Cash on Delivery available</span>
+          <span className="sf-announce-dot" />
+          <span className="sf-announce-item">Easy 7-day returns</span>
+        </span>
       </div>
 
       <header className="sf-top">
@@ -262,23 +295,34 @@ export default function Storefront() {
             <span>Cart</span>
             {cartCount > 0 && <b>{cartCount}</b>}
           </button>
-          <button className="sf-branch-btn" onClick={() => { loadBranches(); setShowBranchSelector(!showBranchSelector); }}>
-            <FiShoppingBag />
-            <span>{selectedBranch ? selectedBranch.name : "Select Store"}</span>
-          </button>
-          {showBranchSelector && (
-            <div className="sf-branch-dropdown">
-              <button className="sf-branch-option" onClick={() => { setSelectedBranch(null); localStorage.removeItem("sf_branch"); setShowBranchSelector(false); setPage(1); loadProducts(); }}>
-                All Stores
-              </button>
-              {branchList.map((b) => (
-                <button key={b.uuid} className={`sf-branch-option${selectedBranch?.uuid === b.uuid ? " on" : ""}`} onClick={() => handleBranchSelect(b)}>
-                  <strong>{b.name}</strong>
-                  <span>{b.city}{b.code ? ` (${b.code})` : ""}</span>
+          <div className="sf-branch-wrap">
+            <button className="sf-branch-btn" onClick={() => { loadBranches(); setShowBranchSelector(!showBranchSelector); }}>
+              <FiShoppingBag />
+              <span className="sf-branch-txt">
+                <small>Deliver from</small>
+                <strong>{selectedBranch ? selectedBranch.name : "Select Store"}</strong>
+              </span>
+              <FiChevronDown />
+            </button>
+            {showBranchSelector && (
+              <div className="sf-branch-dropdown">
+                <div className="sf-branch-head">Choose your store</div>
+                <button className="sf-branch-option" onClick={() => { setSelectedBranch(null); localStorage.removeItem("sf_branch"); setShowBranchSelector(false); setPage(1); loadProducts(); }}>
+                  <strong>All Stores</strong>
+                  <span>Browse the full catalogue</span>
                 </button>
-              ))}
-            </div>
-          )}
+                {branchList.map((b) => (
+                  <button key={b.uuid} className={`sf-branch-option${selectedBranch?.uuid === b.uuid ? " on" : ""}`} onClick={() => handleBranchSelect(b)}>
+                    <strong>{b.name}{b.code ? <em className="sf-branch-code">{b.code}</em> : ""}</strong>
+                    <span>{b.city || "—"}</span>
+                  </button>
+                ))}
+                {branchList.length === 0 && (
+                  <div className="sf-branch-none">No stores available right now</div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </header>
 
@@ -287,6 +331,36 @@ export default function Storefront() {
 
         {view === VIEWS.CATALOG && (
           <>
+            <section className="sf-hero">
+              <div className="sf-hero-bg" aria-hidden="true" />
+              <div className="sf-hero-in">
+                <span className="sf-hero-kicker"><FiMapPin /> Fresh groceries from stores near you</span>
+                <h1>Farm-fresh essentials,<br />delivered to your door.</h1>
+                <p>Grains, oils, spices &amp; more — picked from your neighbourhood store, at honest prices.</p>
+                <div className="sf-hero-search">
+                  <FiSearch />
+                  <input
+                    placeholder="Search for grains, oils, spices…"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") {
+                        setPage(1);
+                        loadProducts();
+                      }
+                    }}
+                  />
+ <button className="sf-btn primary sf-hero-go" onClick={() => { setPage(1); loadProducts(); }}>Search</button>
+                </div>
+                <div className="sf-hero-tags">
+                  <button onClick={() => { setSearch("Rice"); setPage(1); loadProducts(); }}>Rice</button>
+                  <button onClick={() => { setSearch("Oil"); setPage(1); loadProducts(); }}>Oil</button>
+                  <button onClick={() => { setSearch("Wheat"); setPage(1); loadProducts(); }}>Wheat</button>
+                  <button onClick={() => { setSearch("Spices"); setPage(1); loadProducts(); }}>Spices</button>
+                </div>
+              </div>
+            </section>
+
             {showBanner && <BannerCarousel />}
 
             <div className="sf-trust">
@@ -319,32 +393,6 @@ export default function Storefront() {
                 ))}
               </div>
             )}
-
-            <div className="sf-toolbar">
-              <div className="sf-search">
-                <FiSearch />
-                <input
-                  placeholder="Search for grains, oils, spices…"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      setPage(1);
-                      loadProducts();
-                    }
-                  }}
-                />
-              </div>
-              <button
-                className="sf-btn primary"
-                onClick={() => {
-                  setPage(1);
-                  loadProducts();
-                }}
-              >
-                Search
-              </button>
-            </div>
 
             {error && <div className="sf-err">{error}</div>}
 
@@ -379,6 +427,18 @@ export default function Storefront() {
               </div>
             ) : (
               <>
+                <div className="sf-section-head">
+                  <div>
+                    <h2>{category ? "Filtered picks" : search ? "Search results" : "Trending now"}</h2>
+                    <p>
+                      {pagination.total} item{pagination.total === 1 ? "" : "s"}
+                      {selectedBranch ? ` · ${selectedBranch.name}` : " · across all stores"}
+                    </p>
+                  </div>
+                  {pagination.pages > 1 && (
+                    <span className="sf-section-page">Page {page} of {pagination.pages}</span>
+                  )}
+                </div>
                 <div className="sf-grid">
                   {products.map((p) => (
                     <ProductCard
@@ -440,21 +500,30 @@ export default function Storefront() {
       </main>
 
       <footer className="sf-footer">
-        <div>
-          <b className="sf-footer-brand">Earth<em>धान्य</em></b>
-          <p>Farm-fresh essentials for every Indian kitchen. Honest prices, doorstep delivery.</p>
+        <div className="sf-footer-grid">
+          <div className="sf-footer-col">
+            <b className="sf-footer-brand">Earth<em>धान्य</em></b>
+            <p>Farm-fresh essentials for every Indian kitchen. Honest prices, doorstep delivery.</p>
+            <div className="sf-footer-usp">
+              <span><FiCheckCircle /> 100% quality-checked</span>
+              <span><FiCheckCircle /> Transparent pricing</span>
+            </div>
+          </div>
+          <div className="sf-footer-col">
+            <b>Shop</b>
+            <button onClick={goCatalog}>All products</button>
+            <button onClick={() => setView(VIEWS.TRACK)}>Track order</button>
+            <button onClick={() => setView(VIEWS.ACCOUNT)}>My account</button>
+          </div>
+          <div className="sf-footer-col">
+            <b>Support</b>
+            <span><FiMail /> orders@earthdhanya.in</span>
+            <span><FiPhoneCall /> +91 98765 43210</span>
+            <span><FiClock /> Mon–Sat, 9am–7pm</span>
+          </div>
         </div>
-        <div>
-          <b>Shop</b>
-          <button onClick={goCatalog}>All products</button>
-          <button onClick={() => setView(VIEWS.TRACK)}>Track order</button>
-          <button onClick={() => setView(VIEWS.ACCOUNT)}>My account</button>
-        </div>
-        <div>
-          <b>Support</b>
-          <span>orders@earthdhanya.in</span>
-          <span>+91 98765 43210</span>
-          <span>Mon–Sat, 9am–7pm</span>
+        <div className="sf-footer-b">
+          © {new Date().getFullYear()} Earth धान्य · All rights reserved
         </div>
       </footer>
     </div>
@@ -506,13 +575,13 @@ function ProductCard({ p, onOpen, onAdd }) {
     <div className="sf-card" onClick={() => onOpen()}>
       <div className="sf-card-img">
         <img src={img} alt={p.name} loading="lazy" />
-        {off > 0 && <span className="sf-badge-off">-{off}%</span>}
-        {p.featured && <span className="sf-badge-feat">Featured</span>}
+        {off > 0 && <span className="sf-badge-off">{off}% OFF</span>}
+        {p.featured && <span className="sf-badge-feat">★ Featured</span>}
         {out && <div className="sf-cover">Out of stock</div>}
       </div>
       <div className="sf-card-body">
         <div className="sf-cat">{p.category_name}</div>
-        <div className="sf-name">{p.name}</div>
+        <div className="sf-name" title={p.name}>{p.name}</div>
         <Stars rating={p.rating} reviews={p.review_count} />
         {variantLabels.length > 0 && (
           <div className="sf-variants-preview">
@@ -524,24 +593,22 @@ function ProductCard({ p, onOpen, onAdd }) {
             )}
           </div>
         )}
-        <div className="sf-price">
-          <span className="sf-now">{inr(price)}</span>
-          {useDisc && <span className="sf-was">{inr(mrp)}</span>}
-        </div>
-        <div className={out ? "sf-stock low" : "sf-stock ok"}>
-          {out ? "Out of stock" : variants.length > 0 ? `${variants.length} options` : `${p.stock} in stock`}
-        </div>
-        <div className="sf-card-actions" onClick={(e) => e.stopPropagation()}>
+        <div className="sf-card-foot">
+          <div className="sf-price">
+            <span className="sf-now">{inr(price)}</span>
+            {useDisc && <span className="sf-was">{inr(mrp)}</span>}
+          </div>
           <button
-            className="sf-btn primary add"
+            className="sf-add-btn"
             disabled={out}
+            title={out ? "Out of stock" : "Add to cart"}
             onClick={() => onAdd(p, 1, variants[0] || null)}
           >
-            <FiShoppingCart /> Add to cart
+            <FiPlus />
           </button>
-          <button className="sf-btn ghost" onClick={() => onOpen()}>
-            View
-          </button>
+        </div>
+        <div className={out ? "sf-stock low" : "sf-stock ok"}>
+          {out ? "Out of stock" : variants.length > 0 ? `${variants.length} options` : p.stock <= 5 ? `Only ${p.stock} left` : `In stock`}
         </div>
       </div>
     </div>
@@ -851,8 +918,8 @@ function CartView({ lines, onBack, onUpdate, onRemove, onCheckout, onShop, total
                 (l.discount_price ?? l.discountPrice) != null && Number((l.discount_price ?? l.discountPrice)) > 0;
               const price = useDisc ? Number((l.discount_price ?? l.discountPrice)) : Number(l.price);
               const img = l.images && l.images[0] ? l.images[0] : PH;
-              const variantLabel = l._variant ? l._variant : null;
-              const variantSku = l._variantSku ? l._variantSku : l.sku;
+              const variantLabel = l._variant != null ? asText(l._variant) : null;
+              const variantSku = asText(l._variantSku) || asText(l.sku) || null;
               return (
                 <div className="sf-line" key={l.uuid}>
                   <img src={img} alt={l.name} />
@@ -912,7 +979,7 @@ function CartView({ lines, onBack, onUpdate, onRemove, onCheckout, onShop, total
   );
 }
 
-function CheckoutForm({ lines, subtotal, onDone, onBack }) {
+function CheckoutForm({ lines, subtotal, selectedBranch, onDone, onBack }) {
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState("");
   const [form, setForm] = useState({
@@ -956,6 +1023,7 @@ function CheckoutForm({ lines, subtotal, onDone, onBack }) {
         customerMobile: form.customerMobile.trim(),
         shippingAddress: shipping,
         paymentMethod: form.paymentMethod,
+        ...(selectedBranch ? { branchId: selectedBranch.uuid } : {}),
         items: lines.map((l) => ({
           product_uuid: l.uuid,
           quantity: l.quantity,
@@ -1061,11 +1129,10 @@ function CheckoutForm({ lines, subtotal, onDone, onBack }) {
               (l.discount_price ?? l.discountPrice) != null && Number((l.discount_price ?? l.discountPrice)) > 0
                 ? Number((l.discount_price ?? l.discountPrice))
                 : Number(l.price);
-            return (
-              <div className="sf-totals-row" key={l.uuid}>
-                <span>{l.name} × {l.quantity}</span>
-                <span>{inr(price * l.quantity)}</span>
-              </div>
+            return (                <div className="sf-totals-row" key={l.uuid}>
+                  <span>{asText(l.name) || "Product"} × {l.quantity}</span>
+                  <span>{inr(price * l.quantity)}</span>
+                </div>
             );
           })}
           <div className="sf-totals-row">
@@ -1080,6 +1147,11 @@ function CheckoutForm({ lines, subtotal, onDone, onBack }) {
             <span>Total</span>
             <span>{inr(subtotal)}</span>
           </div>
+          {selectedBranch && (
+            <div className="sf-checkout-store">
+              <FiShoppingBag /> Fulfilled by <b>{selectedBranch.name}</b>
+            </div>
+          )}
           <p className="muted small">
             Stripe/PayPal run in sandbox — no real charges. Prices are verified
             server-side at checkout.
@@ -1118,8 +1190,38 @@ function OrderTrack({ prefilledOrder, onBack }) {
       setResult(null);
       return;
     }
-    setResult(data.order);
+    // API returns { order, statusHistory, ... } — keep both for the UI.
+    setResult({ ...data.order, statusHistory: data.statusHistory || [] });
   }
+
+  // Customer bill download (guarded by order number + email).
+  async function downloadBill() {
+    try {
+      const res = await fetch(
+        `${BACKEND_BASE}/orders/track/invoice?order_number=${encodeURIComponent(form.order_number.trim() || result.order_number)}&email=${encodeURIComponent(form.email.trim().toLowerCase() || result.customer_email)}`
+      );
+      if (!res.ok) throw new Error();
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoice-${result.order_number}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setErr("Could not download the bill. Please try again.");
+    }
+  }
+
+  const fmtTime = (v) =>
+    v
+      ? new Date(v).toLocaleString("en-IN", {
+          dateStyle: "medium",
+          timeStyle: "short",
+        })
+      : "";
 
   if (result && result.uuid && result.status) {
     const details = result;
@@ -1148,6 +1250,19 @@ function OrderTrack({ prefilledOrder, onBack }) {
               <span>Payment</span>
               <b>{(details.payment_method || "").replace(/_/g, " ").toUpperCase()} · {details.payment_status}</b>
             </div>
+            {details.storeName && (
+              <div><span>Store</span><b>{details.storeName}</b></div>
+            )}
+            {details.estimatedDeliveryAt && !"DELIVERED,CANCELLED".includes(details.status) && (
+              <div>
+                <span>Estimated delivery</span>
+                <b>By {fmtTime(details.estimatedDeliveryAt)}</b>
+              </div>
+            )}
+            <div>
+              <span></span>
+              <button className="sf-link" onClick={downloadBill}>⬇ Download Bill (PDF)</button>
+            </div>
           </div>
 
           <div className="sf-timeline">
@@ -1163,6 +1278,19 @@ function OrderTrack({ prefilledOrder, onBack }) {
               );
             })}
           </div>
+
+          {/* WHEN each step happened — from the order status audit trail */}
+          {details.statusHistory && details.statusHistory.length > 0 && (
+            <div className="sf-history">
+              <h4>Status updates</h4>
+              {details.statusHistory.map((h, i) => (
+                <div className="sf-history-row" key={i}>
+                  <b>{LABELS[h.status] || h.status.replace(/_/g, " ")}</b>
+                  <span className="sf-h-time">{fmtTime(h.createdAt)}</span>
+                </div>
+              ))}
+            </div>
+          )}
 
               {details.items && details.items.length > 0 && (
             <div className="sf-lines">
@@ -1547,14 +1675,23 @@ const CSS = `
 .sf-track-meta > div{background:#f9fafb;border:1px solid #e5e7eb;border-radius:11px;padding:12px 14px;display:flex;flex-direction:column;gap:3px}
 .sf-track-meta span{font-size:12px;color:var(--sf-mut)}
 .sf-track-meta b{font-size:14px}
-.sf-timeline{display:flex;justify-content:space-between;margin:28px 0;position:relative}
-.sf-timeline:before{content:"";position:absolute;top:15px;left:4%;right:4%;height:3px;background:#e5e7eb}
+.sf-timeline{display:flex;justify-content:space-between;margin:26px 0;position:relative}
+.sf-timeline:before{content:"";position:absolute;top:12px;left:8%;right:8%;height:3px;border-radius:3px;background:#e5e7eb}
 .sf-step{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:7px;width:20%;font-size:11.5px;color:var(--sf-mut);text-align:center}
-.sf-dot{width:31px;height:31px;border-radius:50%;background:#fff;border:3px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-size:13px;color:#fff}
+.sf-dot{width:25px;height:25px;border-radius:50%;background:#fff;border:2.5px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;transition:all .2s}
 .sf-step.done .sf-dot{border-color:var(--sf-ac);background:var(--sf-ac)}
-.sf-step.done{color:var(--sf-ink);font-weight:700}
-.sf-step.current .sf-dot{border-color:var(--sf-ac);background:#fff;color:var(--sf-ac);box-shadow:0 0 0 5px rgba(22,163,74,.15)}
-.sf-step.current .sf-dot span{color:var(--sf-ac)}
+.sf-step.done{color:var(--sf-ink);font-weight:600}
+.sf-step.current .sf-dot{border-color:var(--sf-ac);background:#fff;color:var(--sf-ac);box-shadow:0 0 0 4px rgba(22,163,74,.15)}
+.sf-step.current .sf-dot span{color:var(--sf-ac);font-size:9px}
+.sf-history{margin:18px 0 4px;padding:14px 16px;background:#f8faf7;border:1px solid #e3ece5;border-radius:12px}
+.sf-history h4{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--sf-mut)}
+.sf-history-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:13px;border-bottom:1px dashed #dfe8e1}
+.sf-history-row:last-child{border-bottom:0}
+.sf-history-row b{font-weight:600;color:var(--sf-ink)}
+.sf-history-row .sf-h-time{color:var(--sf-mut);font-size:12.5px}
+.sf-checkout-store{display:flex;align-items:center;gap:8px;margin-top:12px;padding:11px 13px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-size:13px;color:var(--sf-ac-dark)}
+.sf-checkout-store b{font-weight:700}
+.sf-checkout-store svg{flex-shrink:0}
 .sf-addr{display:flex;align-items:flex-start;gap:8px;margin-top:16px;padding:13px;background:#f9fafb;border-radius:10px;font-size:13.5px;color:var(--sf-mut)}
 .sf-addr svg{color:var(--sf-ac);flex-shrink:0;margin-top:2px}
 .sf-track-form-wrap,.sf-auth-wrap{max-width:520px}
@@ -1598,4 +1735,185 @@ const CSS = `
 .sf-variant-chip.more{background:#f3f4f6;border-color:#d1d5db;color:var(--sf-mut)}
 .sf-line-variant{display:inline-block;background:#f0fdf4;color:var(--sf-ac-dark);font-size:11px;font-weight:600;padding:1px 6px;border-radius:8px;margin-left:6px;vertical-align:middle}
 .sf-variant-sku{font-size:12px;color:var(--sf-mut)}
+
+/* ============================================================
+   V2 DESIGN SYSTEM — refresh layer (overrides above)
+   ============================================================ */
+.sf-root{
+  --sf-bg:#f4f6f3; --sf-card:#fff; --sf-ink:#101b10; --sf-mut:#68766b;
+  --sf-ac:#1f9d55; --sf-ac-dark:#157347; --sf-ac-soft:#eaf7ef;
+  --sf-red:#dc2626; --sf-amber:#f59e0b;
+  --sf-line:#e5e9e4; --sf-line-soft:#eef1ec;
+  --sf-r-lg:18px; --sf-r-md:13px; --sf-r-sm:10px;
+  --sf-sh-sm:0 1px 2px rgba(16,27,16,.05),0 2px 8px rgba(16,27,16,.04);
+  --sf-sh-md:0 6px 20px rgba(16,27,16,.08);
+  --sf-sh-lg:0 18px 50px rgba(16,27,16,.16);
+  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
+  -webkit-font-smoothing:antialiased;
+  background:var(--sf-bg); color:var(--sf-ink); min-height:100vh;
+  display:flex; flex-direction:column;
+}
+
+/* Announcement */
+.sf-announce{background:#0d1f12;color:#cfe8d6;text-align:center;font-size:12.5px;padding:8px 14px;letter-spacing:.2px}
+.sf-announce-in{display:inline-flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:center}
+.sf-announce-item{display:inline-flex;align-items:center;gap:6px}
+.sf-announce-item svg{color:#4ade80}
+.sf-announce-dot{width:4px;height:4px;border-radius:50%;background:#3a5c44;display:inline-block}
+
+/* Header */
+.sf-top{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--sf-line)}
+.sf-top-in{max-width:1180px;margin:0 auto;display:flex;align-items:center;gap:16px;padding:10px 20px}
+.sf-brand{display:flex;align-items:center;gap:9px;background:none;border:0;cursor:pointer;font-size:19px;font-weight:800;color:var(--sf-ink);letter-spacing:-.2px}
+.sf-logo{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--sf-ac),var(--sf-ac-dark));color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:var(--sf-sh-sm)}
+.sf-brand em{font-style:normal;color:var(--sf-ac)}
+.sf-nav{display:flex;gap:4px;margin-left:6px}
+.sf-nav button{display:flex;align-items:center;gap:6px;background:none;border:0;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--sf-mut);padding:8px 13px;border-radius:var(--sf-r-sm);transition:background .15s,color .15s}
+.sf-nav button:hover{background:var(--sf-ac-soft);color:var(--sf-ac-dark)}
+.sf-nav button.on{background:var(--sf-ac-soft);color:var(--sf-ac-dark)}
+.sf-spacer{flex:1}
+.sf-cart-btn{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--sf-line);border-radius:var(--sf-r-sm);padding:8px 14px;cursor:pointer;font-size:13.5px;font-weight:600;position:relative;transition:border-color .15s,background .15s}
+.sf-cart-btn:hover{border-color:var(--sf-ac);background:var(--sf-ac-soft)}
+.sf-cart-btn b{position:absolute;top:-7px;right:-7px;background:var(--sf-red);color:#fff;border-radius:50%;min-width:19px;height:19px;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid #fff}
+
+/* Store selector */
+.sf-branch-wrap{position:relative}
+.sf-branch-btn{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--sf-line);border-radius:var(--sf-r-sm);padding:6px 12px;cursor:pointer;color:var(--sf-ink);transition:border-color .15s,background .15s}
+.sf-branch-btn:hover{border-color:var(--sf-ac);background:var(--sf-ac-soft)}
+.sf-branch-btn > svg:last-child{color:var(--sf-mut)}
+.sf-branch-btn > svg:first-child{color:var(--sf-ac)}
+.sf-branch-txt{display:flex;flex-direction:column;align-items:flex-start;line-height:1.15}
+.sf-branch-txt small{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--sf-mut);font-weight:600}
+.sf-branch-txt strong{font-size:13px;font-weight:700;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sf-branch-dropdown{position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1px solid var(--sf-line);border-radius:var(--sf-r-md);box-shadow:var(--sf-sh-lg);min-width:260px;z-index:60;overflow:hidden;animation:sfDrop .16s ease}
+@keyframes sfDrop{from{opacity:0;transform:translateY(-5px)}}
+.sf-branch-head{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--sf-mut);padding:11px 16px 7px}
+.sf-branch-option{display:block;width:100%;text-align:left;background:none;border:0;padding:10px 16px;cursor:pointer;border-bottom:1px solid var(--sf-line-soft)}
+.sf-branch-option:last-of-type{border-bottom:0}
+.sf-branch-option:hover{background:var(--sf-ac-soft)}
+.sf-branch-option.on{background:var(--sf-ac-soft)}
+.sf-branch-option strong{display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--sf-ink)}
+.sf-branch-option span{display:block;font-size:11.5px;color:var(--sf-mut);margin-top:1px}
+.sf-branch-option.on strong{color:var(--sf-ac-dark)}
+.sf-branch-code{font-style:normal;font-size:10px;font-weight:700;background:var(--sf-ac-soft);color:var(--sf-ac-dark);padding:1px 6px;border-radius:6px;letter-spacing:.4px}
+.sf-branch-none{padding:16px;text-align:center;font-size:12.5px;color:var(--sf-mut)}
+
+/* Hero */
+.sf-hero{position:relative;border-radius:22px;overflow:hidden;margin-bottom:22px;isolation:isolate}
+.sf-hero-bg{position:absolute;inset:0;z-index:-1;background:linear-gradient(115deg,#0d3b1e 0%,#14532d 45%,#1f7a3f 100%)}
+.sf-hero-bg::before{content:"";position:absolute;inset:0;background:radial-gradient(720px 340px at 88% 8%,rgba(74,222,128,.28),transparent 60%),radial-gradient(520px 300px at 8% 100%,rgba(255,255,255,.10),transparent 55%)}
+.sf-hero-in{padding:52px 48px 48px;color:#fff}
+.sf-hero-kicker{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.22);padding:6px 13px;border-radius:99px;font-size:12.5px;font-weight:600;color:#d8f5e0}
+.sf-hero-in h1{font-size:36px;line-height:1.16;letter-spacing:-.6px;margin:16px 0 8px;font-weight:800}
+.sf-hero-in > p{font-size:15px;color:#c8e6d1;max-width:540px;margin:0 0 24px;line-height:1.55}
+.sf-hero-search{display:flex;align-items:center;gap:10px;background:#fff;border-radius:14px;padding:6px 6px 6px 16px;max-width:560px;box-shadow:var(--sf-sh-lg)}
+.sf-hero-search > svg{color:var(--sf-mut);flex-shrink:0}
+.sf-hero-search input{border:0;outline:0;flex:1;min-width:0;padding:11px 0;font-size:14.5px;background:transparent;color:var(--sf-ink)}
+.sf-hero-go{border-radius:10px;padding:11px 22px}
+.sf-hero-tags{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
+.sf-hero-tags button{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.22);color:#e4f6ea;border-radius:99px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;transition:background .15s}
+.sf-hero-tags button:hover{background:rgba(255,255,255,.22)}
+
+/* Trust strip */
+.sf-trust{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:22px}
+.sf-trust span{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--sf-line);border-radius:var(--sf-r-md);padding:12px 14px;font-size:13px;font-weight:600;color:var(--sf-ink);box-shadow:var(--sf-sh-sm)}
+.sf-trust svg{color:var(--sf-ac);flex-shrink:0}
+
+/* Category chips */
+.sf-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
+.sf-cats button{background:#fff;border:1px solid var(--sf-line);border-radius:99px;padding:7px 16px;font-size:13px;cursor:pointer;font-weight:600;color:var(--sf-mut);transition:all .15s}
+.sf-cats button:hover{border-color:var(--sf-ac);color:var(--sf-ac-dark);background:var(--sf-ac-soft)}
+.sf-cats button.on{background:var(--sf-ink);border-color:var(--sf-ink);color:#fff}
+
+/* Section head */
+.sf-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin:6px 0 14px}
+.sf-section-head h2{margin:0;font-size:20px;font-weight:800;letter-spacing:-.3px}
+.sf-section-head p{margin:3px 0 0;font-size:12.5px;color:var(--sf-mut)}
+.sf-section-page{font-size:12px;color:var(--sf-mut);background:#fff;border:1px solid var(--sf-line);padding:5px 12px;border-radius:99px;white-space:nowrap}
+
+/* Buttons / inputs */
+.sf-btn{border:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:14px;font-weight:600;padding:10px 16px;border-radius:var(--sf-r-sm);color:var(--sf-ink);background:#eef1ec;transition:filter .15s,background .15s}
+.sf-btn:hover{filter:brightness(.97)}
+.sf-btn.primary,.sf-btn.green{background:var(--sf-ac);color:#fff}
+.sf-btn.primary:hover,.sf-btn.green:hover{background:var(--sf-ac-dark);filter:none}
+.sf-btn.ghost{background:#fff;border:1px solid var(--sf-line)}
+.sf-btn:disabled{opacity:.45;cursor:not-allowed}
+.sf-input{border:1px solid var(--sf-line);border-radius:var(--sf-r-sm);padding:10px 12px;font-size:14px;background:#fff;color:var(--sf-ink);width:100%;transition:border-color .15s,box-shadow .15s}
+.sf-input:focus{outline:none;border-color:var(--sf-ac);box-shadow:0 0 0 3px rgba(31,157,85,.14)}
+.sf-field label{display:block;font-size:12.5px;font-weight:700;margin-bottom:5px}
+
+/* Cards */
+.sf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:16px}
+.sf-card{background:var(--sf-card);border-radius:var(--sf-r-lg);border:1px solid var(--sf-line-soft);overflow:hidden;display:flex;flex-direction:column;cursor:pointer;transition:transform .18s,box-shadow .18s,border-color .18s;box-shadow:var(--sf-sh-sm)}
+.sf-card:hover{transform:translateY(-3px);box-shadow:var(--sf-sh-md);border-color:var(--sf-line)}
+.sf-card-img{position:relative;overflow:hidden;background:#f4f6f3}
+.sf-card-img img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;transition:transform .35s}
+.sf-card:hover .sf-card-img img{transform:scale(1.05)}
+.sf-badge-off{position:absolute;top:10px;left:10px;background:var(--sf-red);color:#fff;font-size:11px;font-weight:800;padding:4px 9px;border-radius:8px;letter-spacing:.3px}
+.sf-badge-feat{position:absolute;top:10px;right:10px;background:var(--sf-amber);color:#fff;font-size:11px;font-weight:700;padding:4px 9px;border-radius:8px}
+.sf-cover{position:absolute;inset:0;background:rgba(255,255,255,.78);backdrop-filter:blur(1px);display:flex;align-items:center;justify-content:center;color:var(--sf-red);font-weight:800;font-size:14px}
+.sf-card-body{padding:13px 14px 14px;display:flex;flex-direction:column;gap:5px;flex:1}
+.sf-cat{font-size:10.5px;color:var(--sf-mut);text-transform:uppercase;letter-spacing:.6px;font-weight:700}
+.sf-name{font-weight:700;font-size:14px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:38px}
+.sf-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:4px}
+.sf-add-btn{width:34px;height:34px;border-radius:10px;border:0;background:var(--sf-ac);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background .15s,transform .12s}
+.sf-add-btn:hover{background:var(--sf-ac-dark);transform:scale(1.06)}
+.sf-add-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
+
+/* Skeleton / pager / toast / empty */
+.sf-skeleton{pointer-events:none}
+.sk-img{aspect-ratio:1/1;background:linear-gradient(100deg,#eef2f0 40%,#f7faf8 50%,#eef2f0 60%)}
+.sf-skeleton .sk{display:block;border-radius:6px;background:linear-gradient(100deg,#eef2f0 40%,#f7faf8 50%,#eef2f0 60%)}
+.sf-page{min-width:36px;height:36px;border-radius:var(--sf-r-sm);border:1px solid var(--sf-line);background:#fff;cursor:pointer;font-weight:600}
+.sf-page.active{background:var(--sf-ac);color:#fff;border-color:var(--sf-ac)}
+.sf-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#132a18;color:#fff;padding:12px 18px;border-radius:12px;font-size:14px;z-index:100;box-shadow:var(--sf-sh-lg);animation:sfPop .2s ease;display:flex;align-items:center;gap:9px}
+.sf-toast::before{content:"";width:8px;height:8px;border-radius:50%;background:#4ade80}
+
+/* Sections */
+.sf-section{background:var(--sf-card);border:1px solid var(--sf-line);border-radius:var(--sf-r-lg);padding:20px;box-shadow:var(--sf-sh-sm)}
+.sf-line,.sf-totals,.sf-track-card,.sf-auth,.sf-track-form{border-radius:var(--sf-r-lg);box-shadow:var(--sf-sh-sm)}
+.sf-section h3 svg,.sf-radio.on,.sf-offers svg{color:var(--sf-ac)}
+
+/* Footer */
+.sf-footer{margin-top:34px;background:#0d1f12;color:#b9cdbf;padding:0 20px}
+.sf-footer-grid{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr;gap:34px;padding:42px 0 30px}
+.sf-footer b{display:block;color:#fff;margin-bottom:10px}
+.sf-footer-brand{font-size:19px;color:#4ade80}
+.sf-footer-brand em{font-style:normal;color:#fff}
+.sf-footer p{font-size:13px;line-height:1.6;max-width:330px;margin:0 0 12px}
+.sf-footer-usp{display:grid;gap:5px}
+.sf-footer-usp span{display:flex;align-items:center;gap:7px;font-size:12.5px;color:#9fb8a7}
+.sf-footer-usp svg{color:#4ade80}
+.sf-footer-col button,.sf-footer-col span{display:flex;align-items:center;gap:8px;background:none;border:0;color:#b9cdbf;font-size:13px;padding:4px 0;cursor:pointer;text-align:left}
+.sf-footer-col button:hover{color:#fff}
+.sf-footer-col svg{color:#3f5c48}
+.sf-footer-b{max-width:1180px;margin:0 auto;border-top:1px solid rgba(255,255,255,.08);padding:16px 0 20px;font-size:12.5px;color:#7d9585}
+
+/* Responsive */
+@media (max-width:960px){
+  .sf-hero-in{padding:38px 30px 36px}
+  .sf-hero-in h1{font-size:28px}
+  .sf-trust{grid-template-columns:repeat(2,1fr)}
+}
+@media (max-width:820px){
+  .sf-detail{grid-template-columns:1fr}
+  .sf-cart-cols,.sf-checkout-cols{grid-template-columns:1fr}
+  .sf-totals.sticky{position:static}
+  .sf-track-meta{grid-template-columns:1fr}
+  .sf-footer-grid{grid-template-columns:1fr;gap:24px;padding:34px 0 22px}
+}
+@media (max-width:560px){
+  .sf-top-in{flex-wrap:wrap;gap:8px;padding:10px 14px}
+  .sf-nav{margin-left:0;order:3}
+  .sf-branch-txt small{display:none}
+  .sf-branch-txt strong{max-width:100px}
+  .sf-hero-in{padding:30px 20px 28px}
+  .sf-hero-in h1{font-size:23px}
+  .sf-hero-search{flex-wrap:nowrap}
+  .sf-hero-go{padding:10px 14px}
+  .sf-trust{grid-template-columns:1fr 1fr}
+  .sf-section-head{flex-direction:column;align-items:flex-start;gap:6px}
+  .sf-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
+  .sf-announce-dot{display:none}
+}
 `;

@@ -4,7 +4,7 @@ import { paginate } from "../pagination";
 const TABLE = "branches";
 
 const PUBLIC_COLUMNS =
-  "uuid, name, code, phone, email, address, addressLine1, addressLine2, " +
+  "id, uuid, name, code, phone, email, address, addressLine1, addressLine2, " +
   "city, state, country, postalCode, latitude, longitude, openingTime, closingTime, " +
   "timezone, status, deliveryEnabled, pickupEnabled, deliveryRadius, " +
   "createdAt, updatedAt";

@@ -662,3 +662,20 @@ CREATE INDEX IF NOT EXISTS bti_product_idx ON branch_transfer_items(productId);
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS branchId BIGINT REFERENCES branches(id);
 CREATE INDEX IF NOT EXISTS orders_branch_idx ON orders(branchId);
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS branchId BIGINT REFERENCES branches(id);
+
+-- Estimated delivery timestamp promised to the customer at checkout.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_delivery_at TIMESTAMPTZ;
+
+-- Order status audit trail: one row per status transition so customers can
+-- see WHEN each step happened and stores/admins get an auditable timeline.
+CREATE TABLE IF NOT EXISTS order_status_history (
+  id         BIGSERIAL PRIMARY KEY,
+  order_id   BIGINT NOT NULL REFERENCES orders(id) ON DELETE CASCADE,
+  status     TEXT NOT NULL,
+  note       TEXT NOT NULL DEFAULT '',
+  changed_by TEXT NOT NULL DEFAULT 'system',
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS osh_order_idx ON order_status_history(order_id);
+CREATE INDEX IF NOT EXISTS osh_status_idx ON order_status_history(status);

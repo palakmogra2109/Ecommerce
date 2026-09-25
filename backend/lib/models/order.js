@@ -40,7 +40,7 @@ export const Order = {
     return `ORD-${String(nextId).padStart(7, "0")}`;
   },
 
-  async create(data = {}) {
+  async create(data = {}, client = null) {
     const {
       customerId = null,
       customerName = "",
@@ -55,17 +55,19 @@ export const Order = {
       paymentMethod = "cod",
       paymentStatus = "PENDING",
       branchId = null,
+      estimatedDeliveryAt = null,
     } = data;
 
     const orderNumber = await this.nextOrderNumber();
 
-    const result = await pool.query(
+    const result = await (client || pool).query(
       `
       INSERT INTO ${TABLE}
         (order_number, customer_id, customer_name, customer_email,
          customer_mobile, shipping_address, subtotal, discount, total,
-         coupon_id, coupon_code, payment_method, payment_status, branchid)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         coupon_id, coupon_code, payment_method, payment_status, branchid,
+         estimated_delivery_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
       RETURNING uuid
       `,
       [
@@ -87,6 +89,7 @@ export const Order = {
         paymentMethod,
         paymentStatus,
         branchId,
+        estimatedDeliveryAt,
       ]
     );
 
@@ -172,12 +175,38 @@ export const Order = {
     );
   },
 
+  // Appends a row to order_status_history. Safe to call inside or outside
+  // a transaction (pass an open client as `client` when in one).
+  async recordStatus(orderInternalId, status, note = "", changedBy = "system", client = null) {
+    await (client || pool).query(
+      `INSERT INTO order_status_history (order_id, status, note, changed_by)
+       VALUES ($1, $2, $3, $4)`,
+      [orderInternalId, status, note, changedBy]
+    );
+  },
+
+  // Returns the full status timeline (oldest first) for an order.
+  async statusHistory(orderInternalId) {
+    const result = await pool.query(
+      `SELECT status, note, changed_by AS "changedBy", created_at AS "createdAt"
+       FROM order_status_history
+       WHERE order_id = $1
+       ORDER BY created_at ASC, id ASC`,
+      [orderInternalId]
+    );
+
+    return result.rows;
+  },
+
   async update(uuid, updates = {}) {
     const current = await this.getInternalByUuid(uuid);
 
     if (!current) {
       return null;
     }
+
+    const statusChanged =
+      updates.status !== undefined && updates.status !== current.status;
 
     const fields = [];
     const values = [];
@@ -213,6 +242,11 @@ export const Order = {
 
     if (result.rows.length === 0) {
       return null;
+    }
+
+    // Audit trail: persist every status transition with a timestamp.
+    if (statusChanged) {
+      await this.recordStatus(current.id, updates.status);
     }
 
     return this.findByUuid(uuid);

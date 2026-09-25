@@ -2,7 +2,7 @@ import { useState, useEffect, Fragment } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { FiSearch } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
-import { storeDashboard, storeProducts, storeOrders, storeUpdateOrder, storeUpdateProduct, storeCancelOrder } from "../services/store";
+import { storeDashboard, storeProducts, storeOrders, storeUpdateOrder, storeUpdateProduct, storeCancelOrder, storeOrderInvoice, storeAvailableProducts, storeAddProduct, storeStockHistory } from "../services/store";
 import StoreOnboarding from "./StoreOnboarding";
 import StoreSidebar from "../components/StoreSidebar";
 
@@ -27,6 +27,24 @@ export default function StorePanel() {
   const [editStock, setEditStock] = useState("");
   const [editLowStock, setEditLowStock] = useState("");
   const [branchId, setBranchId] = useState("");
+
+  // --- Add Product (from admin catalogue) state ---
+  const [showAddProduct, setShowAddProduct] = useState(false);
+  const [availableProducts, setAvailableProducts] = useState([]);
+  const [availableSearch, setAvailableSearch] = useState("");
+  const [availableLoading, setAvailableLoading] = useState(false);
+  const [selectedProductUuid, setSelectedProductUuid] = useState("");
+  const [addPrice, setAddPrice] = useState("");
+  const [addCompareAt, setAddCompareAt] = useState("");
+  const [addStock, setAddStock] = useState("");
+  const [addLowStock, setAddLowStock] = useState("");
+  const [addBusy, setAddBusy] = useState(false);
+  const [addError, setAddError] = useState("");
+
+  // --- Stock history viewer state ---
+  const [historyProduct, setHistoryProduct] = useState(null);
+  const [stockHistory, setStockHistory] = useState([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
 
   const branches = user?.branches || [];
   const branch = branches.find((b) => (b.uuid || b.id) === branchId) || branches[0];
@@ -130,6 +148,76 @@ export default function StorePanel() {
     }
   }
 
+  // --- Add Product (from admin catalogue) ---
+  async function openAddProduct() {
+    setShowAddProduct(true);
+    setAddError("");
+    setSelectedProductUuid("");
+    setAddPrice("");
+    setAddCompareAt("");
+    setAddStock("");
+    setAddLowStock("");
+    setAvailableSearch("");
+    await loadAvailableProducts("");
+  }
+
+  async function loadAvailableProducts(search) {
+    setAvailableLoading(true);
+    try {
+      const data = await storeAvailableProducts(branchUuid, search);
+      setAvailableProducts(data.success ? data.products : []);
+    } catch {
+      setAvailableProducts([]);
+    }
+    setAvailableLoading(false);
+  }
+
+  function handleAvailableSearch(e) {
+    const value = e.target.value;
+    setAvailableSearch(value);
+    // Debounce the server search.
+    clearTimeout(handleAvailableSearch._t);
+    handleAvailableSearch._t = setTimeout(() => loadAvailableProducts(value), 250);
+  }
+
+  function handleProductPicked(uuid) {
+    setSelectedProductUuid(uuid);
+    const picked = availableProducts.find((p) => p.uuid === uuid);
+    // Pre-fill with the admin price as a sensible starting point.
+    if (picked) {
+      setAddPrice(picked.adminDiscountPrice ?? picked.adminPrice ?? "");
+      setAddCompareAt(picked.adminDiscountPrice ? picked.adminPrice : "");
+    }
+  }
+
+  const selectedProduct = availableProducts.find(
+    (p) => p.uuid === selectedProductUuid
+  );
+
+  async function handleAddProduct(e) {
+    e.preventDefault();
+    setAddError("");
+    if (!selectedProductUuid) {
+      setAddError("Please select a product from the dropdown.");
+      return;
+    }
+    setAddBusy(true);
+    const result = await storeAddProduct(branchUuid, {
+      productUuid: selectedProductUuid,
+      sellingPrice: Number(addPrice),
+      compareAtPrice: addCompareAt === "" ? null : Number(addCompareAt),
+      stockQuantity: Number(addStock) || 0,
+      lowStockThreshold: Number(addLowStock) || 5,
+    });
+    setAddBusy(false);
+    if (!result.success) {
+      setAddError(result.message || "Could not add the product.");
+      return;
+    }
+    setShowAddProduct(false);
+    loadProducts();
+  }
+
   async function handleStatusChange(order, newStatus) {
     const result = await storeUpdateOrder(branchUuid, order.uuid, { status: newStatus });
     if (result.success) {
@@ -142,6 +230,37 @@ export default function StorePanel() {
     const result = await storeCancelOrder(branchUuid, order.uuid);
     if (result.success) {
       loadOrders();
+    }
+  }
+
+  // Loads the stock ledger (when stock was received/deducted) for a product.
+  async function openStockHistory(product) {
+    setHistoryProduct(product);
+    setStockHistory([]);
+    setHistoryLoading(true);
+    try {
+      const data = await storeStockHistory(branchUuid, product.uuid);
+      setStockHistory(data.success ? data.transactions : []);
+    } catch {
+      setStockHistory([]);
+    }
+    setHistoryLoading(false);
+  }
+
+  // Downloads the store copy of the order bill PDF.
+  async function handleDownloadInvoice(order) {
+    try {
+      const blob = await storeOrderInvoice(branchUuid, order.uuid);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `invoice-${order.orderNumber}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      window.alert("Could not download the invoice. Please try again.");
     }
   }
 
@@ -282,7 +401,187 @@ export default function StorePanel() {
                   <h1>Products</h1>
                   <span className="filament-card-subtitle">{productTotal} product(s) in this store</span>
                 </div>
+                <div className="filament-card-header-right">
+                  <button className="filament-btn filament-btn-primary" onClick={openAddProduct}>
+                    + Add Product
+                  </button>
+                </div>
               </div>
+
+              {showAddProduct && (
+                <div className="filament-modal-overlay" onClick={() => setShowAddProduct(false)}>
+                  <div
+                    className="filament-modal sp-modal"
+                    onClick={(e) => e.stopPropagation()}
+                    role="dialog"
+                    aria-modal="true"
+                  >
+                    <div className="filament-modal-header">
+                      <div>
+                        <h2>Add Product</h2>
+                        <p className="filament-modal-sub">
+                          Products created by admin (active) — set your own price & stock
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        className="filament-modal-close"
+                        onClick={() => setShowAddProduct(false)}
+                        aria-label="Close"
+                      >
+                        ×
+                      </button>
+                    </div>
+
+                    <form onSubmit={handleAddProduct}>
+                      <div className="filament-modal-body">
+                        {/* Step 1 — pick a product */}
+                        <span className="form-label">
+                          Select product <span className="optional">(admin catalogue)</span>
+                        </span>
+                        <div className="sp-picker">
+                          <input
+                            className="sp-picker-search"
+                            placeholder="Search by name or SKU…"
+                            value={availableSearch}
+                            onChange={handleAvailableSearch}
+                          />
+                          <div className="sp-picker-list">
+                            {availableLoading ? (
+                              <div className="sp-picker-empty">Loading products…</div>
+                            ) : availableProducts.length === 0 ? (
+                              <div className="sp-picker-empty">
+                                No admin products left to add — all active products are already in your store.
+                              </div>
+                            ) : (
+                              availableProducts.map((p) => (
+                                <button
+                                  type="button"
+                                  key={p.uuid}
+                                  className={`sp-picker-item${selectedProductUuid === p.uuid ? " on" : ""}`}
+                                  onClick={() => handleProductPicked(p.uuid)}
+                                >
+                                  <img src={p.image || "/media/default.jpg"} alt="" loading="lazy" />
+                                  <div>
+                                    <div className="sp-picker-name">{p.name}</div>
+                                    <div className="sp-picker-meta">
+                                      {p.sku}
+                                      {p.category ? ` · ${p.category}` : ""}
+                                    </div>
+                                  </div>
+                                  <div className="sp-picker-price">₹{p.adminPrice}</div>
+                                </button>
+                              ))
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Selected product summary */}
+                        {selectedProduct && (
+                          <div className="sp-selected">
+                            <img src={selectedProduct.image || "/media/default.jpg"} alt="" />
+                            <div>
+                              <div className="sp-selected-name">{selectedProduct.name}</div>
+                              <div className="sp-selected-meta">
+                                {selectedProduct.sku}
+                                {selectedProduct.category ? ` · ${selectedProduct.category}` : ""}
+                              </div>
+                            </div>
+                            <div className="sp-selected-price">
+                              {selectedProduct.adminDiscountPrice != null ? (
+                                <>
+                                  <div className="sp-price-main">₹{selectedProduct.adminDiscountPrice}</div>
+                                  <div className="sp-price-sub">₹{selectedProduct.adminPrice}</div>
+                                </>
+                              ) : (
+                                <div className="sp-price-main">₹{selectedProduct.adminPrice}</div>
+                              )}
+                              <div className="sp-price-sub">admin price</div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Step 2 — store's own pricing & stock */}
+                        <div className="sp-form-grid">
+                          <label className="form-row">
+                            <span className="form-label">Your selling price *</span>
+                            <input
+                              type="number"
+                              min="0.01"
+                              step="0.01"
+                              required
+                              placeholder="e.g. 299.00"
+                              value={addPrice}
+                              onChange={(e) => setAddPrice(e.target.value)}
+                            />
+                          </label>
+                          <label className="form-row">
+                            <span className="form-label">
+                              MRP <span className="optional">(optional)</span>
+                            </span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="0.01"
+                              placeholder="strike-through price"
+                              value={addCompareAt}
+                              onChange={(e) => setAddCompareAt(e.target.value)}
+                            />
+                          </label>
+                          <label className="form-row">
+                            <span className="form-label">Opening stock</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              placeholder="0"
+                              value={addStock}
+                              onChange={(e) => setAddStock(e.target.value)}
+                            />
+                          </label>
+                          <label className="form-row">
+                            <span className="form-label">Low stock alert at</span>
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              placeholder="5"
+                              value={addLowStock}
+                              onChange={(e) => setAddLowStock(e.target.value)}
+                            />
+                          </label>
+                        </div>
+
+                        {addStock !== "" && Number(addStock) > 0 && (
+                          <p className="input-hint" style={{ marginTop: "0.5rem" }}>
+                            The opening stock of {addStock} will be recorded in your stock history
+                            as a purchase — you'll always see when you received it.
+                          </p>
+                        )}
+
+                        {addError && <p className="form-row .input-error" style={{ color: "#ef4444", fontSize: "0.8125rem", marginBottom: 0 }}>{addError}</p>}
+                      </div>
+
+                      <div className="filament-modal-footer">
+                        <button
+                          type="button"
+                          className="filament-btn filament-btn-outline"
+                          onClick={() => setShowAddProduct(false)}
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="filament-btn filament-btn-primary"
+                          disabled={addBusy || !selectedProductUuid}
+                        >
+                          {addBusy ? "Adding…" : "Add to store"}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                </div>
+              )}
               <div className="variant-table-wrap">
                 <table className="variant-edit-table">
                   <thead>
@@ -327,16 +626,23 @@ export default function StorePanel() {
                             {editingProduct?.uuid === p.uuid ? (
                               <button className="filament-btn filament-btn-outline" onClick={() => setEditingProduct(null)}>Cancel</button>
                             ) : (
-                              <button
-                                  className="filament-btn filament-btn-outline"
-                                  onClick={() => {
-                                    setEditingProduct(p);
-                                    setEditPrice(p.sellingPrice);
-                                    setEditCompareAt(p.compareAtPrice ?? "");
-                                    setEditStock(p.stockQuantity);
-                                    setEditLowStock(p.lowStockThreshold);
-                                  }}
-                                >Edit</button>
+                              <>
+                                <button
+                                    className="filament-btn filament-btn-outline"
+                                    onClick={() => {
+                                      setEditingProduct(p);
+                                      setEditPrice(p.sellingPrice);
+                                      setEditCompareAt(p.compareAtPrice ?? "");
+                                      setEditStock(p.stockQuantity);
+                                      setEditLowStock(p.lowStockThreshold);
+                                    }}
+                                  >Edit</button>{" "}
+                                <button
+                                    className="filament-btn filament-btn-outline"
+                                    onClick={() => openStockHistory(p)}
+                                    title="See when stock was received or deducted"
+                                  >History</button>
+                              </>
                             )}
                           </td>
                         </tr>
@@ -361,6 +667,60 @@ export default function StorePanel() {
                                   <input type="number" value={editLowStock} onChange={(e) => setEditLowStock(e.target.value)} />
                                 </label>
                                 <button className="filament-btn filament-btn-primary" onClick={() => handleUpdateProduct(p)}>Save</button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        {historyProduct?.uuid === p.uuid && (
+                          <tr style={{ background: "var(--surface-2)" }}>
+                            <td colSpan={6}>
+                              <div className="sp-history-panel">
+                                <div className="sp-history-head">
+                                  <strong>Stock history — {p.name}</strong>
+                                  <button
+                                    className="filament-btn filament-btn-outline"
+                                    onClick={() => setHistoryProduct(null)}
+                                  >
+                                    Close
+                                  </button>
+                                </div>
+
+                                {historyLoading ? (
+                                  <div className="sp-history-empty">Loading stock history…</div>
+                                ) : stockHistory.length === 0 ? (
+                                  <div className="sp-history-empty">
+                                    No stock movements recorded yet.
+                                  </div>
+                                ) : (
+                                  <>
+                                    <div className="sp-history-legend">
+                                      <span className="sp-history-chip sp-history-chip-up">▲ Stock in</span>
+                                      <span className="sp-history-chip sp-history-chip-down">▼ Stock out</span>
+                                    </div>
+                                    <div className="sp-history-rows">
+                                      {stockHistory.map((t, i) => (
+                                        <div className="sp-history-row" key={i}>
+                                          <span className="sp-history-when">
+                                            {new Date(t.createdAt).toLocaleString("en-IN", {
+                                              dateStyle: "medium",
+                                              timeStyle: "short",
+                                            })}
+                                          </span>
+                                          <span
+                                            className={`sp-history-qty ${t.quantity >= 0 ? "up" : "down"}`}
+                                          >
+                                            {t.quantity >= 0 ? "+" : ""}
+                                            {t.quantity} {t.transactionType}
+                                          </span>
+                                          <span className="sp-history-reason" title={t.reason}>
+                                            {t.reason || "—"}
+                                          </span>
+                                          <span className="sp-history-after">stock: {t.newStock}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  </>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -434,6 +794,7 @@ export default function StorePanel() {
                         </td>
                         <td>{statusBadge(o.status)}</td>
                         <td>
+                          <button className="filament-btn filament-btn-outline" style={{ marginRight: 6 }} onClick={() => handleDownloadInvoice(o)}>Bill</button>
                           {o.status !== "DELIVERED" && o.status !== "CANCELLED" && (
                             <>
                               {o.status === "PENDING" && (

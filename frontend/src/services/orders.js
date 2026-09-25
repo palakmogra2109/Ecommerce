@@ -68,6 +68,21 @@ export async function cancelOrder(id) {
   return await response.json();
 }
 
+// Returns the order bill/invoice PDF as a Blob for download.
+export async function downloadInvoice(id) {
+  const response = await fetch(`${API_URL}/orders/${id}/invoice`, {
+    headers: authHeaders(),
+    method: "GET",
+    credentials: "include",
+  });
+
+  if (!response.ok) {
+    throw new Error("Failed to download invoice");
+  }
+
+  return await response.blob();
+}
+
 export async function deleteOrder(id) {
   const response = await fetch(`${API_URL}/orders/${id}`, {
     headers: authHeaders(),

@@ -25,7 +25,9 @@ export async function GET(request, { params }) {
     if (!branch) return Response.json({ success: false, message: "Branch not found" }, { status: 404, headers: corsHeaders() });
 
     const { page = 1, limit = 50, type = "" } = Object.fromEntries(new URL(request.url).searchParams);
-    const result = await BranchInventoryTransaction.getByBranch(id, { page, limit, type });
+    // getByBranch filters on the numeric branchid column — pass branch.id,
+    // not the uuid from the URL.
+    const result = await BranchInventoryTransaction.getByBranch(branch.id, { page, limit, type });
     return Response.json({ success: true, transactions: result.rows, pagination: result.pagination }, { headers: corsHeaders() });
   } catch (error) {
     console.error("Branch inventory transactions error:", error);

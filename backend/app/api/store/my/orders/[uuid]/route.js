@@ -1,12 +1,33 @@
 import { corsHeaders } from "@/lib/cors";
 import pool from "@/lib/db";
 import { requireBranchAccess } from "@/lib/authorization";
-import { ORDER_FLOW } from "@shared/constants";
+import { Order } from "@/lib/models/order";
+import { ORDER_FLOW, ORDER_STATUS } from "@shared/constants";
 
 export const runtime = "nodejs";
 
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders() });
+}
+
+// Returns ordered items to store inventory after a cancellation so stock
+// is not lost. Only reverses lines that were deducted at this store.
+async function restockOrder(orderInternalId, branchInternalId) {
+  const items = await pool.query(
+    `SELECT product_uuid, quantity FROM order_items
+     WHERE order_id = $1 AND branchId = $2 AND product_uuid IS NOT NULL`,
+    [orderInternalId, branchInternalId]
+  );
+
+  for (const item of items.rows) {
+    await pool.query(
+      `UPDATE branch_products bp
+       SET stockQuantity = stockQuantity + $1, updated_at = now()
+       FROM products p
+       WHERE bp.branchId = $2 AND bp.productId = p.id AND p.uuid = $3`,
+      [item.quantity, branchInternalId, item.product_uuid]
+    );
+  }
 }
 
 export async function DELETE(request, { params }) {
@@ -29,10 +50,18 @@ export async function DELETE(request, { params }) {
       return Response.json({ success: false, message: `Cannot cancel a ${orderResult.rows[0].status} order` }, { status: 400, headers: corsHeaders() });
     }
 
+    const previousStatus = orderResult.rows[0].status;
+
     const result = await pool.query(
-      `UPDATE orders SET status = 'CANCELLED', updated_at = now() WHERE uuid = $1 RETURNING uuid, status, order_number`,
+      `UPDATE orders SET status = 'CANCELLED', updated_at = now() WHERE uuid = $1 RETURNING uuid, status, order_number, id`,
       [uuid]
     );
+
+    // Put the items back into the store's inventory.
+    await restockOrder(result.rows[0].id, access.branchId);
+
+    // Audit trail entry for the cancellation.
+    await Order.recordStatus(result.rows[0].id, ORDER_STATUS.CANCELLED, "Cancelled by store", "store");
 
     return Response.json({
       success: true,
@@ -134,7 +163,6 @@ export async function PATCH(request, { params }) {
     const order = orderResult.rows[0];
     const currentIndex = ORDER_FLOW.indexOf(order.status);
     const newIndex = ORDER_FLOW.indexOf(newStatus);
-
     if (newIndex === -1) {
       return Response.json({ success: false, message: `Invalid status: ${newStatus}` }, { status: 400, headers: corsHeaders() });
     }
@@ -150,6 +178,13 @@ export async function PATCH(request, { params }) {
     if (result.rows.length === 0) {
       return Response.json({ success: false, message: "Failed to update order" }, { status: 500, headers: corsHeaders() });
     }
+
+    // Audit trail: when a store cancels via the status flow, restock too.
+    if (newStatus === ORDER_STATUS.CANCELLED) {
+      await restockOrder(order.id, access.branchId);
+    }
+
+    await Order.recordStatus(order.id, newStatus, "", "store");
 
     const row = result.rows[0];
     return Response.json({
