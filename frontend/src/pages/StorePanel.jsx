@@ -1,5 +1,5 @@
 import { useState, useEffect, Fragment } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { FiSearch } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
 import { storeDashboard, storeProducts, storeOrders, storeUpdateOrder, storeUpdateProduct, storeCancelOrder } from "../services/store";
@@ -9,7 +9,8 @@ import StoreSidebar from "../components/StoreSidebar";
 export default function StorePanel() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [tab, setTab] = useState("dashboard");
+  const [searchParams, setSearchParams] = useSearchParams();
+  const tab = searchParams.get("tab") || "dashboard";
   const [loading, setLoading] = useState(false);
   const [dashboard, setDashboard] = useState(null);
   const [products, setProducts] = useState([]);
@@ -172,7 +173,7 @@ export default function StorePanel() {
   }
 
   function navigateTab(key) {
-    setTab(key);
+    setSearchParams({ tab: key }, { replace: true });
     setProductPage(1);
     setOrderPage(1);
   }

@@ -19,7 +19,6 @@ import {
   FiTruck,
   FiUsers,
   FiUserCheck,
-  FiMapPin,
 } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
 
@@ -154,23 +153,10 @@ const MODULES = [
     icon: FiSettings,
   },
   {
-    slug: "branch_management",
-    label: "Branches",
-    icon: FiMapPin,
-    children: [
-      {
-        slug: "branches",
-        path: "/branches",
-        label: "Branches",
-        icon: FiMapPin,
-      },
-      {
-        slug: "stores",
-        path: "/branches/stores",
-        label: "Stores",
-        icon: FiShoppingBag,
-      },
-    ],
+    slug: "stores",
+    path: "/branches/stores",
+    label: "Stores",
+    icon: FiShoppingBag,
   },
   {
     slug: "manager_dashboard",

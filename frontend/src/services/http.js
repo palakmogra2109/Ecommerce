@@ -2,7 +2,7 @@ const TOKEN_KEY = "auth_token";
 
 export function getStoredToken() {
   try {
-    return sessionStorage.getItem(TOKEN_KEY) || null;
+    return localStorage.getItem(TOKEN_KEY) || null;
   } catch {
     return null;
   }
@@ -11,9 +11,9 @@ export function getStoredToken() {
 export function storeToken(token) {
   try {
     if (token) {
-      sessionStorage.setItem(TOKEN_KEY, token);
+      localStorage.setItem(TOKEN_KEY, token);
     } else {
-      sessionStorage.removeItem(TOKEN_KEY);
+      localStorage.removeItem(TOKEN_KEY);
     }
   } catch {
     // Storage unavailable (private mode): auth still works in-memory.
@@ -22,7 +22,7 @@ export function storeToken(token) {
 
 export function clearToken() {
   try {
-    sessionStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_KEY);
   } catch {
     // Ignore storage errors.
   }

@@ -1,4 +1,4 @@
-import { authHeaders } from "./http";
+import { authHeaders, storeToken } from "./http";
 
 const API_URL = "/api";
 
@@ -21,7 +21,11 @@ export async function storeLogin(email, password) {
     credentials: "include",
     body: JSON.stringify({ email, password }),
   });
-  return await response.json();
+  const data = await response.json();
+  if (data.success) {
+    storeToken(data.token);
+  }
+  return data;
 }
 
 export async function storeDashboard(branchId) {

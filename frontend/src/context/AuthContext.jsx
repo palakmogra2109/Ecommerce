@@ -18,7 +18,7 @@ const CACHE_KEY = "auth_user";
 
 function getCachedUser() {
   try {
-    const cached = sessionStorage.getItem(CACHE_KEY);
+    const cached = localStorage.getItem(CACHE_KEY);
     return cached ? JSON.parse(cached) : null;
   } catch {
     return null;
@@ -27,9 +27,9 @@ function getCachedUser() {
 
 function setCachedUser(user) {
   if (user) {
-    sessionStorage.setItem(CACHE_KEY, JSON.stringify(user));
+    localStorage.setItem(CACHE_KEY, JSON.stringify(user));
   } else {
-    sessionStorage.removeItem(CACHE_KEY);
+    localStorage.removeItem(CACHE_KEY);
   }
 }
 
