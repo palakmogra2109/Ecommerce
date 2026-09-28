@@ -71,7 +71,7 @@ Failure modes the spec implies that no happy-path test covers. Each has its test
 | `frontend/src/pages/OrderView.jsx` | Render through `normalizeOrder` + `OrderDetails`. |
 | `frontend/src/pages/StorePanel.jsx` | Shared `ORDER_STATUSES` filter, per-item badges with a per-item control each, order-level cancel only. |
 | `frontend/src/pages/BranchOrders.jsx` | Shared forward-move rule instead of the local `NEXT_STATUS` map; per-item badges and controls. |
-| `frontend/src/pages/Storefront.jsx` | `OrderTrack`: shared timeline, `OrderDetails`, 10s polling. Removes `STEPS`/`LABELS`. |
+| `frontend/src/pages/Storefront.jsx` | `OrderTrack`: shared timeline, `OrderDetails`, 10s polling, email-only pick-list. Removes `STEPS`/`LABELS`. |
 | `frontend/storepub/vite.config.js` | Add `@shared` alias. |
 | `frontend/storepanel/vite.config.js` | Add `@shared` alias. |
 | `frontend/src/services/orders.js` | Add `updateOrderItem`. |
@@ -686,6 +686,48 @@ Then replace line 95. It tests `["PLACED", "PACKED", "SHIPPED", "OUT_FOR_DELIVER
 
 Note this route also returns `timeline: statusesForView(order.status)` at line 94 and `lastStatusAt`/`storeName`/`estimatedDeliveryAt` alongside. Leave all of those; the storefront stops reading `timeline` in Task 10, and the extra scalar fields harm nothing.
 
+Then relax the validation at lines 20-26. Today `if (!orderNumber || !email)` rejects a request with no order number, which is exactly the customer who lost their order id. Email alone must list that customer's orders:
+
+```js
+    if (!email) {
+      return Response.json(
+        { success: false, message: "Email is required" },
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+
+    // Email only, no order number: the customer does not know their order id,
+    // so return every order on that email as a pick-list. Five lean columns —
+    // the detail branch below still serves the full tracking view once a row
+    // is picked. Newest first, so the order they are most likely looking for
+    // is on top.
+    if (!orderNumber) {
+      const list = await pool.query(
+        `SELECT o.order_number, o.status, o.total, o.payment_status, o.created_at
+         FROM orders o
+         WHERE LOWER(o.customer_email) = $1
+         ORDER BY o.created_at DESC`,
+        [email]
+      );
+
+      return Response.json(
+        {
+          success: true,
+          orders: list.rows.map((r) => ({
+            orderNumber: r.order_number,
+            status: r.status,
+            total: Number(r.total) || 0,
+            paymentStatus: r.payment_status,
+            createdAt: r.created_at,
+          })),
+        },
+        { status: 200, headers: corsHeaders() }
+      );
+    }
+```
+
+The existing single-order branch below stays byte-for-byte identical; it now only runs when both parameters are present. No login is involved: checkout works as guest, so the email is the only identifier every order carries, and the current lookup already trusts order-number + email with no password — an email-only list is the same class of exposure.
+
 - [ ] **Step 7: Add per-item statuses to the two list endpoints**
 
 In `backend/app/api/branches/[id]/orders/route.js` line 27:
@@ -734,6 +776,19 @@ curl -s "http://localhost:3000/api/store/orders/track?order_number=$NUM&email=$M
 
 Expected: `trackable: True` for this `DELIVERED` order (the old hand-picked list omitted `DELIVERED`, so it reported `False`), every item carrying an `itemStatus` equal to its order's status, a non-null numeric `id`, and `itemStatusHistory` present as a list. The history list is empty for backfilled orders — the backfill set item statuses directly without writing audit rows, which is correct and stated in the spec.
 
+Also verify the email-only list branch:
+
+```bash
+export $(grep -E "^DATABASE_URL=" /var/www/html/Node-JS/Ecommerce/backend/.env.local | xargs)
+MAIL=$(psql "$DATABASE_URL" -t -A -c "SELECT customer_email FROM orders LIMIT 1")
+COUNT=$(psql "$DATABASE_URL" -t -A -c "SELECT count(*) FROM orders WHERE LOWER(customer_email)=LOWER('$MAIL')")
+curl -s "http://localhost:3000/api/store/orders/track?email=$MAIL" \
+  | python3 -c "import json,sys;d=json.load(sys.stdin);print('rows:',len(d['orders']));print('keys:',sorted(d['orders'][0].keys()));assert all(set(o)=={'orderNumber','status','total','paymentStatus','createdAt'} for o in d['orders'])"
+echo "expected rows: $COUNT"
+```
+
+Expected: the row count equals `$COUNT`, every row carries exactly the five list keys, and the rows are newest-first. A request with neither parameter still returns `400`.
+
 - [ ] **Step 9: Lint and build**
 
 ```bash
@@ -758,6 +813,10 @@ Adds the OrderItem model and exposes item_status on the store detail,
 tracking, and both list endpoints. The two list screens render per-item
 badges, so listWithItemStatuses pulls a json_agg summary in the same round
 trip rather than a request per order.
+
+The tracking endpoint gains an email-only branch: a request with no order
+number returns every order on that email as a five-column pick-list, for
+the customer who lost their order id. The single-order branch is unchanged.
 
 The tracking endpoint's trackable flag tested a hand-picked list containing
 "PLACED", a value that has never existed in the database, while omitting
@@ -2923,6 +2982,130 @@ importing `ORDER_STATUS_LABELS` from `@shared/constants`. Do not keep the local 
 
 There is no Step 5 in this task and no manual refresh button. The design decision was poll-only, so adding one here would put a control on the page that the approved design does not have. The existing submit button already re-runs `track` on demand, which covers the customer who does not want to wait ten seconds.
 
+- [ ] **Step 5: List every order on the email when the order number is missing**
+
+A customer who lost their order id submits the form with the order-number field blank. `track()` must branch on that instead of sending a blank `order_number` to the detail endpoint (which would 404). Add a list state next to the existing `result` state:
+
+```jsx
+  const [orderList, setOrderList] = useState(null);
+```
+
+Extract the detail fetch so both the form submit and a row click use it — two copies of the same `api()` call is how they drift apart:
+
+```jsx
+  async function loadDetail(orderNumber, email) {
+    const { ok, data } = await api(
+      `/orders/track?order_number=${encodeURIComponent(orderNumber)}&email=${encodeURIComponent(email)}`
+    );
+    if (!ok) {
+      setErr(data.message || "Order not found. Check your order number and email.");
+      setResult(null);
+      return;
+    }
+    // API returns { order, statusHistory, ... } — keep both for the UI.
+    setResult({ ...data.order, statusHistory: data.statusHistory || [] });
+  }
+```
+
+Rewrite `track()` (lines 1441-1456) around it:
+
+```jsx
+  async function track(e) {
+    if (e) e.preventDefault();
+    setBusy(true);
+    setErr("");
+    setResult(null);
+    setOrderList(null);
+    const email = form.email.trim().toLowerCase();
+    const orderNumber = form.order_number.trim();
+    // No order number: the customer lost it — list every order on the email
+    // (Task 3's email-only branch) instead of 404ing on a blank number.
+    if (!orderNumber) {
+      const { ok, data } = await api(`/orders/track?email=${encodeURIComponent(email)}`);
+      setBusy(false);
+      if (!ok) {
+        setErr(data.message || "Something went wrong. Check the email and try again.");
+        return;
+      }
+      setOrderList(data.orders || []);
+      return;
+    }
+    await loadDetail(orderNumber, email);
+    setBusy(false);
+  }
+
+  async function pickOrder(orderNumber) {
+    setBusy(true);
+    setErr("");
+    setForm((f) => ({ ...f, order_number: orderNumber }));
+    setOrderList(null);
+    await loadDetail(orderNumber, form.email.trim().toLowerCase());
+    setBusy(false);
+  }
+```
+
+Render the pick-list above the detail branch (before line 1487's `if (result && ...)`). The storefront loads no stylesheet at all — no import in `main.jsx`, no link in `index.html` — so no shared table class will style this; use a plain table with a few inline styles so it reads as a table even with zero CSS, and the same `sf-btn primary` button class the form already uses:
+
+```jsx
+  if (orderList && !result) {
+    return (
+      <div>
+        <div className="sf-page-title">
+          <button
+            className="sf-link"
+            onClick={() => {
+              setOrderList(null);
+              onBack();
+            }}
+          >
+            <FiChevronLeft /> Back
+          </button>
+          <h2>Your orders</h2>
+        </div>
+        {orderList.length === 0 ? (
+          <p>No orders found for that email address.</p>
+        ) : (
+          <table style={{ width: "100%", borderCollapse: "collapse" }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: "left", padding: "8px" }}>Order</th>
+                <th style={{ textAlign: "left", padding: "8px" }}>Date</th>
+                <th style={{ textAlign: "right", padding: "8px" }}>Total</th>
+                <th style={{ textAlign: "left", padding: "8px" }}>Payment</th>
+                <th style={{ textAlign: "left", padding: "8px" }}>Status</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>
+              {orderList.map((o) => (
+                <tr key={o.orderNumber} style={{ borderTop: "1px solid #e2e8f0" }}>
+                  <td style={{ padding: "8px" }}><code>{o.orderNumber}</code></td>
+                  <td style={{ padding: "8px" }}>{fmtTime(o.createdAt)}</td>
+                  <td style={{ padding: "8px", textAlign: "right" }}>{inr(o.total)}</td>
+                  <td style={{ padding: "8px" }}>{o.paymentStatus}</td>
+                  <td style={{ padding: "8px" }}>{ORDER_STATUS_LABELS[o.status] || o.status}</td>
+                  <td style={{ padding: "8px" }}>
+                    <button
+                      type="button"
+                      className="sf-btn primary"
+                      disabled={busy}
+                      onClick={() => pickOrder(o.orderNumber)}
+                    >
+                      Track
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
+  }
+```
+
+`ORDER_STATUS_LABELS` comes from the `@shared/constants` import Step 4 already adds; `inr` and `fmtTime` are module-level helpers already in this file. The form's order-number input needs no change — it is already submittable blank, which is what reaches the new branch. Update its placeholder to hint at that, e.g. `placeholder="Order number (leave blank to list all your orders)"`.
+
 - [ ] **Step 6: Verify the build and the tests**
 
 ```bash
@@ -2934,7 +3117,11 @@ cd /var/www/html/Node-JS/Ecommerce && node frontend/scripts/verify-order-status.
 
 Expected: no new oxlint warnings; `storepub` builds, which is the real proof that `OrderDetails.css` reaches the storefront despite `index.css` never being loaded there; and the test script prints `verify-order-status ok`.
 
-- [ ] **Step 7: Verify the polling loop in a browser**
+- [ ] **Step 7: Verify the pick-list in a browser**
+
+With `backend` and `frontend/storepub` running, submit the track form with an email alone and confirm the table lists every order on that email, newest first, with the same row count as `SELECT count(*) FROM orders WHERE LOWER(customer_email)=...`. Click a row's Track button and confirm the detail below matches what the order-number lookup shows for the same order — same timeline stage, same per-item statuses. Submit an email with no orders and confirm the empty message rather than a blank page.
+
+- [ ] **Step 8: Verify the polling loop in a browser**
 
 This cannot be automated. With `backend` and `frontend/storepub` running:
 
@@ -2944,7 +3131,7 @@ This cannot be automated. With `backend` and `frontend/storepub` running:
 4. Advance the order to `DELIVERED`, wait 20 seconds, and confirm no further requests appear in the storefront's Network tab.
 5. Navigate away from the tracking view. Confirm the interval is cleared: no requests continue, and no React state-update warning appears in the console.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 cd /var/www/html/Node-JS/Ecommerce
@@ -2962,6 +3149,10 @@ stops for good on DELIVERED, CANCELLED or REFUNDED, clearing its interval on
 unmount and on view change. A monotonic request counter discards out-of-order
 responses so a slow earlier request cannot roll the customer's view of an
 item backwards.
+
+The order-number field is now optional: submitting email alone lists every
+order on that email as a pick-list, for the customer who lost their order
+id. Picking a row loads the same detail view through the shared fetcher.
 
 Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>"
 ```

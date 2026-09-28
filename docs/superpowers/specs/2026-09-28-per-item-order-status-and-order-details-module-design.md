@@ -261,6 +261,15 @@ backwards transitions, matching the forward-only rule already applied at
 tests the non-existent `PLACED` value and is therefore permanently `false`, is
 replaced with a real check against `ORDER_FLOW`.
 
+A customer who lost their order id cannot use the track lookup at all, so
+the track route gains an email-only branch: a request with `email` but no
+`order_number` returns every order on that email as a five-column pick-list
+(`orderNumber`, `status`, `total`, `paymentStatus`, `createdAt`), newest
+first. Picking a row loads the unchanged single-order branch. No login is
+involved — checkout works as guest, so the email is the only identifier
+every order carries, and the existing lookup already trusts order-number +
+email with no password.
+
 ### Backward compatibility
 
 `PATCH /api/orders/:id` with a plain `{ status }` continues to work, because
