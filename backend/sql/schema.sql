@@ -1,5 +1,31 @@
 -- Earth धान्य schema
 -- Idempotent: safe to run on a fresh or existing database.
+--
+-- This is the BOOTSTRAP file: it is the DDL for an EMPTY database. A fresh
+-- install is expected to come out identical to the live one, so every column
+-- below is spelled and ordered the way the running database has it. The live
+-- shape is recorded in sql/inventory.md (`npm run gen:inventory`), and
+-- `node scripts/verify-phase1.mjs` fails if this file and the live schema drift
+-- apart in either direction.
+--
+-- Two spellings are in play, both of them real:
+--
+--   * The branch tables were created with unquoted camelCase column names, which
+--     PostgreSQL folded to lowercase. The live columns are `addressline1`,
+--     `stockquantity`, `createdat`, `previousstocksource`, ... so that is how
+--     they are written here - folded, not camelCase. Do NOT "fix" them to
+--     snake_case: the models in lib/models/ alias these folded names back to
+--     camelCase on the way out precisely because the database folded them, and
+--     the indexes and foreign keys below reference the folded spelling.
+--   * `orders` and `users` are snake_case (`order_number`, `created_at`,
+--     `payment_method`). `orders.branchid` is the one folded name in an
+--     otherwise snake_case table, again because of an unquoted camelCase ALTER.
+--
+-- Where the live table has a UNIQUE INDEX rather than a UNIQUE CONSTRAINT the
+-- index is created explicitly below, so a fresh install matches constraint for
+-- constraint. Uniqueness is enforced either way; nothing in the codebase uses
+-- `ON CONFLICT ON CONSTRAINT`, only `ON CONFLICT (columns)`, which resolves
+-- against a unique index just as well.
 
 -- gen_random_uuid() needs the pgcrypto extension on PostgreSQL 12.
 -- On PostgreSQL 13+ it is built in, so this is a no-op there.
@@ -9,18 +35,18 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 -- users
 -- =============================================================
 CREATE TABLE IF NOT EXISTS users (
-  id          BIGSERIAL PRIMARY KEY,
-  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  name        TEXT NOT NULL DEFAULT '',
-  email       TEXT NOT NULL UNIQUE,
-  password    TEXT NOT NULL,
+  id          SERIAL PRIMARY KEY,
+  name        VARCHAR(100) NOT NULL,
+  email       VARCHAR(255) NOT NULL UNIQUE,
+  password    VARCHAR(255) NOT NULL,
+  created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  status      TEXT NOT NULL DEFAULT 'ACTIVE',
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
   mobile      TEXT,
   avatar      TEXT,
+  uuid        UUID NOT NULL DEFAULT gen_random_uuid(),
   parent_id   BIGINT REFERENCES users(id) ON DELETE SET NULL,
-  status      TEXT NOT NULL DEFAULT 'ACTIVE'
-              CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED')),
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  countrycode TEXT
 );
 
 -- Backfill columns on existing databases
@@ -30,21 +56,26 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAU
 ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile     TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar     TEXT;
 ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_id  BIGINT REFERENCES users(id) ON DELETE SET NULL;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS countrycode TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS users_uuid_key ON users(uuid);
+
+-- `users.status` carries no CHECK constraint in the live database - every other
+-- status column here does - so none is declared above. Adding one would make a
+-- fresh install reject writes the running system accepts.
 
 -- =============================================================
 -- roles
 -- =============================================================
 CREATE TABLE IF NOT EXISTS roles (
   id          BIGSERIAL PRIMARY KEY,
-  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   name        TEXT NOT NULL UNIQUE,
   slug        TEXT NOT NULL UNIQUE,
   description TEXT NOT NULL DEFAULT '',
   status      TEXT NOT NULL DEFAULT 'ACTIVE'
               CHECK (status IN ('ACTIVE', 'INACTIVE')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  uuid        UUID NOT NULL DEFAULT gen_random_uuid()
 );
 
 ALTER TABLE roles ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
@@ -55,12 +86,12 @@ CREATE UNIQUE INDEX IF NOT EXISTS roles_uuid_key ON roles(uuid);
 -- =============================================================
 CREATE TABLE IF NOT EXISTS permissions (
   id          BIGSERIAL PRIMARY KEY,
-  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   name        TEXT NOT NULL,
   slug        TEXT NOT NULL UNIQUE,
   module      TEXT NOT NULL,
   description TEXT NOT NULL DEFAULT '',
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  uuid        UUID NOT NULL DEFAULT gen_random_uuid()
 );
 
 ALTER TABLE permissions ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
@@ -148,7 +179,6 @@ ON CONFLICT (id) DO NOTHING;
 -- =============================================================
 CREATE TABLE IF NOT EXISTS email_templates (
   id          BIGSERIAL PRIMARY KEY,
-  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
   name        TEXT NOT NULL,
   slug        TEXT NOT NULL UNIQUE,
   subject     TEXT NOT NULL,
@@ -158,7 +188,8 @@ CREATE TABLE IF NOT EXISTS email_templates (
   status      TEXT NOT NULL DEFAULT 'ACTIVE'
               CHECK (status IN ('ACTIVE', 'INACTIVE')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  uuid        UUID NOT NULL DEFAULT gen_random_uuid()
 );
 
 ALTER TABLE email_templates ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
@@ -270,7 +301,10 @@ CREATE TABLE IF NOT EXISTS products (
   status              TEXT NOT NULL DEFAULT 'DRAFT'
                       CHECK (status IN ('DRAFT', 'ACTIVE', 'INACTIVE', 'ARCHIVED')),
   created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  inventory_mode      TEXT NOT NULL DEFAULT 'SINGLE',
+  pricing_attribute_uuid UUID,
+  expiry_date         DATE
 );
 
 ALTER TABLE products ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
@@ -296,6 +330,7 @@ ALTER TABLE products ADD COLUMN IF NOT EXISTS pricing_attribute_uuid UUID;
 ALTER TABLE products ADD COLUMN IF NOT EXISTS expiry_date DATE;
 CREATE UNIQUE INDEX IF NOT EXISTS products_uuid_key ON products(uuid);
 CREATE INDEX IF NOT EXISTS products_expiry_date_idx ON products(expiry_date);
+CREATE INDEX IF NOT EXISTS products_category_status_idx ON products(category_id, status);
 
 -- =============================================================
 -- customers
@@ -303,16 +338,20 @@ CREATE INDEX IF NOT EXISTS products_expiry_date_idx ON products(expiry_date);
 -- set of fields without schema churn.
 -- =============================================================
 CREATE TABLE IF NOT EXISTS customers (
-  id          BIGSERIAL PRIMARY KEY,
-  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  name        TEXT NOT NULL,
-  email       TEXT NOT NULL UNIQUE,
-  mobile      TEXT,
-  address     JSONB NOT NULL DEFAULT '{}',
-  status      TEXT NOT NULL DEFAULT 'ACTIVE'
-              CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED')),
-  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  id             BIGSERIAL PRIMARY KEY,
+  uuid           UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  name           TEXT NOT NULL,
+  email          TEXT NOT NULL UNIQUE,
+  mobile         TEXT,
+  address        JSONB NOT NULL DEFAULT '{}',
+  status         TEXT NOT NULL DEFAULT 'ACTIVE'
+                 CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED')),
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  order_count    INTEGER NOT NULL DEFAULT 0,
+  total_spent    NUMERIC(12,2) NOT NULL DEFAULT 0,
+  first_order_at TIMESTAMPTZ,
+  last_order_at  TIMESTAMPTZ
 );
 
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
@@ -320,7 +359,12 @@ ALTER TABLE customers ADD COLUMN IF NOT EXISTS mobile TEXT;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS address JSONB NOT NULL DEFAULT '{}';
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE';
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS order_count INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS total_spent NUMERIC(12,2) NOT NULL DEFAULT 0;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS first_order_at TIMESTAMPTZ;
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS last_order_at TIMESTAMPTZ;
 CREATE UNIQUE INDEX IF NOT EXISTS customers_uuid_key ON customers(uuid);
+CREATE INDEX IF NOT EXISTS customers_created_at_idx ON customers(created_at);
 
 -- =============================================================
 -- coupons
@@ -380,7 +424,7 @@ CREATE TABLE IF NOT EXISTS orders (
   coupon_id      BIGINT REFERENCES coupons(id) ON DELETE SET NULL,
   coupon_code    TEXT,
   payment_method TEXT NOT NULL DEFAULT 'cod'
-                  CHECK (payment_method IN ('card', 'cod', 'upi')),
+                  CHECK (payment_method IN ('card', 'cod', 'upi', 'netbanking', 'wallet')),
   payment_status TEXT NOT NULL DEFAULT 'PENDING'
                   CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'REFUNDED')),
   status         TEXT NOT NULL DEFAULT 'PENDING'
@@ -406,6 +450,11 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'PENDING';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 CREATE UNIQUE INDEX IF NOT EXISTS orders_uuid_key ON orders(uuid);
+CREATE INDEX IF NOT EXISTS orders_created_at_idx ON orders(created_at);
+CREATE INDEX IF NOT EXISTS orders_customer_id_created_at_idx ON orders(customer_id, created_at);
+CREATE INDEX IF NOT EXISTS orders_status_created_at_idx ON orders(status, created_at);
+CREATE INDEX IF NOT EXISTS orders_payment_method_created_at_idx ON orders(payment_method, created_at);
+CREATE INDEX IF NOT EXISTS orders_coupon_id_created_at_idx ON orders(coupon_id, created_at);
 
 CREATE TABLE IF NOT EXISTS order_items (
   id            BIGSERIAL PRIMARY KEY,
@@ -428,6 +477,8 @@ ALTER TABLE order_items ADD COLUMN IF NOT EXISTS variant TEXT;
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS price NUMERIC(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS quantity INTEGER NOT NULL DEFAULT 1;
 ALTER TABLE order_items ADD COLUMN IF NOT EXISTS subtotal NUMERIC(12,2) NOT NULL DEFAULT 0;
+CREATE INDEX IF NOT EXISTS order_items_order_id_idx ON order_items(order_id);
+CREATE INDEX IF NOT EXISTS order_items_product_id_idx ON order_items(product_id);
 
 -- =============================================================
 -- reviews
@@ -476,7 +527,9 @@ CREATE TABLE IF NOT EXISTS banners (
   status      TEXT NOT NULL DEFAULT 'ACTIVE'
               CHECK (status IN ('ACTIVE', 'INACTIVE')),
   created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  starts_at   TIMESTAMPTZ,
+  ends_at     TIMESTAMPTZ
 );
 
 ALTER TABLE banners ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
@@ -487,54 +540,127 @@ ALTER TABLE banners ADD COLUMN IF NOT EXISTS position TEXT NOT NULL DEFAULT 'her
 ALTER TABLE banners ADD COLUMN IF NOT EXISTS sort_order INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE banners ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE';
 ALTER TABLE banners ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
-CREATE INDEX IF NOT EXISTS banners_schedule_idx ON banners(status, position, starts_at, ends_at);
-ALTER TABLE banners ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ;
 ALTER TABLE banners ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ;
+ALTER TABLE banners ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ;
+-- The schedule index covers starts_at/ends_at, so it has to come after the
+-- backfills that add them on an existing database.
+CREATE INDEX IF NOT EXISTS banners_schedule_idx ON banners(status, position, starts_at, ends_at);
 CREATE UNIQUE INDEX IF NOT EXISTS banners_uuid_key ON banners(uuid);
+
+-- =============================================================
+-- countries + states + cities
+-- Geographic reference data. `branches` points at these three by uuid
+-- (countryid / stateid / cityid), so they are created before it.
+--
+-- The live database carries 250 countries, 5308 states and 152646 cities.
+-- That data is NOT created here: this file only creates the structure, so
+-- running it - even twice, even on a populated database - cannot touch those
+-- rows. A fresh install gets an empty, structurally identical reference set;
+-- load the data separately.
+-- =============================================================
+CREATE TABLE IF NOT EXISTS countries (
+  id         BIGSERIAL PRIMARY KEY,
+  uuid       UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  name       TEXT NOT NULL UNIQUE,
+  iso2       TEXT NOT NULL UNIQUE,
+  iso3       TEXT,
+  dialcode   TEXT,
+  flag       TEXT,
+  status     TEXT NOT NULL DEFAULT 'ACTIVE'
+             CHECK (status IN ('ACTIVE', 'INACTIVE')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS countries_uuid_key ON countries(uuid);
+
+CREATE TABLE IF NOT EXISTS states (
+  id         BIGSERIAL PRIMARY KEY,
+  uuid       UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  name       TEXT NOT NULL,
+  statecode  TEXT,
+  countryid  UUID NOT NULL REFERENCES countries(uuid) ON DELETE CASCADE,
+  status     TEXT NOT NULL DEFAULT 'ACTIVE'
+             CHECK (status IN ('ACTIVE', 'INACTIVE')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE NULLS NOT DISTINCT (countryid, statecode)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS states_uuid_key ON states(uuid);
+CREATE INDEX IF NOT EXISTS states_country_idx ON states(countryid);
+
+CREATE TABLE IF NOT EXISTS cities (
+  id         BIGSERIAL PRIMARY KEY,
+  uuid       UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  name       TEXT NOT NULL,
+  countryid  UUID REFERENCES countries(uuid) ON DELETE CASCADE,
+  stateid    UUID NOT NULL REFERENCES states(uuid) ON DELETE CASCADE,
+  status     TEXT NOT NULL DEFAULT 'ACTIVE'
+             CHECK (status IN ('ACTIVE', 'INACTIVE')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (stateid, name)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS cities_uuid_key ON cities(uuid);
+CREATE INDEX IF NOT EXISTS cities_country_idx ON cities(countryid);
+CREATE INDEX IF NOT EXISTS cities_state_idx ON cities(stateid);
+CREATE INDEX IF NOT EXISTS cities_name_idx ON cities(name);
 
 -- =============================================================
 -- branches
 -- A branch is a physical store the customer can order from. Store
 -- managers (branch_users rows) manage its products, stock and orders
 -- from the store panel.
+--
+-- Every column here except `onboarding_completed` is folded lowercase: the
+-- table was created with unquoted camelCase names that PostgreSQL folded.
 -- =============================================================
 CREATE TABLE IF NOT EXISTS branches (
-  id                  BIGSERIAL PRIMARY KEY,
-  uuid                UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  name                TEXT NOT NULL,
-  code                TEXT NOT NULL UNIQUE,
-  phone               TEXT,
-  email               TEXT,
-  address             TEXT,
-  addressLine1        TEXT,
-  addressLine2        TEXT,
-  city                TEXT,
-  state               TEXT,
-  country             TEXT NOT NULL DEFAULT 'India',
-  postalCode          TEXT,
-  latitude            NUMERIC(10,7),
-  longitude           NUMERIC(10,7),
-  openingTime         TIME,
-  closingTime         TIME,
-  timezone            TEXT NOT NULL DEFAULT 'Asia/Kolkata',
-  status              TEXT NOT NULL DEFAULT 'ACTIVE'
-                      CHECK (status IN ('ACTIVE', 'INACTIVE')),
-  deliveryEnabled     BOOLEAN NOT NULL DEFAULT TRUE,
-  pickupEnabled       BOOLEAN NOT NULL DEFAULT TRUE,
-  deliveryRadius      NUMERIC(10,2),
-  description         TEXT,
-  logo                TEXT,
-  onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                    BIGSERIAL PRIMARY KEY,
+  uuid                  UUID NOT NULL DEFAULT gen_random_uuid(),
+  name                  TEXT NOT NULL,
+  code                  TEXT NOT NULL,
+  phone                 TEXT,
+  email                 TEXT,
+  address               TEXT,
+  addressline1          TEXT,
+  addressline2          TEXT,
+  city                  TEXT,
+  state                 TEXT,
+  country               TEXT DEFAULT 'India',
+  postalcode            TEXT,
+  latitude              NUMERIC(10,7),
+  longitude             NUMERIC(10,7),
+  openingtime           TIME,
+  closingtime           TIME,
+  timezone              TEXT DEFAULT 'Asia/Kolkata',
+  status                TEXT NOT NULL DEFAULT 'ACTIVE'
+                        CHECK (status IN ('ACTIVE', 'INACTIVE')),
+  deliveryenabled       BOOLEAN NOT NULL DEFAULT TRUE,
+  pickupenabled         BOOLEAN NOT NULL DEFAULT TRUE,
+  deliveryradius        NUMERIC(10,2),
+  createdat             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updatedat             TIMESTAMPTZ NOT NULL DEFAULT now(),
+  onboarding_completed  BOOLEAN NOT NULL DEFAULT FALSE,
+  description           TEXT,
+  logo                  TEXT,
+  countryid             UUID REFERENCES countries(uuid),
+  stateid               UUID REFERENCES states(uuid),
+  cityid                UUID REFERENCES cities(uuid)
 );
 
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS description TEXT;
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS logo TEXT;
 ALTER TABLE branches ADD COLUMN IF NOT EXISTS onboarding_completed BOOLEAN NOT NULL DEFAULT FALSE;
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS countryid UUID REFERENCES countries(uuid);
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS stateid UUID REFERENCES states(uuid);
+ALTER TABLE branches ADD COLUMN IF NOT EXISTS cityid UUID REFERENCES cities(uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS branches_uuid_key ON branches(uuid);
+CREATE UNIQUE INDEX IF NOT EXISTS branches_code_key ON branches(code);
 CREATE INDEX IF NOT EXISTS branches_city_idx ON branches(city);
-CREATE INDEX IF NOT EXISTS branches_postal_code_idx ON branches(postalCode);
+CREATE INDEX IF NOT EXISTS branches_postal_code_idx ON branches(postalcode);
 
 -- =============================================================
 -- branch_users
@@ -542,17 +668,20 @@ CREATE INDEX IF NOT EXISTS branches_postal_code_idx ON branches(postalCode);
 -- =============================================================
 CREATE TABLE IF NOT EXISTS branch_users (
   id         BIGSERIAL PRIMARY KEY,
-  uuid       UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  branchId   BIGINT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-  userId     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  uuid       UUID NOT NULL DEFAULT gen_random_uuid(),
+  branchid   BIGINT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+  userid     BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   role       TEXT NOT NULL DEFAULT 'BRANCH_MANAGER',
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (branchId, userId)
+  createdat  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (branchid, userid)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS branch_users_uuid_key ON branch_users(uuid);
-CREATE INDEX IF NOT EXISTS bu_branch_idx ON branch_users(branchId);
-CREATE INDEX IF NOT EXISTS bu_user_idx ON branch_users(userId);
+-- Redundant with branch_users_uuid_key, but the live database has both, so a
+-- fresh install does too.
+CREATE UNIQUE INDEX IF NOT EXISTS bu_uuid_key ON branch_users(uuid);
+CREATE INDEX IF NOT EXISTS bu_branch_idx ON branch_users(branchid);
+CREATE INDEX IF NOT EXISTS bu_user_idx ON branch_users(userid);
 
 -- =============================================================
 -- branch_products
@@ -560,31 +689,31 @@ CREATE INDEX IF NOT EXISTS bu_user_idx ON branch_users(userId);
 -- =============================================================
 CREATE TABLE IF NOT EXISTS branch_products (
   id                BIGSERIAL PRIMARY KEY,
-  uuid              UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  branchId          BIGINT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
-  productId         BIGINT REFERENCES products(id) ON DELETE CASCADE,
-  productUuid       UUID REFERENCES products(uuid),
-  variantId         TEXT,
-  sellingPrice      NUMERIC(12,2),
-  compareAtPrice    NUMERIC(12,2),
-  costPrice         NUMERIC(12,2),
-  stockQuantity     INTEGER NOT NULL DEFAULT 0,
-  reservedQuantity  INTEGER NOT NULL DEFAULT 0,
-  availableQuantity INTEGER GENERATED ALWAYS AS (stockQuantity - reservedQuantity) STORED,
-  lowStockThreshold INTEGER NOT NULL DEFAULT 5,
-  isAvailable       BOOLEAN NOT NULL DEFAULT TRUE,
+  uuid              UUID NOT NULL DEFAULT gen_random_uuid(),
+  branchid          BIGINT NOT NULL REFERENCES branches(id) ON DELETE CASCADE,
+  productid         BIGINT REFERENCES products(id) ON DELETE CASCADE,
+  productuuid       UUID REFERENCES products(uuid),
+  variantid         TEXT,
+  sellingprice      NUMERIC(12,2),
+  compareatprice    NUMERIC(12,2),
+  costprice         NUMERIC(12,2),
+  stockquantity     INTEGER NOT NULL DEFAULT 0,
+  reservedquantity  INTEGER NOT NULL DEFAULT 0,
+  availablequantity INTEGER GENERATED ALWAYS AS (stockquantity - reservedquantity) STORED NOT NULL,
+  lowstockthreshold INTEGER NOT NULL DEFAULT 5,
+  isavailable       BOOLEAN NOT NULL DEFAULT TRUE,
   status            TEXT NOT NULL DEFAULT 'ACTIVE'
                     CHECK (status IN ('ACTIVE', 'INACTIVE', 'OUT_OF_STOCK', 'DISCONTINUED')),
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-  UNIQUE (branchId, productId)
+  createdat         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updatedat         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (branchid, productid)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS branch_products_uuid_key ON branch_products(uuid);
-CREATE INDEX IF NOT EXISTS bp_branch_idx ON branch_products(branchId);
-CREATE INDEX IF NOT EXISTS bp_product_idx ON branch_products(productId);
+CREATE INDEX IF NOT EXISTS bp_branch_idx ON branch_products(branchid);
+CREATE INDEX IF NOT EXISTS bp_product_idx ON branch_products(productid);
 CREATE INDEX IF NOT EXISTS bp_status_idx ON branch_products(status);
-CREATE INDEX IF NOT EXISTS bp_variant_idx ON branch_products(variantId);
+CREATE INDEX IF NOT EXISTS bp_variant_idx ON branch_products(variantid);
 
 -- =============================================================
 -- branch_inventory_transactions
@@ -592,76 +721,81 @@ CREATE INDEX IF NOT EXISTS bp_variant_idx ON branch_products(variantId);
 -- =============================================================
 CREATE TABLE IF NOT EXISTS branch_inventory_transactions (
   id              BIGSERIAL PRIMARY KEY,
-  uuid            UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  branchId        BIGINT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
-  productId       BIGINT REFERENCES products(id) ON DELETE SET NULL,
-  productUuid     UUID REFERENCES products(uuid),
-  variantId       TEXT,
-  transactionType TEXT NOT NULL
-                  CHECK (transactionType IN ('PURCHASE','ORDER','RETURN','DAMAGE','ADJUSTMENT','TRANSFER_IN','TRANSFER_OUT')),
+  uuid            UUID NOT NULL DEFAULT gen_random_uuid(),
+  branchid        BIGINT NOT NULL REFERENCES branches(id) ON DELETE RESTRICT,
+  productid       BIGINT REFERENCES products(id) ON DELETE SET NULL,
+  productuuid     UUID REFERENCES products(uuid),
+  variantid       TEXT,
+  transactiontype TEXT NOT NULL
+                  CHECK (transactiontype IN ('PURCHASE','ORDER','RETURN','DAMAGE','ADJUSTMENT','TRANSFER_IN','TRANSFER_OUT')),
   quantity        INTEGER NOT NULL,
-  previousStock   INTEGER NOT NULL DEFAULT 0,
-  newStock        INTEGER NOT NULL DEFAULT 0,
-  referenceType   TEXT,
-  referenceId     UUID,
+  previousstock   INTEGER NOT NULL DEFAULT 0,
+  newstock        INTEGER NOT NULL DEFAULT 0,
+  referencetype   TEXT,
+  referenceid     UUID,
   reason          TEXT,
-  createdBy       BIGINT REFERENCES users(id),
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  createdby       BIGINT REFERENCES users(id),
+  createdat       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS branch_inventory_transactions_uuid_key ON branch_inventory_transactions(uuid);
-CREATE INDEX IF NOT EXISTS bit_branch_idx ON branch_inventory_transactions(branchId);
-CREATE INDEX IF NOT EXISTS bit_product_idx ON branch_inventory_transactions(productId);
-CREATE INDEX IF NOT EXISTS bit_created_idx ON branch_inventory_transactions(created_at);
-CREATE INDEX IF NOT EXISTS bit_reference_idx ON branch_inventory_transactions(referenceType, referenceId);
-CREATE INDEX IF NOT EXISTS bit_transaction_type_idx ON branch_inventory_transactions(transactionType);
+CREATE INDEX IF NOT EXISTS bit_branch_idx ON branch_inventory_transactions(branchid);
+CREATE INDEX IF NOT EXISTS bit_product_idx ON branch_inventory_transactions(productid);
+CREATE INDEX IF NOT EXISTS bit_created_idx ON branch_inventory_transactions(createdat);
+CREATE INDEX IF NOT EXISTS bit_reference_idx ON branch_inventory_transactions(referencetype, referenceid);
+CREATE INDEX IF NOT EXISTS bit_transaction_type_idx ON branch_inventory_transactions(transactiontype);
 
 -- =============================================================
 -- branch_stock_transfers + branch_transfer_items
 -- Move stock between branches.
 -- =============================================================
 CREATE TABLE IF NOT EXISTS branch_stock_transfers (
-  id                  BIGSERIAL PRIMARY KEY,
-  uuid                UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  transferNumber      TEXT NOT NULL UNIQUE,
-  sourceBranchId      BIGINT NOT NULL REFERENCES branches(id),
-  destinationBranchId BIGINT NOT NULL REFERENCES branches(id),
-  status              TEXT NOT NULL DEFAULT 'REQUESTED'
-                      CHECK (status IN ('REQUESTED','APPROVED','IN_TRANSIT','RECEIVED','CANCELLED')),
-  requestedById       BIGINT REFERENCES users(id),
-  approvedById        BIGINT REFERENCES users(id),
-  receivedById        BIGINT REFERENCES users(id),
-  reason              TEXT,
-  created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-  updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                   BIGSERIAL PRIMARY KEY,
+  uuid                 UUID NOT NULL DEFAULT gen_random_uuid(),
+  transfernumber       TEXT NOT NULL,
+  sourcebranchid       BIGINT NOT NULL REFERENCES branches(id),
+  destinationbranchid  BIGINT NOT NULL REFERENCES branches(id),
+  status               TEXT NOT NULL DEFAULT 'REQUESTED'
+                       CHECK (status IN ('REQUESTED','APPROVED','IN_TRANSIT','RECEIVED','CANCELLED')),
+  requestbyid          BIGINT REFERENCES users(id),
+  approvedbyid         BIGINT REFERENCES users(id),
+  receivedbyid         BIGINT REFERENCES users(id),
+  reason               TEXT,
+  createdat            TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updatedat            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS branch_stock_transfers_uuid_key ON branch_stock_transfers(uuid);
-CREATE INDEX IF NOT EXISTS bst_source_idx ON branch_stock_transfers(sourceBranchId);
-CREATE INDEX IF NOT EXISTS bst_dest_idx ON branch_stock_transfers(destinationBranchId);
+CREATE UNIQUE INDEX IF NOT EXISTS bst_transfer_number_key ON branch_stock_transfers(transfernumber);
+CREATE INDEX IF NOT EXISTS bst_source_idx ON branch_stock_transfers(sourcebranchid);
+CREATE INDEX IF NOT EXISTS bst_dest_idx ON branch_stock_transfers(destinationbranchid);
 CREATE INDEX IF NOT EXISTS bst_status_idx ON branch_stock_transfers(status);
 
 CREATE TABLE IF NOT EXISTS branch_transfer_items (
-  id                BIGSERIAL PRIMARY KEY,
-  uuid              UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  transferId        BIGINT NOT NULL REFERENCES branch_stock_transfers(id) ON DELETE CASCADE,
-  productId         BIGINT REFERENCES products(id) ON DELETE SET NULL,
-  productUuid       UUID REFERENCES products(uuid),
-  variantId         TEXT,
-  quantity          INTEGER NOT NULL,
-  previousStockSource INTEGER,
-  previousStockDest INTEGER,
-  created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+  id                   BIGSERIAL PRIMARY KEY,
+  uuid                 UUID NOT NULL DEFAULT gen_random_uuid(),
+  transferid           BIGINT NOT NULL REFERENCES branch_stock_transfers(id) ON DELETE CASCADE,
+  productid            BIGINT REFERENCES products(id) ON DELETE SET NULL,
+  productuuid          UUID REFERENCES products(uuid),
+  variantid            TEXT,
+  quantity             INTEGER NOT NULL,
+  previousstocksource  INTEGER,
+  previousstockdest    INTEGER,
+  createdat            TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS branch_transfer_items_uuid_key ON branch_transfer_items(uuid);
-CREATE INDEX IF NOT EXISTS bti_transfer_idx ON branch_transfer_items(transferId);
-CREATE INDEX IF NOT EXISTS bti_product_idx ON branch_transfer_items(productId);
+CREATE INDEX IF NOT EXISTS bti_transfer_idx ON branch_transfer_items(transferid);
+CREATE INDEX IF NOT EXISTS bti_product_idx ON branch_transfer_items(productid);
 
--- Orders belong to a branch when placed against one.
-ALTER TABLE orders ADD COLUMN IF NOT EXISTS branchId BIGINT REFERENCES branches(id);
-CREATE INDEX IF NOT EXISTS orders_branch_idx ON orders(branchId);
-ALTER TABLE order_items ADD COLUMN IF NOT EXISTS branchId BIGINT REFERENCES branches(id);
+-- Orders belong to a branch when placed against one. branches is created after
+-- orders (orders is referenced by order_items and order_status_history), so
+-- these two columns are added by ALTER rather than declared inline. Written in
+-- the folded spelling the live database has.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS branchid BIGINT REFERENCES branches(id);
+CREATE INDEX IF NOT EXISTS orders_branch_idx ON orders(branchid);
+ALTER TABLE order_items ADD COLUMN IF NOT EXISTS branchid BIGINT REFERENCES branches(id);
+CREATE INDEX IF NOT EXISTS order_items_branch_idx ON order_items(branchid);
 
 -- Estimated delivery timestamp promised to the customer at checkout.
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS estimated_delivery_at TIMESTAMPTZ;

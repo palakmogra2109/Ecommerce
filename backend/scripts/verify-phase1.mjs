@@ -210,6 +210,161 @@ verifyPhase1({
 // or otherwise tear down the shared pool; the RUNNER closes it after the last
 // scenario completes.
 
+// Task 5: schema.sql is the bootstrap file for a future EMPTY database, so it
+// has to describe the same tables the running system has. countries / states /
+// cities were created outside this file, which is why a fresh install came up
+// without them even though `branches` already had countryid/stateid/cityid
+// foreign keys pointing at them.
+//
+// `fs` is imported at the top of this file (Task 2 needs it for the inventory
+// comparison), so it is not re-imported here.
+verifyPhase1({
+  name: "schema.sql covers live tables",
+  run: async () => {
+    const schema = fs.readFileSync("sql/schema.sql", "utf8");
+    for (const t of ["countries", "states", "cities"]) {
+      // The brief's literal `CREATE TABLE ${t}` cannot match a file that uses
+      // `CREATE TABLE IF NOT EXISTS` on all 27 of its other tables - and a bare
+      // CREATE TABLE here would break the header's promise that the file is
+      // safe to re-run. Both spellings count; a table that is absent entirely
+      // still fails.
+      if (!schema.includes(`CREATE TABLE ${t} `) && !schema.includes(`CREATE TABLE IF NOT EXISTS ${t} `)) {
+        throw new Error(`schema.sql missing ${t}`);
+      }
+    }
+  },
+});
+
+// The check above only proves the three reference tables are MENTIONED. This is
+// the one that keeps the whole file honest: every table the live database has has
+// to be described here, and the columns of each `CREATE TABLE` block have to
+// match information_schema exactly - same names, same order, same spelling.
+//
+// The comparison is case-SENSITIVE on purpose. The branch tables were created
+// with unquoted camelCase column names, which PostgreSQL folded to lowercase, so
+// the live columns are `addressline1`, `stockquantity`, `createdat`. A schema.sql
+// that wrote `addressLine1` would only match by relying on that folding, and the
+// models in lib/models/ have to alias those folded names back to camelCase
+// precisely because the database folded them (see sql/inventory.md).
+const TABLE_CONSTRAINT_KEYWORDS = new Set([
+  "PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "CONSTRAINT", "EXCLUDE", "LIKE",
+]);
+
+// Splits on commas that are not inside parentheses, brackets or a string
+// literal, so a `CHECK (status IN ('A', 'B'))` does not tear a column apart.
+function splitTopLevel(body) {
+  const parts = [];
+  let current = "";
+  let depth = 0;
+  let inString = false;
+  for (const ch of body) {
+    if (inString) {
+      current += ch;
+      if (ch === "'") inString = false;
+      continue;
+    }
+    if (ch === "'") { inString = true; current += ch; continue; }
+    if (ch === "(" || ch === "[") depth++;
+    else if (ch === ")" || ch === "]") depth--;
+    if (ch === "," && depth === 0) { parts.push(current); current = ""; continue; }
+    current += ch;
+  }
+  if (current.trim()) parts.push(current);
+  return parts;
+}
+
+// table name -> column names, in the order a fresh database ends up with them:
+// the `CREATE TABLE` block first, then every column the file backfills with
+// `ALTER TABLE ... ADD COLUMN`, in the order those statements appear. Several
+// tables (orders, order_items, products, banners, customers) only reach their
+// live shape through the trailing ALTERs, so a parser that stopped at the
+// closing paren would report them as missing columns.
+function parseSchemaColumns(sql) {
+  const tables = new Map();
+  const createRe = /CREATE TABLE(?: IF NOT EXISTS)?\s+"?([A-Za-z_][A-Za-z0-9_]*)"?\s*\(/g;
+  let match;
+  while ((match = createRe.exec(sql)) !== null) {
+    const name = match[1];
+    let depth = 1;
+    let body = "";
+    let inString = false;
+    for (let i = createRe.lastIndex; i < sql.length && depth > 0; i++) {
+      const ch = sql[i];
+      if (inString) { body += ch; if (ch === "'") inString = false; continue; }
+      if (ch === "'") { inString = true; body += ch; continue; }
+      if (ch === "(") { depth++; body += ch; continue; }
+      if (ch === ")") { depth--; if (depth === 0) break; body += ch; continue; }
+      body += ch;
+    }
+    if (depth !== 0) throw new Error(`unterminated CREATE TABLE ${name} in sql/schema.sql`);
+
+    const cols = [];
+    for (const part of splitTopLevel(body)) {
+      const first = part.trim().split(/[\s(]+/)[0];
+      if (!first || TABLE_CONSTRAINT_KEYWORDS.has(first.toUpperCase())) continue;
+      cols.push(first.replace(/"/g, ""));
+    }
+    tables.set(name, cols);
+  }
+
+  const alterRe =
+    /ALTER TABLE(?: IF EXISTS)?\s+"?([A-Za-z_][A-Za-z0-9_]*)"?\s+ADD COLUMN(?: IF NOT EXISTS)?\s+"?([A-Za-z_][A-Za-z0-9_]*)"?/g;
+  while ((match = alterRe.exec(sql)) !== null) {
+    const cols = tables.get(match[1]);
+    if (!cols) continue;
+    if (!cols.includes(match[2])) cols.push(match[2]);
+  }
+  return tables;
+}
+
+verifyPhase1({
+  name: "sql/schema.sql describes every live table, column for column and in order",
+  run: async () => {
+    const schema = fs.readFileSync("sql/schema.sql", "utf8");
+    const declared = parseSchemaColumns(schema);
+    if (declared.size === 0) throw new Error("no CREATE TABLE blocks parsed out of sql/schema.sql");
+
+    // Direction 1: nothing live may be missing from the bootstrap file.
+    // schema_migrations is created by scripts/migrate.mjs, not by schema.sql.
+    const { rows: liveTables } = await pool.query(
+      `SELECT table_name FROM information_schema.tables
+        WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+        ORDER BY table_name`,
+    );
+    const undocumented = liveTables
+      .map((r) => r.table_name)
+      .filter((t) => t !== "schema_migrations" && !declared.has(t));
+    if (undocumented.length > 0) {
+      throw new Error(`live tables with no CREATE TABLE in sql/schema.sql: ${undocumented.join(", ")}`);
+    }
+
+    // Direction 2: every declared table has to match the live columns, in the
+    // live order. Order matters because a fresh install has to be
+    // indistinguishable from the running one, and because several tables only
+    // reach their final shape through trailing ALTER TABLE ... ADD COLUMN.
+    const problems = [];
+    for (const [table, cols] of declared) {
+      const live = (await listColumns(pool, table)).map((c) => c.name);
+      if (live.length === 0) {
+        problems.push(`${table}: no such table in the live database`);
+        continue;
+      }
+      const missing = live.filter((c) => !cols.includes(c));
+      const unknown = cols.filter((c) => !live.includes(c));
+      if (missing.length || unknown.length) {
+        problems.push(
+          `${table}: missing [${missing.join(", ")}] not in schema [${unknown.join(", ")}]`,
+        );
+      } else if (cols.join(",") !== live.join(",")) {
+        problems.push(
+          `${table}: column order differs - schema [${cols.join(", ")}] vs live [${live.join(", ")}]`,
+        );
+      }
+    }
+    if (problems.length > 0) throw new Error(problems.join("\n      "));
+  },
+});
+
 // Task 3: column-case aliases. Postgres folded the unquoted camelCase DDL to
 // lowercase, so a `SELECT addressLine1` hands the driver the key `addressline1`
 // and every consumer reading `row.addressLine1` sees undefined. The models must
