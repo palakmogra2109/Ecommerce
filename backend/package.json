@@ -6,7 +6,10 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --test \"lib/__tests__/**/*.{test,spec}.{js,mjs,cjs}\"",
+    "migrate": "node scripts/migrate.mjs",
+    "verify:phase1": "node scripts/verify-phase1.mjs"
   },
   "dependencies": {
     "bcryptjs": "^3.0.3",
