@@ -684,15 +684,25 @@ const { rows: httpBranches } = await pool.query(
 if (httpBranches.length === 0) throw new Error("no ACTIVE branch rows; HTTP scenarios cannot run");
 const HTTP_BRANCH = httpBranches[0];
 
+// Branch-code prefix for the `nearby` scenario's coordinate fixtures. Constant
+// on purpose - see the comment inside that scenario.
+const NEARBY_MARKER = "VP1-NEARBY";
+
 verifyPhase1({
   name: "nearby returns 200 and puts the in-radius branch in the result",
   run: async () => {
     // Every seeded branch has null latitude/longitude, so an in-radius branch has
-    // to be created for the radius filter to be exercised at all. The row is
-    // removed in `finally`, and any leftover from a run that was killed
-    // mid-scenario is cleared first by its unique code, so a crash cannot leave
-    // a stray ACTIVE branch behind.
-    const code = `VP1-NEARBY-${process.pid}`;
+    // to be created for the radius filter to be exercised at all.
+    //
+    // The marker is a CONSTANT, not `${process.pid}`. A pid-scoped marker makes
+    // the defensive pre-cleanup useless across restarts (a new process has a new
+    // pid and can never match a previous run's residue), so an aborted run would
+    // leave two ACTIVE, delivery-enabled phantom branches in a customer-facing
+    // table - served by GET /api/branches and GET /api/branches/nearby, and
+    // liable to be picked as the dedupe fixture's `otherBranch` below. The
+    // constant prefix also sweeps residue left by the *old* pid-scoped marker,
+    // so upgrading this scenario cleans up after the previous version too.
+    const code = NEARBY_MARKER;
     await pool.query("DELETE FROM branches WHERE code LIKE $1", [`${code}%`]);
 
     let uuid;
@@ -951,6 +961,41 @@ verifyPhase1({
         throw new Error(`${label} returned no pagination.total`);
       }
     }
+
+    // A status of 200 is not proof the filter ran: the route's catch block turns
+    // any scoped-query error into a 200 with the unfiltered catalog. These two
+    // invariants are what make the scenario falsifiable for a filter reason.
+    //
+    // A scoped catalog can never be larger than the unfiltered one.
+    const unfiltered = await httpGet("/api/store/products?limit=24", { authed: false });
+    const unfilteredTotal = unfiltered.data.pagination.total;
+    for (const pin of [pincode || "400001", "999999"]) {
+      const scopedRes = await httpGet(`/api/store/products?limit=24&pincode=${pin}`, { authed: false });
+      if (scopedRes.data.pagination.total > unfilteredTotal) {
+        throw new Error(
+          `pincode=${pin} returned ${scopedRes.data.pagination.total} products, more than the unfiltered ${unfilteredTotal}`,
+        );
+      }
+    }
+
+    // When the route is not falling back, a scoped response carries a branch
+    // listing on every product (bp.id IS NOT NULL). If the scoped query had
+    // failed and fallen back, products with no listing anywhere would appear -
+    // which is exactly the bug this assertion exists to catch, and the reason
+    // "200" alone was vacuous for this route.
+    const knownPin = await httpGet(
+      `/api/store/products?limit=24&pincode=${pincode || "400001"}`,
+      { authed: false },
+    );
+    if (knownPin.data.products.length > 0) {
+      for (const p of knownPin.data.products) {
+        if (!p.branch) {
+          throw new Error(
+            `pincode-scoped catalog returned ${p.uuid} with no branch listing; the scoped query probably fell back`,
+          );
+        }
+      }
+    }
   },
 });
 
@@ -984,18 +1029,34 @@ verifyPhase1({
       if (!target[0]) {
         throw new Error("no available branch_products row to duplicate; the dedupe guard is unverified");
       }
+      // The second branch must NOT already list this product. The insert below
+      // upserts on (branchid, productid), so a candidate that already had a row
+      // would have its real variantid overwritten and an inactive/unavailable
+      // listing silently re-published to the storefront - and the `finally`
+      // would then delete the real row. NOT EXISTS makes that impossible, and a
+      // dataset with no safe pair fails loudly instead of destroying data.
       const { rows: otherBranch } = await pool.query(
-        "SELECT id FROM branches WHERE id <> $1 AND status = 'ACTIVE' ORDER BY id LIMIT 1",
-        [target[0].branchid],
+        `SELECT b.id
+           FROM branches b
+          WHERE b.status = 'ACTIVE'
+            AND b.id <> $1
+            AND NOT EXISTS (SELECT 1 FROM branch_products x
+                             WHERE x.branchid = b.id AND x.productid = $2)
+          ORDER BY b.id LIMIT 1`,
+        [target[0].branchid, target[0].productid],
       );
-      if (!otherBranch[0]) throw new Error("no second ACTIVE branch to list the product at");
+      if (!otherBranch[0]) {
+        throw new Error(
+          "no ACTIVE branch that does not already list this product; refusing to upsert over a live row",
+        );
+      }
 
+      // Plain INSERT, no ON CONFLICT: the NOT EXISTS above means this cannot
+      // collide, and an upsert here would be able to overwrite real data.
       const ins = await pool.query(
         `INSERT INTO branch_products
            (branchid, productid, variantid, sellingprice, stockquantity, isavailable, status)
          VALUES ($1, $2, $3, 1, 1, TRUE, 'ACTIVE')
-         ON CONFLICT (branchid, productid) DO UPDATE
-           SET variantid = EXCLUDED.variantid, isavailable = TRUE, status = 'ACTIVE'
          RETURNING id`,
         [otherBranch[0].id, target[0].productid, DEDUPE_MARKER],
       );
@@ -1030,9 +1091,12 @@ verifyPhase1({
         }
       }
     } finally {
-      await pool.query("DELETE FROM branch_products WHERE variantid = $1", [
-        inserted ?? DEDUPE_MARKER,
-      ]);
+      // Delete by primary key so the cleanup provably cannot touch a row this
+      // scenario did not insert, then sweep the marker for a run that died
+      // between the INSERT and this block.
+      if (inserted != null) {
+        await pool.query("DELETE FROM branch_products WHERE id = $1", [inserted]);
+      }
       await pool.query("DELETE FROM branch_products WHERE variantid = $1", [DEDUPE_MARKER]);
     }
   },
@@ -1063,12 +1127,14 @@ verifyPhase1({
 verifyPhase1({
   name: "the store catalog's pincode and radius predicates select the serving branch",
   run: async () => {
-    // The HTTP scenario above proves the location query does not 500; it cannot
-    // prove it *selects* anything, because a filter that always matched nothing
-    // would also answer 200. This scenario runs the two predicates the route
-    // builds - quoted here rather than imported, since the route builds its SQL
-    // inline - against a branch that has been given coordinates inside a
-    // transaction that is always rolled back.
+    // The HTTP scenarios prove the location query does not 500; they cannot prove
+    // it *selects* anything, because a filter that always matched nothing would
+    // also answer 200. This scenario runs the route's own predicate builder -
+    // imported from lib/storeCatalogScope.js, which app/api/store/products/route.js
+    // calls, so there is no hand-copied SQL here to drift from the route. The
+    // branch is given coordinates inside a transaction that is always rolled back.
+    const { buildBranchScope } = await import("../lib/storeCatalogScope.js");
+
     await inRolledBackTransaction(async (client) => {
       const { rows: target } = await client.query(
         `SELECT bp.branchid
@@ -1084,59 +1150,49 @@ verifyPhase1({
         [19.17, 72.8777, "400001", branchId],
       );
 
-      // The pincode predicate, matching the route's `nb` subquery.
-      const byPincode = await client.query(
-        `SELECT count(*)::int AS count
-           FROM branch_products bp
-          WHERE bp.isavailable = TRUE
-            AND bp.status = 'ACTIVE'
-            AND EXISTS (SELECT 1 FROM branches nb
-                         WHERE (nb.postalcode LIKE $1 OR nb.postalcode = $2)
-                           AND nb.status = 'ACTIVE' AND nb.deliveryenabled = TRUE
-                           AND nb.id = bp.branchid)`,
-        ["400%", "400001"],
-      );
-      if (byPincode.rows[0].count === 0) {
+      // Runs the route's predicate against the live schema, parameterised exactly
+      // as the route parameterises it.
+      async function countWithScope(input) {
+        const params = [];
+        const { conditions, scoped } = buildBranchScope({ ...input, params });
+        if (!scoped) throw new Error("buildBranchScope produced no condition for a scoped request");
+        const { rows } = await client.query(
+          `SELECT count(*)::int AS count
+             FROM branch_products bp
+            WHERE bp.isavailable = TRUE
+              AND bp.status = 'ACTIVE'
+              AND ${conditions.join(" AND ")}`,
+          params,
+        );
+        return rows[0].count;
+      }
+
+      if ((await countWithScope({ pincode: "400001" })) === 0) {
         throw new Error("the pincode predicate matched no listing for the branch that serves 400001");
       }
-      const wrongPincode = await client.query(
-        `SELECT count(*)::int AS count
-           FROM branch_products bp
-          WHERE bp.isavailable = TRUE
-            AND bp.status = 'ACTIVE'
-            AND EXISTS (SELECT 1 FROM branches nb
-                         WHERE (nb.postalcode LIKE $1 OR nb.postalcode = $2)
-                           AND nb.status = 'ACTIVE' AND nb.deliveryenabled = TRUE
-                           AND nb.id = bp.branchid)`,
-        ["999%", "999999"],
-      );
-      if (wrongPincode.rows[0].count !== 0) {
+      if ((await countWithScope({ pincode: "999999" })) !== 0) {
         throw new Error("the pincode predicate matched a branch that does not serve the pincode");
       }
 
-      // The radius predicate. The ::numeric casts are load-bearing: node-postgres
-      // sends a JS number untyped, so `$1 - $3` alone is "unknown - unknown" and
-      // Postgres rejects it with 42725.
-      const radiusSql = (lat, lng, maxLat, maxLng) => [
-        `SELECT count(*)::int AS count
-           FROM branch_products bp
-          WHERE bp.isavailable = TRUE
-            AND bp.status = 'ACTIVE'
-            AND EXISTS (SELECT 1 FROM branches nb
-                         WHERE nb.latitude BETWEEN $1::numeric - $3::numeric AND $1::numeric + $3::numeric
-                           AND nb.longitude BETWEEN $2::numeric - $4::numeric AND $2::numeric + $4::numeric
-                           AND nb.status = 'ACTIVE' AND nb.deliveryenabled = TRUE
-                           AND nb.id = bp.branchid)`,
-        [lat, lng, maxLat, maxLng],
-      ];
-      const inside = await client.query(...radiusSql(19.076, 72.8777, 50 / 111.32, 50 / (111.32 * Math.cos((19.076 * Math.PI) / 180))));
-      if (inside.rows[0].count === 0) {
+      // The radius predicate. The ::numeric casts in the builder are load-bearing:
+      // node-postgres sends a JS number untyped, so `$1 - $3` alone is
+      // "unknown - unknown" and Postgres rejects it with 42725.
+      if ((await countWithScope({ lat: 19.076, lng: 72.8777 })) === 0) {
         throw new Error("the radius predicate excluded a branch ~11km from the query point");
       }
-      // 1km of latitude: the branch is ~11km north, so it falls outside.
-      const outside = await client.query(...radiusSql(19.076, 72.8777, 1 / 111.32, 1 / (111.32 * Math.cos((19.076 * Math.PI) / 180))));
-      if (outside.rows[0].count !== 0) {
-        throw new Error("the radius predicate included a branch ~11km away for a 1km radius");
+      // A lat/lng pair ~230km away must be excluded by the same predicate.
+      if ((await countWithScope({ lat: 21.17, lng: 72.8777 })) !== 0) {
+        throw new Error("the radius predicate included a branch ~230km away for a 50km radius");
+      }
+
+      // An unscoped request must produce no conditions at all, so the route can
+      // tell "no location given" from "location given but nothing matched" - that
+      // distinction is what makes the fallback reachable.
+      const none = buildBranchScope({ params: [] });
+      if (none.scoped || none.conditions.length !== 0) {
+        throw new Error(
+          `buildBranchScope claimed a scope with no location input: ${JSON.stringify(none)}`,
+        );
       }
     });
   },
