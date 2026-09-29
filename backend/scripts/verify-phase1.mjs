@@ -1353,6 +1353,347 @@ verifyPhase1({
   },
 });
 
+// ---------------------------------------------------------------------------
+// Task 6: the throwaway store account.
+//
+// The permission scenarios need a user who is deliberately NOT allowed to touch
+// the admin branch routes, and no such user exists: the seed creates every user
+// with an admin-side role. The only way to get one is to register a real store
+// account through POST /api/auth/store/register, which is the production path -
+// it mints a `store` role, a branch and a branch_users link, and it is the only
+// way to obtain a genuinely under-privileged token without writing roles by hand.
+//
+// The token is never printed, never written to a file and never included in an
+// error message.
+//
+// CLEANUP DISCIPLINE (the deferred minor from Task 1 plus Task 4's rule):
+//   * report() abandons a timed-out scenario, it does not cancel it, so a
+//     scenario hung on something other than fetch keeps running and can interleave
+//     its side effects with a later run. Every cleanup below is therefore
+//     idempotent and keyed on a CONSTANT marker, never on ${process.pid}: a
+//     pid-scoped marker cannot match a previous run's residue, which is exactly
+//     how phantom branches get left behind in a customer-facing table.
+//   * the sweep runs BEFORE the register as well as in the `finally`, so a run
+//     that was killed between the POST and the finally does not poison the next
+//     one.
+//   * nothing is swept on a predicate that could match a real row. The marker is
+//     an email prefix and a branch-code prefix that no human would use; a test
+//     that ever fails to register still finds nothing to delete and says so.
+//   * branches.code is UNIQUE, so the pre-cleanup delete needs a prefix rather
+//     than an exact value to be able to clear residue from a prior run whose
+//     timestamped suffix differs.
+// ---------------------------------------------------------------------------
+
+const STORE_EMAIL_PREFIX = "verify-p1-store@";
+const STORE_CODE_PREFIX = "VP1STORE";
+const { jsonPost } = await import("./lib/http.mjs");
+
+let TEST_STORE = null;
+
+// Deletes every row the fixture can create, in one pass, whether or not this
+// process is the one that created it. Returns a list of problems instead of
+// throwing, so one bad statement cannot abort the rest and leave the fixture
+// half-deleted behind it.
+//
+// Order matters, though the deletes are belt-and-braces: branch_users and
+// user_has_roles both cascade from users, so they are not load-bearing today - but
+// only the branches table records the fixture's email, and if the users cascade
+// ever went away this ordering is what would still clean up correctly.
+async function sweepStoreRows() {
+  const problems = [];
+  for (const sql of [
+    "DELETE FROM branch_users WHERE userid IN (SELECT id FROM users WHERE email LIKE $1)",
+    "DELETE FROM user_has_roles WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)",
+    "DELETE FROM user_has_permissions WHERE user_id IN (SELECT id FROM users WHERE email LIKE $1)",
+    "DELETE FROM users WHERE email LIKE $1",
+    "DELETE FROM branches WHERE code LIKE $1 OR email LIKE $1",
+  ]) {
+    try {
+      await pool.query(sql, [`${STORE_EMAIL_PREFIX}%`]);
+    } catch (e) {
+      problems.push(`${sql.slice(7, sql.indexOf(" FROM"))}: ${e.message}`);
+    }
+  }
+  return problems;
+}
+
+// Counts whatever the marker still matches. Both predicates have to be zero
+// before or after this file touches anything.
+async function storeFixtureResidue() {
+  const { rows } = await pool.query(
+    `SELECT (SELECT count(*) FROM users WHERE email LIKE $1) AS users,
+            (SELECT count(*) FROM branches WHERE code LIKE $1 OR email LIKE $1) AS branches`,
+    [`${STORE_EMAIL_PREFIX}%`],
+  );
+  return { users: Number(rows[0].users), branches: Number(rows[0].branches) };
+}
+
+export async function storeToken() {
+  if (TEST_STORE) return TEST_STORE.token;
+
+  // Sweep before registering, not just after: a run that was killed between the
+  // POST and its `finally` leaves rows behind, and those rows carry a timestamped
+  // suffix that no exact-match delete could ever find again.
+  const problems = await sweepStoreRows();
+  if (problems.length) {
+    throw new Error(`store fixture pre-cleanup failed: ${problems.join("; ")}`);
+  }
+  const before = await storeFixtureResidue();
+  if (before.users !== 0 || before.branches !== 0) {
+    // Better to say this than to let the register 409 on a duplicate email and
+    // report that much less obvious error instead.
+    throw new Error(
+      `store fixture pre-cleanup left residue behind: ${JSON.stringify(before)}`,
+    );
+  }
+
+  const email = `${STORE_EMAIL_PREFIX}${Date.now()}@earth.local`;
+  const reg = await jsonPost(apiUrl("/api/auth/store/register"), {
+    name: "Phase1 Verify Store",
+    email,
+    password: "VerifyPass123!",
+    branchName: "Phase1 Verify Branch",
+    branchCode: `${STORE_CODE_PREFIX}${Date.now().toString().slice(-6)}`,
+    city: "Mumbai",
+    address: "1 Test Lane",
+    phone: "9876543210",
+  });
+  if (reg.status !== 201) {
+    throw new Error(`store register returned ${reg.status}: ${JSON.stringify(reg.data)}`);
+  }
+  const userUuid = reg.data?.user?.uuid;
+  const branchUuid = reg.data?.branch?.uuid;
+  if (!reg.data?.token || !userUuid || !branchUuid) {
+    throw new Error(
+      `store register returned 201 but no token/user.uuid/branch.uuid: keys=${JSON.stringify(Object.keys(reg.data ?? {}))}`,
+    );
+  }
+  TEST_STORE = { token: reg.data.token, userUuid, branchUuid, email };
+  return TEST_STORE.token;
+}
+
+export async function cleanupStoreAccount() {
+  // Deliberately NOT guarded by `if (!TEST_STORE) return`. That guard assumes
+  // the happy path ran, and the happy path is exactly what does not happen when a
+  // scenario is abandoned: report() races the run against a 60s timer and lets
+  // the loser keep going, so a scenario hung on something other than fetch can
+  // create these rows without ever assigning TEST_STORE, or can be re-entered
+  // while another caller is already cleaning. Sweeping by the constant marker is
+  // correct in all of those cases and a no-op when there is nothing to remove.
+  const problems = await sweepStoreRows();
+  TEST_STORE = null;
+  return problems;
+}
+
+// The seeded users never change, so a token per role slug is memoised rather
+// than re-minted per call. `super_admin` and `manager` already exist; the two
+// throwaways below are only ever created if some future task asks for a role
+// that no seeded user carries.
+const ROLE_TOKENS = new Map();
+async function tokenForRole(slug) {
+  if (ROLE_TOKENS.has(slug)) return ROLE_TOKENS.get(slug);
+  const { rows } = await pool.query(
+    `SELECT u.id, u.email
+       FROM users u
+       JOIN user_has_roles uhr ON uhr.user_id = u.id
+       JOIN roles r ON r.id = uhr.role_id
+      WHERE r.slug = $1 AND r.status = 'ACTIVE' AND u.status = 'ACTIVE'
+      ORDER BY u.id LIMIT 1`,
+    [slug],
+  );
+  if (!rows[0]) throw new Error(`no ACTIVE user carries the ${slug} role`);
+  const { createToken: createTokenForUser } = await import("../lib/auth.js");
+  const token = await createTokenForUser(rows[0]);
+  ROLE_TOKENS.set(slug, token);
+  return token;
+}
+
+// The denials below all answer 401 before they answer 403, because
+// authenticate() runs first and 401 is what it returns. Pinning that is the
+// point: if a future refactor checks permissions before the token, a "not
+// logged in" request would start reporting 403 and every negative case here
+// would silently stop testing the permission check at all.
+const DENIAL_MESSAGE = "You do not have permission to perform this action";
+
+verifyPhase1({
+  name: "store user gets 403 on admin branch route",
+  run: async () => {
+    const t = await storeToken();
+    const me = await apiGet(apiUrl("/api/auth/me"), t);
+    if (!me.data?.user?.branches?.length) {
+      throw new Error(`store user has no branches: ${JSON.stringify(me.data)}`);
+    }
+    const mine = me.data.user.branches.map((b) => b.uuid);
+    const otherRes = await pool.query(
+      "SELECT uuid FROM branches WHERE uuid <> ALL($1::uuid[]) AND status = 'ACTIVE' LIMIT 1",
+      [mine],
+    );
+    if (!otherRes.rows[0]) {
+      throw new Error("need one branch not owned by the test store");
+    }
+    const r = await apiGet(
+      apiUrl(`/api/branches/${otherRes.rows[0].uuid}/products`),
+      t,
+    );
+    if (r.status !== 403) {
+      throw new Error(
+        `expected 403 for a store token on an admin branch route, got ${r.status}: ${JSON.stringify(r.data)}`,
+      );
+    }
+    if (r.data?.message !== DENIAL_MESSAGE) {
+      throw new Error(`403 body is not the permission refusal: ${JSON.stringify(r.data)}`);
+    }
+  },
+});
+
+verifyPhase1({
+  name: "authorize() denies a role that lacks the permission and admits one that has it",
+  run: async () => {
+    // `manager` holds branches.view / branches.create / branches.update /
+    // branches.delete / branches.orders.view / dashboard.view, and holds NONE of
+    // branches.inventory.*, branches.orders.update or branches.price.*. One token
+    // is therefore enough to show both halves of the decision, on routes inside
+    // the same permission family - and both halves have to be here, because a
+    // negative case alone would also pass if authorize() had been rewritten to
+    // refuse everybody.
+    const manager = await tokenForRole("manager");
+    const store = await storeToken();
+    //
+    // Two of the five are PATCHes, because proving a *write* is refused before the
+    // handler runs is worth more than proving another read is refused. Their
+    // bodies are empty on purpose: PATCH /api/branches/:uuid/products resolves
+    // productUuid through the products table and answers 404 without writing a
+    // branch_products row, and Task 4 already pinned PATCH
+    // /api/branches/:uuid/orders with an empty body at 400. So if a future grant
+    // ever handed either permission to manager, these fail with a 4xx and leave
+    // nothing behind - a negative test that can half-succeed and write a fixture
+    // row is worse than no test at all.
+    //
+    // (PATCH/DELETE /api/branches is the more obvious thing to reach for, but
+    // those handlers `await params` on a binding they never destructure, so they
+    // answer 500 before and after this task. Pre-existing, in that route, and not
+    // something this scenario should trip over.)
+    //
+    // The full list of what each role holds is asserted rather than assumed, so a
+    // seed or grant change that moves these slugs fails with "the fixture is
+    // wrong" instead of a confusing 403-vs-200.
+    const { rows: held } = await pool.query(
+      `SELECT p.slug FROM roles r
+         JOIN role_has_permissions rhp ON rhp.role_id = r.id
+         JOIN permissions p ON p.id = rhp.permission_id
+        WHERE r.slug = 'manager'`,
+    );
+    const managerSlugs = new Set(held.map((r) => r.slug));
+    for (const slug of ["branches.view", "branches.orders.view"]) {
+      if (!managerSlugs.has(slug)) {
+        throw new Error(`the fixture assumes manager holds ${slug}, but it does not`);
+      }
+    }
+    for (const slug of [
+      "branches.inventory.view",
+      "branches.inventory.update",
+      "branches.orders.update",
+    ]) {
+      if (managerSlugs.has(slug)) {
+        throw new Error(`the fixture assumes manager lacks ${slug}, but it holds it`);
+      }
+    }
+
+    const cases = [
+      { label: "branches.view", path: "/api/branches", allowed: true },
+      { label: "branches.orders.view", path: `/api/branches/${HTTP_BRANCH.uuid}/orders`, allowed: true },
+      { label: "branches.inventory.view", path: `/api/branches/${HTTP_BRANCH.uuid}/inventory`, allowed: false },
+      { label: "branches.inventory.update", path: `/api/branches/${HTTP_BRANCH.uuid}/products`, method: "PATCH", allowed: false },
+      { label: "branches.orders.update", path: `/api/branches/${HTTP_BRANCH.uuid}/orders`, method: "PATCH", allowed: false },
+    ];
+
+    for (const c of cases) {
+      const { apiGet: get, jsonPatch: patch } = await import("./lib/http.mjs");
+      const res =
+        c.method === "PATCH"
+          ? await patch(apiUrl(c.path), c.body ?? {}, manager)
+          : await get(apiUrl(c.path), manager);
+      if (c.allowed) {
+        if (res.status !== 200) {
+          throw new Error(`${c.label}: expected 200, got ${res.status}: ${JSON.stringify(res.data)}`);
+        }
+        continue;
+      }
+      if (res.status !== 403) {
+        throw new Error(`${c.label}: expected 403, got ${res.status}: ${JSON.stringify(res.data)}`);
+      }
+      if (res.data?.message !== DENIAL_MESSAGE) {
+        throw new Error(`${c.label}: 403 body is not the permission refusal: ${JSON.stringify(res.data)}`);
+      }
+    }
+
+    // The store token is the second half of the pair from the other end: it
+    // holds no branches.* permission at all, so the same GET /api/branches the
+    // manager was just admitted has to be refused for it.
+    const admitted = await apiGet(apiUrl("/api/branches"), store);
+    if (admitted.status !== 403) {
+      throw new Error(
+        `a store token on GET /api/branches should be refused with 403, got ${admitted.status}`,
+      );
+    }
+    if (admitted.data?.message !== DENIAL_MESSAGE) {
+      throw new Error(`store token 403 body is not the permission refusal: ${JSON.stringify(admitted.data)}`);
+    }
+  },
+});
+
+verifyPhase1({
+  name: "authorizeAny() admits a super admin and the store account is cleaned up",
+  run: async () => {
+    try {
+      // The seeded data has more than one super admin, so this counts them rather
+      // than naming one: a database where they have all been removed has to fail
+      // loudly here instead of quietly testing as some other user.
+      const { rows } = await pool.query(
+        `SELECT count(*)::int AS count
+           FROM users u
+           JOIN user_has_roles uhr ON uhr.user_id = u.id
+           JOIN roles r ON r.id = uhr.role_id
+          WHERE r.slug = 'super_admin' AND u.status = 'ACTIVE'`,
+      );
+      if (rows[0].count < 1) {
+        throw new Error("no ACTIVE super admin exists; the super-admin path is unverified");
+      }
+      // super_admin IS granted every permission row, so a 200 here is also what a
+      // correct role_has_permissions would produce on its own. The short-circuit
+      // itself - super_admin passing a slug they hold no row for - is what
+      // lib/__tests__/permission-policy.test.mjs pins, with an access object whose
+      // permissions array is empty.
+      const res = await apiGet(
+        apiUrl("/api/branches"),
+        await tokenForRole("super_admin"),
+      );
+      if (res.status !== 200) {
+        throw new Error(
+          `super admin on GET /api/branches returned ${res.status}: ${JSON.stringify(res.data)}`,
+        );
+      }
+    } finally {
+      // Always attempt the cleanup, including when the assertion above threw, so
+      // a failure here cannot leave a 25th user and a 5th branch behind in the
+      // database the rest of the plan's fixtures count against.
+      const problems = await cleanupStoreAccount();
+      if (problems.length) {
+        throw new Error(`store fixture cleanup failed: ${problems.join("; ")}`);
+      }
+    }
+
+    const { rows } = await pool.query(
+      `SELECT (SELECT count(*) FROM users WHERE email LIKE $1) AS users,
+              (SELECT count(*) FROM branches WHERE code LIKE $2) AS branches`,
+      [`${STORE_EMAIL_PREFIX}%`, `${STORE_CODE_PREFIX}%`],
+    );
+    if (Number(rows[0].users) !== 0 || Number(rows[0].branches) !== 0) {
+      throw new Error(`store fixture survived cleanup: ${JSON.stringify(rows[0])}`);
+    }
+  },
+});
+
 // ==== RUNNER ====
 // report() is Task 1's code and ends in process.exit(), so the shared pool has
 // to be closed on the way out or the idle client keeps the event loop alive.

@@ -6,6 +6,7 @@ import { User } from "./models/user";
 import { UserRole } from "./models/userRole";
 import { UserPermission } from "./models/userPermission";
 import { Module } from "./models/module";
+import { hasPermission } from "./permissionPolicy";
 import { USER_STATUS } from "@shared/constants";
 
 // 401 response with message
@@ -161,15 +162,96 @@ export async function requireBranchAccess(branchUuid) {
   };
 }
 
-// Requires a single permission.
-// Permissions are currently not enforced: any logged-in user
-// (including super admin) can perform any action.
-export async function authorize() {
-  return authenticate();
+// 403 response for a user who is authenticated but lacks the permission.
+function forbidden() {
+  return {
+    ok: false,
+    response: Response.json(
+      { success: false, message: "You do not have permission to perform this action" },
+      { status: 403, headers: corsHeaders() }
+    ),
+  };
 }
 
-// Requires any of the given permissions.
-// Same as authorize: only authentication is enforced for now.
-export async function authorizeAny() {
-  return authenticate();
+// 404 response for a branch uuid that does not resolve to an ACTIVE branch.
+// Deliberately a 404 and not a 403: a caller who is allowed to see every branch
+// must not be able to probe which uuids exist by reading the difference between
+// "denied" and "missing".
+function branchNotFound() {
+  return {
+    ok: false,
+    response: Response.json(
+      { success: false, message: "Branch not found" },
+      { status: 404, headers: corsHeaders() }
+    ),
+  };
+}
+
+// Requires a single permission: authenticates, then requires the slug in the
+// user's effective permissions. Super admins pass everything (see hasPermission).
+//
+// With no slug this is plain authentication, which is what the handful of routes
+// that call `authorize()` for "must be logged in" rely on.
+export async function authorize(permissionSlug) {
+  const auth = await authenticate();
+  if (!auth.ok) return auth;
+  if (permissionSlug) {
+    const access = await getUserAccess(auth.user.id);
+    if (!hasPermission(access, permissionSlug)) {
+      return forbidden();
+    }
+  }
+  return auth;
+}
+
+// Requires any one of the given permissions. `__any__` is not a real permission
+// slug; it is the sentinel that makes a super admin short-circuit the whole
+// check, because hasPermission answers true for them whatever it is asked.
+export async function authorizeAny(permissionSlugs = []) {
+  const auth = await authenticate();
+  if (!auth.ok) return auth;
+  const access = await getUserAccess(auth.user.id);
+  if (!hasPermission(access, "__any__") && !permissionSlugs.some((s) => hasPermission(access, s))) {
+    return forbidden();
+  }
+  return auth;
+}
+
+// requireBranchAccess() scoped to a single branch the user belongs to, widened
+// for super admins: they administer every branch, so they may address any ACTIVE
+// branch by uuid instead of having to own it. Non-super admins fall through to
+// requireBranchAccess() unchanged.
+//
+// Returns { ok:true, user, branchId, branch } where `branch` carries the same
+// columns requireBranchAccess() returns, so a caller can read branchId or branch
+// without knowing which path it came from.
+export async function requireBranchAccessOrSuperAdmin(branchUuid) {
+  const auth = await authenticate();
+  if (!auth.ok) {
+    return auth;
+  }
+
+  if (!branchUuid || typeof branchUuid !== "string") {
+    return {
+      ok: false,
+      response: Response.json(
+        { success: false, message: "branchId is required" },
+        { status: 400, headers: corsHeaders() }
+      ),
+    };
+  }
+
+  const roles = await getUserRoleSlugs(auth.user.id);
+  if (roles.includes("super_admin")) {
+    const branch = await pool.query(
+      `SELECT b.id, b.uuid, b.name, b.code
+       FROM branches b
+       WHERE b.uuid = $1 AND b.status = 'ACTIVE'`,
+      [branchUuid]
+    );
+    if (branch.rows.length === 0) return branchNotFound();
+    return { ok: true, user: auth.user, branchId: branch.rows[0].id, branch: branch.rows[0] };
+  }
+
+  return requireBranchAccess(branchUuid);
 }

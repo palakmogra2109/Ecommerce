@@ -142,11 +142,16 @@ export const KEY_PERMISSIONS = Object.freeze({
   BRANCH_ORDERS_UPDATE: "branches.orders.update",
   BRANCH_PRICE_VIEW: "branches.price.view",
   BRANCH_PRICE_UPDATE: "branches.price.update",
-  STORE_DASHBOARD_VIEW: "store.dashboard.view",
-  STORE_PRODUCTS_VIEW: "store.products.view",
-  STORE_PRODUCTS_UPDATE: "store.products.update",
-  STORE_ORDERS_VIEW: "store.orders.view",
-  STORE_ORDERS_UPDATE: "store.orders.update",
+  // The STORE_* slugs use underscores, not dots: that is how `permissions.slug`
+  // spells them in the database, and a dotted slug matches no permission row, so
+  // authorize() would deny it to everyone. Every other family above is dotted
+  // because that is what its rows are.
+  STORE_DASHBOARD_VIEW: "store_dashboard.view",
+  STORE_PRODUCTS_VIEW: "store_products.view",
+  STORE_PRODUCTS_UPDATE: "store_products.update",
+  STORE_ORDERS_VIEW: "store_orders.view",
+  STORE_ORDERS_UPDATE: "store_orders.update",
+  DASHBOARD_VIEW: "dashboard.view",
 });
 
 // ---------- Modules ----------
