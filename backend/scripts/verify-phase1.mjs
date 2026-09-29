@@ -34,27 +34,24 @@ export async function report() {
 }
 
 // ==== SCENARIOS ====
-// Later tasks append `verifyPhase1({ name, run })` registrations below this
-// marker. Never edit or remove anything under the RUNNER heading below — new
-// registrations must be inserted between this comment and the RUNNER comment.
+// Later tasks append `verifyPhase1({ name, run })` registrations at the BOTTOM of
+// this region, i.e. the last thing before the RUNNER heading. Never edit or
+// remove anything under the RUNNER heading below.
+//
+// The shared `pool` below lives for the whole run and is closed by the RUNNER,
+// after every scenario has finished. Do NOT register a `pool.end()` scenario:
+// registration order is execution order, so a teardown scenario placed here
+// would run before scenarios appended after it and every one of those would
+// fail with "Cannot use a pool after calling end". Standalone scripts that need
+// their own pool should use `withPool()` from ./lib/pool.mjs instead.
 
 // Task 2: live column inventory. Read-only introspection against DATABASE_URL —
 // no writes, no DDL. loadEnv() already ran above, so the pool can be created here.
-const { default: pg } = await import("pg");
 const { listColumns, assertColumn } = await import("./lib/columns.mjs");
+const { createPool } = await import("./lib/pool.mjs");
+const { INVENTORY_TABLES, INVENTORY_PATH, renderInventory } = await import("./gen-inventory.mjs");
 
-const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 2 });
-pool.on("error", (e) => console.error(`pool  idle-client error: ${e.message}`));
-
-const INVENTORY_TABLES = [
-  "branches",
-  "branch_products",
-  "branch_stock_transfers",
-  "branch_transfer_items",
-  "branch_inventory_transactions",
-  "orders",
-  "users",
-];
+const pool = createPool();
 
 for (const table of INVENTORY_TABLES) {
   verifyPhase1({
@@ -148,13 +145,18 @@ verifyPhase1({
       ["users", "createdAt"],
       ["users", "parentId"],
     ]) {
-      let threw = false;
-      try {
-        await assertColumn(pool, table, bogus);
-      } catch {
-        threw = true;
+      // assert a *column* miss specifically, not merely "something threw" — a
+      // dropped connection would otherwise read as a passing guard.
+      const e = await assertColumn(pool, table, bogus).then(
+        () => null,
+        (err) => err,
+      );
+      if (!e) throw new Error(`${table}.${bogus} unexpectedly exists (camelCase leaking in?)`);
+      if (!e.message.startsWith(`missing column ${table}.${bogus}; have: `)) {
+        throw new Error(
+          `expected a missing-column error for ${table}.${bogus}, got: ${e.message}`,
+        );
       }
-      if (!threw) throw new Error(`${table}.${bogus} unexpectedly exists (camelCase leaking in?)`);
     }
   },
 });
@@ -172,45 +174,51 @@ verifyPhase1({
       ["branch_products", "stock_quantity"],
       ["branch_products", "reserved_quantity"],
     ]) {
-      let threw = false;
-      try {
-        await assertColumn(pool, table, bogus);
-      } catch {
-        threw = true;
-      }
-      if (!threw) throw new Error(`${table}.${bogus} unexpectedly exists (snake_case spelling present)`);
-    }
-  },
-});
-
-verifyPhase1({
-  name: "sql/inventory.md matches the live schema exactly",
-  run: async () => {
-    const path = await import("node:path");
-    const text = fs.readFileSync(path.join(process.cwd(), "sql", "inventory.md"), "utf8");
-    for (const table of INVENTORY_TABLES) {
-      const section = text.split(`### ${table}\n`)[1]?.split("\n### ")[0];
-      if (!section) throw new Error(`sql/inventory.md is missing a section for ${table}`);
-      const documented = [...section.matchAll(/^([a-z0-9_]+)\s{2,}\S/gm)].map((m) => m[1]);
-      const live = (await listColumns(pool, table)).map((c) => c.name);
-      const missing = live.filter((n) => !documented.includes(n));
-      const extra = documented.filter((n) => !live.includes(n));
-      if (missing.length || extra.length) {
+      const e = await assertColumn(pool, table, bogus).then(
+        () => null,
+        (err) => err,
+      );
+      if (!e) throw new Error(`${table}.${bogus} unexpectedly exists (snake_case spelling present)`);
+      if (!e.message.startsWith(`missing column ${table}.${bogus}; have: `)) {
         throw new Error(
-          `sql/inventory.md is stale for ${table}: not documented [${missing.join(", ")}], ` +
-            `documented but absent [${extra.join(", ")}] — regenerate the file`,
+          `expected a missing-column error for ${table}.${bogus}, got: ${e.message}`,
         );
       }
     }
   },
 });
 
+// Byte-for-byte comparison against the generator's own output, so a hand-edit
+// to sql/inventory.md fails even when the column names still line up. This also
+// pins the format contract (### <table> headings, the "N columns." line, the
+// two-space separator) in code rather than prose.
 verifyPhase1({
-  name: "pg pool closed after inventory checks",
+  name: "sql/inventory.md is byte-identical to `npm run gen:inventory` output",
   run: async () => {
-    await pool.end();
+    const text = fs.readFileSync(INVENTORY_PATH, "utf8");
+    const expected = await renderInventory(pool);
+    if (text !== expected) {
+      throw new Error(
+        "sql/inventory.md differs from the live schema; run `npm run gen:inventory` and commit the result",
+      );
+    }
   },
 });
 
+// ==== APPEND NEW SCENARIOS HERE ====
+// This is the append point for Tasks 3+. Nothing below it may call pool.end()
+// or otherwise tear down the shared pool; the RUNNER closes it after the last
+// scenario completes.
+
 // ==== RUNNER ====
-if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) await report();
+// report() is Task 1's code and ends in process.exit(), so the shared pool has
+// to be closed on the way out or the idle client keeps the event loop alive.
+// The exit is intercepted rather than moved into a scenario, because a scenario
+// would be order-dependent (see the header above).
+if (process.argv[1] && import.meta.url === pathToFileURL(fs.realpathSync(process.argv[1])).href) {
+  const exit = process.exit.bind(process);
+  process.exit = (code) => {
+    pool.end().finally(() => exit(code));
+  };
+  await report();
+}

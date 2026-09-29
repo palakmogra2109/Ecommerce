@@ -32,6 +32,17 @@ test("listColumns reads information_schema.columns with the table bound as a par
   assert.deepEqual(cols, BRANCHES);
 });
 
+test("listColumns scopes the lookup to current_schema() so same-named tables cannot leak in", async () => {
+  const pool = fakePool(BRANCHES);
+  await listColumns(pool, "branches");
+
+  assert.match(
+    pool.calls[0].sql,
+    /table_schema\s*=\s*current_schema\(\)/i,
+    "expected the query to be scoped by table_schema = current_schema()",
+  );
+});
+
 test("listColumns returns an empty list for an unknown table instead of throwing", async () => {
   const cols = await listColumns(fakePool([]), "no_such_table");
   assert.deepEqual(cols, []);

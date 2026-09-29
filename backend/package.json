@@ -9,6 +9,7 @@
     "lint": "eslint",
     "test": "node --test \"lib/__tests__/**/*.{test,spec}.{js,mjs,cjs}\"",
     "migrate": "node scripts/migrate.mjs",
+    "gen:inventory": "node scripts/gen-inventory.mjs",
     "verify:phase1": "node scripts/verify-phase1.mjs"
   },
   "dependencies": {
