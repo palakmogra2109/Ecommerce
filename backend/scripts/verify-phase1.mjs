@@ -635,6 +635,513 @@ verifyPhase1({
   },
 });
 
+// Task 4: 500-route repairs, proven over real HTTP against the dev server.
+//
+// The brief's original scenario fetched `/api/branches/nearby` anonymously and
+// asserted 200. That cannot pass: every branches/** route still calls
+// `authorize()`, which is `authenticate()` under a different name, so an
+// anonymous request is answered 401 before the handler runs. These scenarios
+// mint a JWT for an existing active user instead - the token is never printed,
+// never written to a file, and never included in an error message.
+//
+// The dev server has to be up (`npm run dev` in backend/) or these fail with a
+// connection error. That is deliberate: "does not 500" is only meaningful if the
+// route actually answered.
+const { apiUrl, apiGet } = await import("./lib/http.mjs");
+const { createToken } = await import("../lib/auth.js");
+
+let httpToken;
+async function authToken() {
+  if (httpToken) return httpToken;
+  const { rows } = await pool.query(
+    "SELECT id, email FROM users WHERE status = 'ACTIVE' ORDER BY id LIMIT 1",
+  );
+  if (!rows[0]) throw new Error("no ACTIVE user to authenticate the HTTP scenarios as");
+  httpToken = await createToken(rows[0]);
+  return httpToken;
+}
+
+async function httpGet(path, { authed = true } = {}) {
+  const token = authed ? await authToken() : null;
+  return await apiGet(apiUrl(path), token);
+}
+
+// A 500 here is the failure this task exists to remove; the body is included so
+// the message says what the route said rather than just the status code.
+async function expectNotServerError(label, res, allowed) {
+  if (res.status === 500) {
+    throw new Error(`${label} returned 500: ${JSON.stringify(res.data)}`);
+  }
+  if (allowed && !allowed.includes(res.status)) {
+    throw new Error(`${label} returned ${res.status}, expected one of ${allowed.join("/")}: ${JSON.stringify(res.data)}`);
+  }
+  return res;
+}
+
+const { rows: httpBranches } = await pool.query(
+  "SELECT uuid, latitude, longitude, postalcode FROM branches WHERE status = 'ACTIVE' ORDER BY id",
+);
+if (httpBranches.length === 0) throw new Error("no ACTIVE branch rows; HTTP scenarios cannot run");
+const HTTP_BRANCH = httpBranches[0];
+
+verifyPhase1({
+  name: "nearby returns 200 and puts the in-radius branch in the result",
+  run: async () => {
+    // Every seeded branch has null latitude/longitude, so an in-radius branch has
+    // to be created for the radius filter to be exercised at all. The row is
+    // removed in `finally`, and any leftover from a run that was killed
+    // mid-scenario is cleared first by its unique code, so a crash cannot leave
+    // a stray ACTIVE branch behind.
+    const code = `VP1-NEARBY-${process.pid}`;
+    await pool.query("DELETE FROM branches WHERE code LIKE $1", [`${code}%`]);
+
+    let uuid;
+    try {
+      // ~11km north of the query point, inside the 50km radius; and a second
+      // branch far outside it, which must not come back. `code` is UNIQUE, so
+      // each fixture needs its own value.
+      const fixtures = [
+        ["verify-phase1 nearby in-radius", `${code}-IN`, 19.17, 72.8777, "400001"],
+        ["verify-phase1 nearby out-of-radius", `${code}-OUT`, 21.17, 72.8777, "499999"],
+      ];
+      for (const [name, fixtureCode, latitude, longitude, postalcode] of fixtures) {
+        const inserted = await pool.query(
+          `INSERT INTO branches
+             (name, code, latitude, longitude, postalcode, status, deliveryenabled, pickupenabled)
+           VALUES ($1, $2, $3, $4, $5, 'ACTIVE', TRUE, TRUE)
+           RETURNING uuid`,
+          [name, fixtureCode, latitude, longitude, postalcode],
+        );
+        if (name.endsWith("in-radius")) uuid = inserted.rows[0].uuid;
+      }
+      if (!uuid) throw new Error("the in-radius nearby fixture was not created");
+
+      const res = await httpGet("/api/branches/nearby?lat=19.0760&lng=72.8777&radius=50");
+      if (res.status !== 200) {
+        throw new Error("nearby status " + res.status + " -> " + JSON.stringify(res.data));
+      }
+      if (!Array.isArray(res.data?.branches)) {
+        throw new Error(`nearby returned no branches array: ${JSON.stringify(res.data)}`);
+      }
+
+      // The radius filter moved from a HAVING (which Postgres rejects over
+      // ungrouped rows) into a WHERE over a derived table, so a branch inside
+      // the radius has to come back with a numeric distance_km.
+      const hit = res.data.branches.find((b) => b.uuid === uuid);
+      if (!hit) throw new Error(`nearby dropped the in-radius branch ${uuid}`);
+      if (typeof hit.distance_km !== "number" || Number.isNaN(hit.distance_km)) {
+        throw new Error(`nearby returned a non-numeric distance_km: ${JSON.stringify(hit.distance_km)}`);
+      }
+      if (hit.distance_km <= 0 || hit.distance_km > 50) {
+        throw new Error(`nearby reported ${hit.distance_km}km for a branch ~11km away, radius 50`);
+      }
+
+      const outOfRadius = res.data.branches.find((b) => b.name?.includes("out-of-radius"));
+      if (outOfRadius) {
+        throw new Error(`nearby returned an out-of-radius branch at ${outOfRadius.distance_km}km`);
+      }
+
+      // The bind order is [lat, lng, maxLat, maxLng, radius, limit]; a narrower
+      // radius has to drop the ~11km branch rather than return it regardless.
+      const tight = await httpGet("/api/branches/nearby?lat=19.0760&lng=72.8777&radius=1");
+      if (tight.status !== 200) throw new Error(`nearby (radius=1) status ${tight.status}`);
+      if (tight.data.branches.some((b) => b.uuid === uuid)) {
+        throw new Error("nearby ignored the radius parameter and returned an 11km branch for radius=1");
+      }
+    } finally {
+      await pool.query("DELETE FROM branches WHERE code LIKE $1", [`${code}%`]);
+    }
+  },
+});
+
+verifyPhase1({
+  name: "nearby still short-circuits without lat/lng instead of scanning",
+  run: async () => {
+    const res = await httpGet("/api/branches/nearby");
+    if (res.status !== 200) throw new Error(`nearby (no coords) status ${res.status}`);
+    if (res.data?.branches?.length !== 0) {
+      throw new Error("nearby without lat/lng should return an empty list");
+    }
+  },
+});
+
+verifyPhase1({
+  name: "GET /api/branches/:uuid returns 200 with stats",
+  run: async () => {
+    // This route called Branch.getWithStats() without importing Branch, so every
+    // request was a ReferenceError -> 500.
+    const res = await expectNotServerError(
+      "GET /api/branches/:uuid",
+      await httpGet(`/api/branches/${HTTP_BRANCH.uuid}`),
+      [200],
+    );
+    for (const key of ["uuid", "name", "addressLine1", "deliveryEnabled", "productCount", "totalOrders"]) {
+      if (res.data?.branch?.[key] === undefined) {
+        throw new Error(`branch payload is missing ${key}: ${Object.keys(res.data?.branch ?? {}).join(", ")}`);
+      }
+    }
+  },
+});
+
+verifyPhase1({
+  name: "GET /api/branches/:uuid/products returns 200 for the bigint branch id",
+  run: async () => {
+    // The route passed the branch uuid to BranchProduct.getByBranch, which
+    // filters bp.branchid = $1 (a bigint) - 22P02 invalid input syntax.
+    const res = await expectNotServerError(
+      "GET /api/branches/:uuid/products",
+      await httpGet(`/api/branches/${HTTP_BRANCH.uuid}/products?page=1&limit=5`),
+      [200],
+    );
+    if (!Array.isArray(res.data?.products)) {
+      throw new Error(`no products array: ${JSON.stringify(res.data)}`);
+    }
+    // With a real bigint the join can match, so every row must be one of this
+    // branch's own listings rather than an empty page.
+    const { rows: owned } = await pool.query(
+      `SELECT bp.uuid FROM branch_products bp WHERE bp.branchid = (SELECT id FROM branches WHERE uuid = $1)`,
+      [HTTP_BRANCH.uuid],
+    );
+    if (owned.length > 0 && res.data.products.length === 0) {
+      throw new Error(
+        `${owned.length} branch_products rows belong to this branch but the route returned none`,
+      );
+    }
+  },
+});
+
+verifyPhase1({
+  name: "GET /api/branches/:uuid/products tolerates a search term and the legacy status param",
+  run: async () => {
+    // The status filter is gone from the handler (getByBranch never accepted
+    // one), so passing it must not change the result or blow up.
+    const plain = await httpGet(`/api/branches/${HTTP_BRANCH.uuid}/products?page=1&limit=5`);
+    const withStatus = await httpGet(
+      `/api/branches/${HTTP_BRANCH.uuid}/products?page=1&limit=5&status=ACTIVE&search=rice`,
+    );
+    await expectNotServerError("GET products?search=", withStatus, [200]);
+    if (withStatus.data?.pagination?.total > plain.data?.pagination?.total) {
+      throw new Error("adding a search term widened the result set");
+    }
+  },
+});
+
+verifyPhase1({
+  name: "PATCH /api/branches/:uuid/orders refuses an order from another branch",
+  run: async () => {
+    // The route used to call Order.update(<branch uuid>), so it could never find
+    // an order. It now resolves the branch and updates by order identity, with
+    // the branch as an ownership guard. Picking an order that belongs to a
+    // *different* branch proves the guard fires and writes nothing.
+    const { rows: foreign } = await pool.query(
+      `SELECT o.order_number
+         FROM orders o
+        WHERE o.branchid IS NOT NULL
+          AND o.branchid <> (SELECT id FROM branches WHERE uuid = $1)
+        LIMIT 1`,
+      [HTTP_BRANCH.uuid],
+    );
+    if (!foreign[0]) {
+      throw new Error("no order belongs to a different branch; the ownership guard is unverified");
+    }
+    const { jsonPatch } = await import("./lib/http.mjs");
+    const res = await jsonPatch(
+      apiUrl(`/api/branches/${HTTP_BRANCH.uuid}/orders`),
+      { orderNumber: foreign[0].order_number, status: "CONFIRMED" },
+      await authToken(),
+    );
+    if (res.status === 500) throw new Error(`orders PATCH returned 500: ${JSON.stringify(res.data)}`);
+    if (res.status !== 404) {
+      throw new Error(
+        `orders PATCH returned ${res.status} for an order owned by another branch, expected 404: ${JSON.stringify(res.data)}`,
+      );
+    }
+  },
+});
+
+verifyPhase1({
+  name: "PATCH /api/branches/:uuid/orders requires an order identity in the body",
+  run: async () => {
+    const { jsonPatch } = await import("./lib/http.mjs");
+    const res = await jsonPatch(
+      apiUrl(`/api/branches/${HTTP_BRANCH.uuid}/orders`),
+      { status: "CONFIRMED" },
+      await authToken(),
+    );
+    if (res.status === 500) throw new Error(`orders PATCH returned 500: ${JSON.stringify(res.data)}`);
+    if (res.status !== 400) {
+      throw new Error(`orders PATCH with no order identity returned ${res.status}, expected 400`);
+    }
+  },
+});
+
+verifyPhase1({
+  name: "Order.updateByNumber updates by order identity inside the branch",
+  run: async () => {
+    // The HTTP scenarios above can only assert the *refusals* without writing to
+    // live data. This is the other half: the real UPDATE, the real RETURNING
+    // and the real order_status_history insert, all inside a transaction that
+    // is always rolled back, so the statement is proven against the live schema
+    // and nothing is persisted.
+    const { Order } = await import("../lib/models/order.js");
+    await inRolledBackTransaction(async (client) => {
+      const { rows } = await client.query(
+        `SELECT o.order_number, o.branchid, o.status, o.uuid
+           FROM orders o
+          WHERE o.branchid IS NOT NULL
+          ORDER BY o.id DESC LIMIT 1`,
+      );
+      if (!rows[0]) throw new Error("no order with a branch; updateByNumber is unverified");
+      const order = rows[0];
+      const next = order.status === "PROCESSING" ? "PACKED" : "PROCESSING";
+
+      const updated = await Order.updateByNumber(order.order_number, {
+        status: next,
+        branchId: order.branchid,
+      });
+      assertKeys(updated, ["uuid", "order_number", "status", "branchid", "customer_name"], "Order.updateByNumber");
+      if (updated.order_number !== order.order_number) {
+        throw new Error(`updateByNumber moved the wrong order: ${updated.order_number}`);
+      }
+      if (updated.status !== next) {
+        throw new Error(`updateByNumber did not persist status: ${updated.status}`);
+      }
+
+      // The wrong branch must not match, which is the whole point of the guard.
+      const wrongBranch = await Order.updateByNumber(order.order_number, {
+        status: next,
+        branchId: Number(order.branchid) + 99999,
+      });
+      if (wrongBranch !== null) {
+        throw new Error("updateByNumber updated an order across branches");
+      }
+
+      const history = await client.query(
+        "SELECT status FROM order_status_history WHERE order_id = (SELECT id FROM orders WHERE order_number = $1)",
+        [order.order_number],
+      );
+      if (history.rows.length === 0) {
+        throw new Error("updateByNumber wrote no order_status_history row");
+      }
+    });
+  },
+});
+
+verifyPhase1({
+  name: "GET /api/store/products returns 200 with a pincode and with lat/lng",
+  run: async () => {
+    // Both 500'd: `branches b` collided with the `brands b` already in the
+    // select list (42712), and the bounding box was `$1 - $3` on untyped
+    // parameters (42725 operator is not unique).
+    const pincode = httpBranches.find((b) => b.postalcode)?.postalcode;
+    const cases = [
+      ["plain", "/api/store/products?limit=5", { authed: false }],
+      ["branchId", `/api/store/products?limit=5&branchId=${HTTP_BRANCH.uuid}`, { authed: false }],
+      ["pincode", `/api/store/products?limit=5&pincode=${pincode || "400001"}`, { authed: false }],
+      ["lat/lng", "/api/store/products?limit=5&lat=19.0760&lng=72.8777", { authed: false }],
+      ["pincode+lat/lng", `/api/store/products?limit=5&pincode=${pincode || "400001"}&lat=19.0760&lng=72.8777`, { authed: false }],
+      ["search+pincode+lat/lng", `/api/store/products?limit=5&search=a&pincode=${pincode || "400001"}&lat=19.0760&lng=72.8777`, { authed: false }],
+    ];
+    for (const [label, path, opts] of cases) {
+      const res = await expectNotServerError(`GET ${label}`, await httpGet(path, opts), [200]);
+      if (!Array.isArray(res.data?.products)) {
+        throw new Error(`${label} returned no products array: ${JSON.stringify(res.data)}`);
+      }
+      if (typeof res.data?.pagination?.total !== "number") {
+        throw new Error(`${label} returned no pagination.total`);
+      }
+    }
+  },
+});
+
+// The store catalog has to stay deduped no matter how many branches list the
+// same product, but no product in this database is listed at more than one
+// branch, so the duplicate has to be manufactured to make the assertion mean
+// anything. The extra row is tagged in `variantid` and removed in a `finally`;
+// a cleanup also runs first, so a run that was killed mid-scenario cannot poison
+// the next one. This is the only scenario that writes outside a rolled-back
+// transaction, and it writes one row that never outlives the scenario.
+const DEDUPE_MARKER = "__verify_phase1_dedupe__";
+
+verifyPhase1({
+  name: "GET /api/store/products is deduped and carries branch pricing",
+  run: async () => {
+    await pool.query("DELETE FROM branch_products WHERE variantid = $1", [DEDUPE_MARKER]);
+
+    let inserted = null;
+    try {
+      // A product that is already listed and available at one branch, plus a
+      // second branch to list it at: without the LATERAL this product comes
+      // back twice.
+      const { rows: target } = await pool.query(
+        `SELECT bp.productid, bp.branchid
+           FROM branch_products bp
+          WHERE bp.isavailable = TRUE
+            AND bp.status = 'ACTIVE'
+            AND EXISTS (SELECT 1 FROM branches o WHERE o.id <> bp.branchid)
+          ORDER BY bp.id LIMIT 1`,
+      );
+      if (!target[0]) {
+        throw new Error("no available branch_products row to duplicate; the dedupe guard is unverified");
+      }
+      const { rows: otherBranch } = await pool.query(
+        "SELECT id FROM branches WHERE id <> $1 AND status = 'ACTIVE' ORDER BY id LIMIT 1",
+        [target[0].branchid],
+      );
+      if (!otherBranch[0]) throw new Error("no second ACTIVE branch to list the product at");
+
+      const ins = await pool.query(
+        `INSERT INTO branch_products
+           (branchid, productid, variantid, sellingprice, stockquantity, isavailable, status)
+         VALUES ($1, $2, $3, 1, 1, TRUE, 'ACTIVE')
+         ON CONFLICT (branchid, productid) DO UPDATE
+           SET variantid = EXCLUDED.variantid, isavailable = TRUE, status = 'ACTIVE'
+         RETURNING id`,
+        [otherBranch[0].id, target[0].productid, DEDUPE_MARKER],
+      );
+      inserted = ins.rows[0].id;
+
+      const res = await httpGet("/api/store/products?limit=24", { authed: false });
+      if (res.status !== 200) throw new Error(`store/products returned ${res.status}`);
+
+      const seen = new Set();
+      for (const p of res.data.products) {
+        if (seen.has(p.uuid)) {
+          throw new Error(`the branch_products join duplicated product ${p.uuid}`);
+        }
+        seen.add(p.uuid);
+      }
+      if (res.data.products.length !== res.data.pagination.total && res.data.products.length < 24) {
+        throw new Error(
+          `returned ${res.data.products.length} rows for a total of ${res.data.pagination.total} without hitting the limit`,
+        );
+      }
+      // bp.* aliases were unquoted, so Postgres folded them and `branch` was
+      // always null; a product listed at a branch must now surface its listing.
+      const listed = res.data.products.find((p) => p.branch);
+      if (!listed) {
+        throw new Error(
+          `no product carried a branch listing; bp.uuid alias is still folding (keys: ${Object.keys(res.data.products[0] ?? {}).join(", ")})`,
+        );
+      }
+      for (const key of ["uuid", "branchPrice", "compareAtPrice", "stock", "isAvailable", "status", "lowStockThreshold"]) {
+        if (listed.branch[key] === undefined) {
+          throw new Error(`branch listing is missing ${key}: ${JSON.stringify(listed.branch)}`);
+        }
+      }
+    } finally {
+      await pool.query("DELETE FROM branch_products WHERE variantid = $1", [
+        inserted ?? DEDUPE_MARKER,
+      ]);
+      await pool.query("DELETE FROM branch_products WHERE variantid = $1", [DEDUPE_MARKER]);
+    }
+  },
+});
+
+verifyPhase1({
+  name: "GET /api/store/products pinned to a branch returns only that branch's listings",
+  run: async () => {
+    const { rows: owned } = await pool.query(
+      `SELECT count(*)::int AS count FROM branch_products bp
+        WHERE bp.branchid = (SELECT id FROM branches WHERE uuid = $1)
+          AND bp.isavailable = TRUE AND bp.status = 'ACTIVE'`,
+      [HTTP_BRANCH.uuid],
+    );
+    const res = await httpGet(`/api/store/products?limit=24&branchId=${HTTP_BRANCH.uuid}`, { authed: false });
+    if (res.status !== 200) throw new Error(`store/products?branchId returned ${res.status}`);
+    if (res.data.pagination.total !== owned[0].count) {
+      throw new Error(
+        `branchId catalog returned ${res.data.pagination.total} products, expected ${owned[0].count}`,
+      );
+    }
+    for (const p of res.data.products) {
+      if (!p.branch) throw new Error(`branch-scoped catalog returned ${p.uuid} with no branch listing`);
+    }
+  },
+});
+
+verifyPhase1({
+  name: "the store catalog's pincode and radius predicates select the serving branch",
+  run: async () => {
+    // The HTTP scenario above proves the location query does not 500; it cannot
+    // prove it *selects* anything, because a filter that always matched nothing
+    // would also answer 200. This scenario runs the two predicates the route
+    // builds - quoted here rather than imported, since the route builds its SQL
+    // inline - against a branch that has been given coordinates inside a
+    // transaction that is always rolled back.
+    await inRolledBackTransaction(async (client) => {
+      const { rows: target } = await client.query(
+        `SELECT bp.branchid
+           FROM branch_products bp
+          WHERE bp.isavailable = TRUE AND bp.status = 'ACTIVE'
+          ORDER BY bp.id LIMIT 1`,
+      );
+      if (!target[0]) throw new Error("no available branch_products row to scope the catalog to");
+      const branchId = target[0].branchid;
+
+      await client.query(
+        "UPDATE branches SET latitude = $1, longitude = $2, postalcode = $3, status = 'ACTIVE', deliveryenabled = TRUE WHERE id = $4",
+        [19.17, 72.8777, "400001", branchId],
+      );
+
+      // The pincode predicate, matching the route's `nb` subquery.
+      const byPincode = await client.query(
+        `SELECT count(*)::int AS count
+           FROM branch_products bp
+          WHERE bp.isavailable = TRUE
+            AND bp.status = 'ACTIVE'
+            AND EXISTS (SELECT 1 FROM branches nb
+                         WHERE (nb.postalcode LIKE $1 OR nb.postalcode = $2)
+                           AND nb.status = 'ACTIVE' AND nb.deliveryenabled = TRUE
+                           AND nb.id = bp.branchid)`,
+        ["400%", "400001"],
+      );
+      if (byPincode.rows[0].count === 0) {
+        throw new Error("the pincode predicate matched no listing for the branch that serves 400001");
+      }
+      const wrongPincode = await client.query(
+        `SELECT count(*)::int AS count
+           FROM branch_products bp
+          WHERE bp.isavailable = TRUE
+            AND bp.status = 'ACTIVE'
+            AND EXISTS (SELECT 1 FROM branches nb
+                         WHERE (nb.postalcode LIKE $1 OR nb.postalcode = $2)
+                           AND nb.status = 'ACTIVE' AND nb.deliveryenabled = TRUE
+                           AND nb.id = bp.branchid)`,
+        ["999%", "999999"],
+      );
+      if (wrongPincode.rows[0].count !== 0) {
+        throw new Error("the pincode predicate matched a branch that does not serve the pincode");
+      }
+
+      // The radius predicate. The ::numeric casts are load-bearing: node-postgres
+      // sends a JS number untyped, so `$1 - $3` alone is "unknown - unknown" and
+      // Postgres rejects it with 42725.
+      const radiusSql = (lat, lng, maxLat, maxLng) => [
+        `SELECT count(*)::int AS count
+           FROM branch_products bp
+          WHERE bp.isavailable = TRUE
+            AND bp.status = 'ACTIVE'
+            AND EXISTS (SELECT 1 FROM branches nb
+                         WHERE nb.latitude BETWEEN $1::numeric - $3::numeric AND $1::numeric + $3::numeric
+                           AND nb.longitude BETWEEN $2::numeric - $4::numeric AND $2::numeric + $4::numeric
+                           AND nb.status = 'ACTIVE' AND nb.deliveryenabled = TRUE
+                           AND nb.id = bp.branchid)`,
+        [lat, lng, maxLat, maxLng],
+      ];
+      const inside = await client.query(...radiusSql(19.076, 72.8777, 50 / 111.32, 50 / (111.32 * Math.cos((19.076 * Math.PI) / 180))));
+      if (inside.rows[0].count === 0) {
+        throw new Error("the radius predicate excluded a branch ~11km from the query point");
+      }
+      // 1km of latitude: the branch is ~11km north, so it falls outside.
+      const outside = await client.query(...radiusSql(19.076, 72.8777, 1 / 111.32, 1 / (111.32 * Math.cos((19.076 * Math.PI) / 180))));
+      if (outside.rows[0].count !== 0) {
+        throw new Error("the radius predicate included a branch ~11km away for a 1km radius");
+      }
+    });
+  },
+});
+
 // ==== RUNNER ====
 // report() is Task 1's code and ends in process.exit(), so the shared pool has
 // to be closed on the way out or the idle client keeps the event loop alive.

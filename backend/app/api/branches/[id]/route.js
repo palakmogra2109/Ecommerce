@@ -2,6 +2,7 @@ import { corsHeaders } from "@/lib/cors";
 import { authorize } from "@/lib/authorization";
 import { KEY_PERMISSIONS } from "@shared/constants";
 import { isValidUuid, invalidUuidResponse } from "@/lib/uuid";
+import { Branch } from "@/lib/models/branch";
 
 export const runtime = "nodejs";
 

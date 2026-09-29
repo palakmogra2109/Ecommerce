@@ -29,33 +29,31 @@ export async function GET(request) {
     const maxLat = radius / 111.32;
     const maxLng = radius / (111.32 * Math.cos(lat * Math.PI / 180));
 
+    // The radius predicate lives in a WHERE over a derived table rather than a
+    // HAVING: Postgres rejects HAVING over ungrouped rows, which is what made
+    // this route 500. The bind order is unchanged.
     const result = await pool.query(
       `
-      SELECT b.*,
-        (
-          6371 * acos(
-            least(greatest(
-              cos(radians($1)) * cos(radians(b.latitude)) * cos(radians(b.longitude) - radians($2)) +
-              sin(radians($1)) * sin(radians(b.latitude)),
-            -1), 1)
-          )
-        ) AS distance_km
-      FROM branches b
-      WHERE b.status = 'ACTIVE'
-        AND b.latitude IS NOT NULL
-        AND b.longitude IS NOT NULL
-        AND b.latitude BETWEEN $1 - $3 AND $1 + $3
-        AND b.longitude BETWEEN $2 - $4 AND $2 + $4
-        AND b.deliveryEnabled = TRUE
-      HAVING (
-        6371 * acos(
-          least(greatest(
-            cos(radians($1)) * cos(radians(b.latitude)) * cos(radians(b.longitude) - radians($2)) +
-            sin(radians($1)) * sin(radians(b.latitude)),
-          -1), 1)
-        )
-      ) <= $5
-      ORDER BY distance_km ASC
+      SELECT * FROM (
+        SELECT b.*,
+          (
+            6371 * acos(
+              least(greatest(
+                cos(radians($1)) * cos(radians(b.latitude)) * cos(radians(b.longitude) - radians($2)) +
+                sin(radians($1)) * sin(radians(b.latitude)),
+              -1), 1)
+            )
+          ) AS distance_km
+        FROM branches b
+        WHERE b.status = 'ACTIVE'
+          AND b.latitude IS NOT NULL
+          AND b.longitude IS NOT NULL
+          AND b.latitude BETWEEN $1 - $3 AND $1 + $3
+          AND b.longitude BETWEEN $2 - $4 AND $2 + $4
+          AND b.deliveryenabled = TRUE
+      ) d
+      WHERE d.distance_km <= $5
+      ORDER BY d.distance_km ASC
       LIMIT $6
       `,
       [lat, lng, maxLat, maxLng, radius, limit]

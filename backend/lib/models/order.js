@@ -1,5 +1,8 @@
-import pool from "../db";
-import { paginate } from "../pagination";
+// Explicit .js extensions: Next resolves extensionless specifiers through its
+// own bundler, but plain Node ESM does not, so this module could not be loaded
+// from scripts/ or lib/__tests__/ without them.
+import pool from "../db.js";
+import { paginate } from "../pagination.js";
 
 const TABLE = "orders";
 
@@ -250,6 +253,38 @@ export const Order = {
     }
 
     return this.findByUuid(uuid);
+  },
+
+  // Updates an order addressed by its human order_number, scoped to one branch.
+  // branchid is a bigint, so the caller has to pass the numeric branch id; the
+  // `AND branchid = $3` is what stops a branch panel from moving an order that
+  // belongs to somebody else. Returns the same public row shape as update(), or
+  // null when the order is not in that branch.
+  async updateByNumber(orderNumber, { status, branchId } = {}) {
+    if (!orderNumber || branchId == null) {
+      return null;
+    }
+
+    const result = await pool.query(
+      `
+      UPDATE ${TABLE}
+      SET status = $1, updated_at = now()
+      WHERE order_number = $2 AND branchid = $3
+      RETURNING id, uuid, order_number, status, branchid
+      `,
+      [status, orderNumber, branchId]
+    );
+
+    if (result.rows.length === 0) {
+      return null;
+    }
+
+    const row = result.rows[0];
+
+    // Audit trail: same contract as update() above.
+    await this.recordStatus(row.id, status, "", "system");
+
+    return this.findByUuid(row.uuid);
   },
 
   async remove(uuid) {
