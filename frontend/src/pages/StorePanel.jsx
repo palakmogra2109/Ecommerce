@@ -96,10 +96,10 @@ export default function StorePanel() {
           sku: p.sku,
           images: p.images,
           category_name: p.category_name,
-          sellingPrice: p.sellingPrice ?? p.sellingprice,
-          compareAtPrice: p.compareAtPrice ?? p.compareatprice,
-          stockQuantity: p.stockQuantity ?? p.stockquantity,
-          lowStockThreshold: p.lowStockThreshold ?? p.lowstockthreshold,
+          sellingPrice: p.sellingPrice,
+          compareAtPrice: p.compareAtPrice,
+          stockQuantity: p.stockQuantity,
+          lowStockThreshold: p.lowStockThreshold,
         })));
         setProductTotal(data.pagination.total);
       }
