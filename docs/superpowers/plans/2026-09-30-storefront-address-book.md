@@ -1033,6 +1033,45 @@ test("repeated searches use the cache and do not call Nominatim again", async ()
   assert.equal(calls, 1);
 });
 
+test("distinct upstream searches observe the minimum request interval", async () => {
+  __resetGeocodeCacheForTests();
+  let calls = 0;
+  let nowValue = 1000;
+  const slept = [];
+  const dependencies = {
+    fetchImpl: async () => {
+      calls += 1;
+      return response([]);
+    },
+    now: () => nowValue,
+    sleep: async (ms) => {
+      slept.push(ms);
+      nowValue += ms;
+    },
+  };
+  await searchLocations("Kothrud Pune", dependencies);
+  await searchLocations("Baner Pune", dependencies);
+  assert.equal(calls, 2);
+  assert.deepEqual(slept, [1000]);
+});
+
+test("an expired search-cache entry triggers another upstream call", async () => {
+  __resetGeocodeCacheForTests();
+  let calls = 0;
+  let nowValue = 1000;
+  const dependencies = {
+    fetchImpl: async () => {
+      calls += 1;
+      return response([]);
+    },
+    now: () => nowValue,
+  };
+  await searchLocations("Kothrud Pune", dependencies);
+  nowValue = 601001;
+  await searchLocations("Kothrud Pune", dependencies);
+  assert.equal(calls, 2);
+});
+
 test("an upstream Nominatim failure is classified as temporary", async () => {
   __resetGeocodeCacheForTests();
   await assert.rejects(
