@@ -1,0 +1,11 @@
+Hi,
+
+You have received a {{appName}} gift card!
+
+Code:     {{code}}
+Amount:   {{amount}}
+Expires:  {{expiresAt}}
+
+Enter this code in the Offers step at checkout and it comes straight off your total. You can also see your balance anytime under E-Gift Cards in your account.
+
+This is an automated message from {{appName}}. Do not reply to this email.

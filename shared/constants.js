@@ -125,6 +125,10 @@ export const KEY_PERMISSIONS = Object.freeze({
   COUPONS_CREATE: "coupons.create",
   COUPONS_UPDATE: "coupons.update",
   COUPONS_DELETE: "coupons.delete",
+  GIFT_CARDS_VIEW: "gift_cards.view",
+  GIFT_CARDS_CREATE: "gift_cards.create",
+  GIFT_CARDS_UPDATE: "gift_cards.update",
+  GIFT_CARDS_DELETE: "gift_cards.delete",
   REVIEWS_VIEW: "reviews.view",
   REVIEWS_MODERATE: "reviews.moderate",
   REVIEWS_DELETE: "reviews.delete",
@@ -436,6 +440,17 @@ export const COUPON_LIMITS = Object.freeze({
   MAX_PERCENTAGE: 100,
   MIN_FIXED_AMOUNT: 1,
 });
+
+// ---------- Gift Cards ----------
+
+// Admin-issued stored value redeemed at storefront checkout.
+export const GIFT_CARD_STATUS = Object.freeze({
+  ACTIVE: "ACTIVE",
+  INACTIVE: "INACTIVE",
+  REDEEMED: "REDEEMED",
+});
+
+export const GIFT_CARD_STATUSES = Object.values(GIFT_CARD_STATUS);
 
 // ---------- Reviews ----------
 

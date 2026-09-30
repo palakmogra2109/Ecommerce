@@ -559,7 +559,7 @@ export default function StorePanel() {
                           </p>
                         )}
 
-                        {addError && <p className="form-row .input-error" style={{ color: "#ef4444", fontSize: "0.8125rem", marginBottom: 0 }}>{addError}</p>}
+                        {addError && <p className="form-row input-error" style={{ color: "#ef4444", fontSize: "0.8125rem", marginBottom: 0 }}>{addError}</p>}
                       </div>
 
                       <div className="filament-modal-footer">

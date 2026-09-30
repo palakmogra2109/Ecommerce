@@ -188,6 +188,53 @@ export async function sendEmailFromTemplate({
   });
 }
 
+export function buildGiftCardEmail({ code, amount, expiresAt }) {
+  const appName = getAppName();
+
+  return buildEmailFromTemplate({
+    slug: "gift-card",
+    values: {
+      appName,
+      code,
+      amount,
+      expiresAt,
+    },
+    fallback: {
+      subject: `You have received a ${appName} gift card`,
+      htmlFile: "gift-card.html",
+      textFile: "gift-card.txt",
+    },
+  });
+}
+
+export async function sendGiftCardEmail(to, { code, amount, expiresAt }) {
+  const mail = await buildGiftCardEmail({ code, amount, expiresAt });
+
+  try {
+    const info = await transporter.sendMail({
+      from: getSender(),
+      to,
+      subject: mail.subject,
+      text: mail.text,
+      html: mail.html,
+    });
+
+    console.log("Email sent:", info.messageId);
+
+    return { success: true };
+  } catch (error) {
+    console.error("Email send error:", error.message);
+    // Log the code to console when email fails (dev fallback)
+    console.log(`\n--- GIFT CARD (email failed) ---`);
+    console.log(`To:     ${to}`);
+    console.log(`Code:   ${code}`);
+    console.log(`Amount: ${amount}`);
+    console.log(`----------------------------------\n`);
+
+    return { success: false, message: error.message };
+  }
+}
+
 export async function sendCredentialsEmail(to, name, email, password) {
   const mail = await buildCredentialsEmail({ name, email, password });
 

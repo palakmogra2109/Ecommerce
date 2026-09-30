@@ -55,6 +55,8 @@ export const Order = {
       total = 0,
       couponId = null,
       couponCode = null,
+      giftCardId = null,
+      giftAmount = 0,
       paymentMethod = "cod",
       paymentStatus = "PENDING",
       branchId = null,
@@ -68,9 +70,10 @@ export const Order = {
       INSERT INTO ${TABLE}
         (order_number, customer_id, customer_name, customer_email,
          customer_mobile, shipping_address, subtotal, discount, total,
-         coupon_id, coupon_code, payment_method, payment_status, branchid,
+         coupon_id, coupon_code, gift_card_id, gift_amount,
+         payment_method, payment_status, branchid,
          estimated_delivery_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
       RETURNING uuid, order_number
       `,
       [
@@ -89,6 +92,8 @@ export const Order = {
         Number(total) || 0,
         couponId,
         couponCode || null,
+        giftCardId,
+        Number(giftAmount) || 0,
         paymentMethod,
         paymentStatus,
         branchId,

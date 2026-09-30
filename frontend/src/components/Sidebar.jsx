@@ -9,6 +9,7 @@ import {
   FiInbox,
   FiLayout,
   FiLogOut,
+  FiGift,
   FiMail,
   FiPercent,
   FiSettings,
@@ -37,6 +38,7 @@ const MODULE_VIEW_PERMISSIONS = {
   orders: "orders.view",
   customers: "customers.view",
   coupons: "coupons.view",
+  gift_cards: "gift_cards.view",
   reviews: "reviews.view",
   banners: "banners.view",
   settings: "settings.view",
@@ -133,6 +135,12 @@ const MODULES = [
     path: "/coupons",
     label: "Coupons",
     icon: FiPercent,
+  },
+  {
+    slug: "gift_cards",
+    path: "/gift-cards",
+    label: "Gift Cards",
+    icon: FiGift,
   },
   {
     slug: "reviews",

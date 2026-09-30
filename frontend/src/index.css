@@ -4634,6 +4634,24 @@ body {
 .pay-status-control select {
   min-width: 12rem;
   width: auto;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text);
+  background: var(--surface);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pay-status-control select:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* Form shells that must span their card instead of the 42rem cap. */
+.admin-form-full {
+  max-width: none;
 }
 
 /* Stat + detail grids used on view pages */
@@ -5641,4 +5659,130 @@ body {
   .sp-form-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* =============================================================
+   Missing-class repairs: classes used across admin pages that had
+   no definition, so those spots rendered with browser defaults.
+   All rules follow the existing filament tokens above.
+   ============================================================ */
+
+/* Page titles (BranchForm, BranchDashboard, BranchInventory, BranchOrders). */
+.filament-title {
+  margin: 0 0 1rem;
+  font-size: 1.375rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--text);
+}
+
+/* Secondary button (OrderView bill download, gift card Generate). */
+.filament-btn-secondary {
+  background: var(--surface-3);
+  color: var(--text-body);
+  border-color: var(--border);
+}
+
+.filament-btn-secondary:hover {
+  background: var(--surface-2);
+  border-color: var(--text-faint);
+}
+
+/* Status badges for states the dynamic `filament-badge-*` lookups hit. */
+.filament-badge-confirmed,
+.filament-badge-packed,
+.filament-badge-out_for_delivery {
+  background: #dbeafe;
+  color: #1e40af;
+}
+
+.filament-badge-confirmed .filament-badge-dot,
+.filament-badge-packed .filament-badge-dot,
+.filament-badge-out_for_delivery .filament-badge-dot {
+  background: #3b82f6;
+}
+
+.filament-badge-redeemed {
+  background: #dcfce7;
+  color: #166534;
+}
+
+.filament-badge-redeemed .filament-badge-dot {
+  background: #22c55e;
+}
+
+.filament-badge-featured {
+  background: #fef3c7;
+  color: #92400e;
+}
+
+.filament-badge-featured .filament-badge-dot {
+  background: #f59e0b;
+}
+
+/* Generic admin inputs (BranchDashboard select, BranchOrders search). */
+.form-control,
+.input {
+  width: 100%;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text);
+  background: var(--surface);
+  box-sizing: border-box;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.form-control:focus,
+.input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* Brand rows. */
+.brand-name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  object-fit: contain;
+  border-radius: 6px;
+  background: var(--surface-3);
+  vertical-align: middle;
+  margin-right: 8px;
+}
+
+/* Settings search field. */
+.filament-search-input {
+  width: 100%;
+  max-width: 22rem;
+  padding: 0.625rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text);
+  background: var(--surface);
+  box-sizing: border-box;
+  outline: none;
+}
+
+.filament-search-input:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+/* Sidebar collapsible group wrapper. */
+.sidebar-group {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Shared phone input shell. */
+.phone-input {
+  width: 100%;
 }

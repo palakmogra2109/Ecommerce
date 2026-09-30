@@ -167,6 +167,17 @@ export function verifyOtp(mobile, otp) {
   });
 }
 
+export function quoteCheckout({ subtotal, couponCode = "", giftCardCode = "", customerEmail = "" }) {
+  return storefrontFetch("/checkout/quote", {
+    method: "POST",
+    body: JSON.stringify({ subtotal, couponCode, giftCardCode, customerEmail }),
+  });
+}
+
+export function getMyGiftCards() {
+  return storefrontFetch("/gift-cards");
+}
+
 export function getStoreProfile() {
   return storefrontFetch("/profile");
 }

@@ -3,6 +3,7 @@ import { corsHeaders } from "@/lib/cors";
 import { Order } from "@/lib/models/order";
 import { Branch } from "@/lib/models/branch";
 import { ORDER_STATUS } from "@shared/constants";
+import { round2, validateCoupon } from "@/lib/checkoutDiscounts";
 
 export const runtime = "nodejs";
 
@@ -274,6 +275,100 @@ export async function POST(request) {
       );
     }
 
+    // Stacked discounts, same math as the quote endpoint: coupon first,
+    // then the gift card on whatever remains. Both are re-validated here
+    // inside the transaction (the quote locks nothing), and the coupon
+    // counter increment is guarded so concurrent checkouts cannot overshoot
+    // a usage limit.
+    let couponId = null;
+    let couponCode = null;
+    let discount = 0;
+    if (String(body.couponCode || "").trim()) {
+      const checked = await validateCoupon(client, {
+        code: body.couponCode,
+        subtotal,
+        customerEmail,
+      });
+      if (checked.error) {
+        await client.query("ROLLBACK");
+        return Response.json(
+          { success: false, message: checked.error },
+          { status: 400, headers: corsHeaders() }
+        );
+      }
+      const bumped = await client.query(
+        `UPDATE coupons SET used_count = used_count + 1, updated_at = now()
+         WHERE code = $1 AND (usage_limit IS NULL OR used_count < usage_limit)
+         RETURNING id`,
+        [checked.coupon.code]
+      );
+      if (bumped.rows.length === 0) {
+        await client.query("ROLLBACK");
+        return Response.json(
+          { success: false, message: "This coupon has reached its usage limit." },
+          { status: 400, headers: corsHeaders() }
+        );
+      }
+      couponId = checked.coupon.id;
+      couponCode = checked.coupon.code;
+      discount = checked.discount;
+    }
+
+    let giftCardId = null;
+    let giftAmount = 0;
+    let giftNewBalance = null;
+    const giftCode = String(body.giftCardCode || "").trim().replace(/\s+/g, "-").toUpperCase();
+    if (giftCode) {
+      const remainder = round2(subtotal - discount);
+      const locked = await client.query(
+        `SELECT id, code, balance, status, expires_at, recipient_email
+         FROM gift_cards WHERE code = $1 FOR UPDATE`,
+        [giftCode]
+      );
+      const card = locked.rows[0];
+      const balance = Number(card?.balance) || 0;
+      if (!card || card.status !== "ACTIVE") {
+        await client.query("ROLLBACK");
+        return Response.json(
+          { success: false, message: "This gift card is not valid." },
+          { status: 400, headers: corsHeaders() }
+        );
+      }
+      if (card.expires_at && new Date(card.expires_at).getTime() < Date.now()) {
+        await client.query("ROLLBACK");
+        return Response.json(
+          { success: false, message: "This gift card has expired." },
+          { status: 400, headers: corsHeaders() }
+        );
+      }
+      if (balance <= 0 || remainder <= 0) {
+        await client.query("ROLLBACK");
+        return Response.json(
+          { success: false, message: "This gift card cannot be applied to this order." },
+          { status: 400, headers: corsHeaders() }
+        );
+      }
+      giftAmount = round2(Math.min(balance, remainder));
+      giftNewBalance = round2(balance - giftAmount);
+      // The ::numeric casts are load-bearing: $1 is bound from a JS
+      // number (untyped), and without them Postgres deduces conflicting
+      // types between `balance = $1` and `$1 <= 0`.
+      await client.query(
+        `UPDATE gift_cards
+         SET balance = $1::numeric,
+             status = CASE WHEN $1::numeric <= 0 THEN 'REDEEMED' ELSE status END,
+             recipient_email = COALESCE(recipient_email, $2),
+             updated_at = now()
+         WHERE id = $3`,
+        [giftNewBalance, customerEmail, card.id]
+      );
+      giftCardId = card.id;
+      // The ledger row needs the order id, so it lands right after the
+      // order header below, still inside this transaction.
+    }
+
+    const total = round2(Math.max(0, subtotal - discount - giftAmount));
+
     // Estimated delivery: 45-60 minute store delivery window.
     const estimatedDeliveryAt = new Date(Date.now() + 60 * 60 * 1000);
 
@@ -287,10 +382,12 @@ export async function POST(request) {
         customerMobile,
         shippingAddress,
         subtotal,
-        discount: 0,
-        total: subtotal,
-        couponId: null,
-        couponCode: null,
+        discount,
+        total,
+        couponId,
+        couponCode,
+        giftCardId,
+        giftAmount,
         paymentMethod,
         paymentStatus: "PENDING",
         branchId: branch ? branch.id : null,
@@ -298,6 +395,14 @@ export async function POST(request) {
       },
       client
     );
+
+    if (giftCardId) {
+      await client.query(
+        `INSERT INTO gift_card_transactions (gift_card_id, order_id, type, amount, balance_after)
+         VALUES ($1, (SELECT id FROM orders WHERE uuid = $2), 'REDEEM', $3, $4)`,
+        [giftCardId, order.uuid, giftAmount, giftNewBalance]
+      );
+    }
 
     for (const line of insertedItems) {
       await client.query(

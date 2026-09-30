@@ -410,6 +410,37 @@ CREATE TABLE IF NOT EXISTS coupons (
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Gift cards: admin-issued stored value redeemed at checkout. Balances live
+-- on gift_cards; every movement is audited in gift_card_transactions.
+CREATE TABLE IF NOT EXISTS gift_cards (
+  id               BIGSERIAL PRIMARY KEY,
+  uuid             UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  code             TEXT NOT NULL UNIQUE,
+  initial_amount   NUMERIC(12,2) NOT NULL DEFAULT 0,
+  balance          NUMERIC(12,2) NOT NULL DEFAULT 0,
+  recipient_email  TEXT,
+  status           TEXT NOT NULL DEFAULT 'ACTIVE'
+                   CHECK (status IN ('ACTIVE', 'INACTIVE', 'REDEEMED')),
+  expires_at       TIMESTAMPTZ,
+  created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_cards_uuid_key ON gift_cards(uuid);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_cards_code_key ON gift_cards(code);
+CREATE INDEX IF NOT EXISTS gift_cards_recipient_idx ON gift_cards(recipient_email);
+
+CREATE TABLE IF NOT EXISTS gift_card_transactions (
+  id              BIGSERIAL PRIMARY KEY,
+  uuid            UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  gift_card_id    BIGINT NOT NULL REFERENCES gift_cards(id) ON DELETE CASCADE,
+  order_id        BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+  type            TEXT NOT NULL CHECK (type IN ('ISSUE', 'REDEEM')),
+  amount          NUMERIC(12,2) NOT NULL DEFAULT 0,
+  balance_after   NUMERIC(12,2) NOT NULL DEFAULT 0,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS gift_card_transactions_card_idx ON gift_card_transactions(gift_card_id);
+
 ALTER TABLE coupons ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
 ALTER TABLE coupons ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
 ALTER TABLE coupons ADD COLUMN IF NOT EXISTS max_discount_amount NUMERIC(12,2);
@@ -463,6 +494,8 @@ ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount NUMERIC(12,2) NOT NULL DEFA
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS total NUMERIC(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_id BIGINT REFERENCES coupons(id) ON DELETE SET NULL;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS coupon_code TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS gift_card_id BIGINT REFERENCES gift_cards(id) ON DELETE SET NULL;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS gift_amount NUMERIC(12,2) NOT NULL DEFAULT 0;
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'cod';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status TEXT NOT NULL DEFAULT 'PENDING';
 ALTER TABLE orders ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'PENDING';

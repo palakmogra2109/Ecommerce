@@ -25,6 +25,7 @@ import {
   getStoreProducts, getStoreProduct, getStoreBanners, getStoreBranches,
   placeStoreOrder, trackStoreOrder, downloadOrderInvoice,
   storeLogin, storeRegister, setStoreToken, requestOtp, verifyOtp, updateStoreProfile, getMyOrders,
+  quoteCheckout, getMyGiftCards,
   inr, asText, cartLineId, sanitizeCartLine,
   resolveDisplayPrice, linePrice, discountOf, isDiscounted, discountPercent,
   PLACEHOLDER_IMAGE, ORDER_STEPS, STEP_LABELS, PAYMENT_METHODS,
@@ -1143,6 +1144,35 @@ function CartView({ lines, onBack, onUpdate, onRemove, onCheckout, onShop, total
 function CheckoutForm({ lines, subtotal, selectedBranch, user, addressBook, notify, onDone, onBack }) {
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState("");
+  const [couponCode, setCouponCode] = useState("");
+  const [giftCardCode, setGiftCardCode] = useState("");
+  const [quote, setQuote] = useState(null);
+  const [quoting, setQuoting] = useState(false);
+
+  // Offers quote themselves as you type (3+ chars): the server prices the
+  // same codes again at placement, so a quote can never become a promise.
+  useEffect(() => {
+    const coupon = couponCode.trim();
+    const gift = giftCardCode.trim();
+    if ((coupon && coupon.length < 3) || (gift && gift.length < 3)) return;
+    if (!coupon && !gift) { setQuote(null); return; }
+    let live = true;
+    setQuoting(true);
+    quoteCheckout({
+      subtotal,
+      couponCode: coupon,
+      giftCardCode: gift,
+      customerEmail: (user?.email || "").toLowerCase(),
+    }).then(({ ok, data }) => {
+      if (!live) return;
+      setQuoting(false);
+      if (ok && data.success) setQuote(data);
+      else setQuote(null);
+    });
+    return () => { live = false; };
+  }, [couponCode, giftCardCode, subtotal, user?.email]);
+
+  const effectiveTotal = quote ? quote.total : subtotal;
   const [addrModalOpen, setAddrModalOpen] = useState(false);
   const appliedDefaultRef = useRef(false);
   const [form, setForm] = useState({
@@ -1213,6 +1243,8 @@ function CheckoutForm({ lines, subtotal, selectedBranch, user, addressBook, noti
       customerName: form.customerName.trim(),
       customerEmail: (user?.email || "").trim().toLowerCase(),
       customerMobile: form.customerMobile.trim(),
+      couponCode: couponCode.trim(),
+      giftCardCode: giftCardCode.trim(),
       shippingAddress: {
         pincode: form.pincode.trim(),
         address: form.address.trim(),
@@ -1329,6 +1361,39 @@ function CheckoutForm({ lines, subtotal, selectedBranch, user, addressBook, noti
           </section>
 
           <section className="sf-section">
+            <h3><FiGift /> Offers</h3>
+            <div className="sf-row-2">
+              <div className="sf-field">
+                <label>Coupon code</label>
+                <input
+                  className="sf-input"
+                  value={couponCode}
+                  onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                  placeholder="e.g. DIWALI20"
+                />
+                {quote?.couponError && <p className="sf-field-error">{quote.couponError}</p>}
+                {quote?.coupon && !quote.couponError && (
+                  <p className="muted small">✓ {quote.coupon.code} applied</p>
+                )}
+              </div>
+              <div className="sf-field">
+                <label>Gift card code</label>
+                <input
+                  className="sf-input"
+                  value={giftCardCode}
+                  onChange={(e) => setGiftCardCode(e.target.value.toUpperCase())}
+                  placeholder="e.g. GIFT-ABC123"
+                />
+                {quote?.giftError && <p className="sf-field-error">{quote.giftError}</p>}
+                {quote?.giftCard && !quote.giftError && (
+                  <p className="muted small">✓ {quote.giftCard.code} applied</p>
+                )}
+              </div>
+            </div>
+            {quoting && <p className="muted small">Checking offers…</p>}
+          </section>
+
+          <section className="sf-section">
             <h3><FiCreditCard /> Payment method</h3>
             {PAYMENT_METHODS.map((m) => (
               <label key={m.id} className={`sf-radio ${form.paymentMethod === m.id ? "on" : ""}`}>
@@ -1349,7 +1414,7 @@ function CheckoutForm({ lines, subtotal, selectedBranch, user, addressBook, noti
 
           {err && <div className="sf-err">{err}</div>}
           <button className="sf-btn green place" disabled={sending}>
-            {sending ? "Placing order…" : `Place order — ${inr(subtotal)}`}
+            {sending ? "Placing order…" : `Place order — ${inr(effectiveTotal)}`}
           </button>
         </form>
 
@@ -1362,8 +1427,14 @@ function CheckoutForm({ lines, subtotal, selectedBranch, user, addressBook, noti
             </div>
           ))}
           <div className="sf-totals-row"><span>Subtotal</span><span>{inr(subtotal)}</span></div>
+          {quote && quote.discount > 0 && (
+            <div className="sf-totals-row"><span>Coupon {quote.coupon ? `(${quote.coupon.code})` : ""}</span><span className="ok-text">−{inr(quote.discount)}</span></div>
+          )}
+          {quote && quote.giftAmount > 0 && (
+            <div className="sf-totals-row"><span>Gift card {quote.giftCard ? `(${quote.giftCard.code})` : ""}</span><span className="ok-text">−{inr(quote.giftAmount)}</span></div>
+          )}
           <div className="sf-totals-row"><span>Delivery</span><span className="ok-text">Free</span></div>
-          <div className="sf-totals-row grand"><span>Total</span><span>{inr(subtotal)}</span></div>
+          <div className="sf-totals-row grand"><span>Total</span><span>{inr(effectiveTotal)}</span></div>
           {selectedBranch && (
             <div className="sf-checkout-store">
               <FiShoppingBag /> Fulfilled by <b>{selectedBranch.name}</b>
@@ -2132,35 +2203,58 @@ function AddressesPanel({ addressBook, notify, onBack }) {
 }
 
 function GiftCardsPanel({ onBack }) {
-  const [code, setCode] = useState("");
+  const [cards, setCards] = useState([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let live = true;
+    getMyGiftCards().then(({ ok, data }) => {
+      if (!live) return;
+      setLoading(false);
+      if (ok && data.success) setCards(data.giftCards || []);
+    });
+    return () => { live = false; };
+  }, []);
+
+  const fmtDate = (v) =>
+    v ? new Date(v).toLocaleDateString("en-IN", { dateStyle: "medium" }) : "No expiry";
+
   return (
     <div className="sf-auth-wrap">
       <div className="sf-page-title">
         <button className="sf-link" onClick={onBack}><FiChevronLeft /> Back to shop</button>
         <h2>E-Gift Cards</h2>
       </div>
-      <div className="sf-auth">
-        <div className="sf-field">
-          <label>Redeem a gift card</label>
-          <input
-            className="sf-input"
-            value={code}
-            onChange={(e) => setCode(e.target.value)}
-            placeholder="Enter gift card code"
-          />
+      {loading ? (
+        <div className="sf-lines">
+          {Array.from({ length: 2 }).map((_, i) => (
+            <div className="sf-line" key={i}><div className="sf-line-mid"><div className="sk sk-l" /></div></div>
+          ))}
         </div>
-        <button
-          className="sf-btn green"
-          style={{ width: "100%", marginTop: 12, padding: 12 }}
-          disabled={!code.trim()}
-        >
-          Redeem
-        </button>
-        <div className="sf-empty" style={{ padding: "24px 0 0" }}>
+      ) : cards.length === 0 ? (
+        <div className="sf-empty">
           <FiGift size={30} />
-          <p>You have no gift cards yet.</p>
+          <p>No gift cards yet — enter a card code at checkout to spend it.</p>
         </div>
-      </div>
+      ) : (
+        <div className="sf-lines">
+          {cards.map((c) => (
+            <div className="sf-line" key={c.uuid}>
+              <div className="sf-line-mid">
+                <div className="sf-line-name"><FiGift /> {c.code}</div>
+                <div className="muted">
+                  Balance {inr(c.balance)} of {inr(c.initial_amount)} · {fmtDate(c.expires_at)}
+                  {c.status !== "ACTIVE" ? ` · ${c.status.toLowerCase()}` : ""}
+                </div>
+              </div>
+              <div className="sf-line-total">{inr(c.balance)}</div>
+            </div>
+          ))}
+          <p className="muted small" style={{ padding: "0 4px" }}>
+            Enter a card code in the Offers step at checkout to spend it.
+          </p>
+        </div>
+      )}
     </div>
   );
 }

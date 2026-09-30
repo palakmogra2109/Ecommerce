@@ -218,7 +218,7 @@ export default function BranchDashboard() {
                   {can("branches.update") && (
                     <td>
                       <button
-                        className="sf-btn danger"
+                        className="filament-btn filament-btn-danger"
                         disabled={busy}
                         onClick={() => handleRemove(u.uuid)}
                       >Unlink</button>

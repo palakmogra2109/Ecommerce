@@ -26,6 +26,8 @@ import Attributes from "./pages/Attributes";
 import AttributeView from "./pages/AttributeView";
 import Coupons from "./pages/Coupons";
 import CouponView from "./pages/CouponView";
+import GiftCards from "./pages/GiftCards";
+import GiftCardView from "./pages/GiftCardView";
 import Reviews from "./pages/Reviews";
 import Banners from "./pages/Banners";
 import BannerView from "./pages/BannerView";
@@ -37,6 +39,7 @@ import CategoriesForm from "./components/CategoriesForm";
 import BrandForm from "./components/BrandForm";
 import AttributeForm from "./components/AttributeForm";
 import CouponForm from "./components/CouponForm";
+import GiftCardForm from "./components/GiftCardForm";
 import BannerForm from "./components/BannerForm";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
@@ -142,6 +145,16 @@ function CouponEditRoute() {
   }
 
   return <CouponForm couponId={id} />;
+}
+
+function GiftCardEditRoute() {
+  const { id } = useParams();
+
+  if (!id || id === "undefined" || id === "null") {
+    return <Navigate to="/gift-cards" replace />;
+  }
+
+  return <GiftCardForm giftCardId={id} />;
 }
 
 function BannerEditRoute() {
@@ -464,6 +477,26 @@ export default function App() {
           path="/coupons/:id/edit"
           element={
             adminGuard("coupons.update", "Update Coupons", <CouponEditRoute />)
+          }
+        />
+
+        {/* Gift Cards */}
+        <Route
+          path="/gift-cards"
+          element={adminGuard("gift_cards.view", "Gift Cards", <GiftCards />)}
+        />
+        <Route
+          path="/gift-cards/new"
+          element={adminGuard("gift_cards.create", "Issue Gift Cards", <GiftCardForm />)}
+        />
+        <Route
+          path="/gift-cards/:id"
+          element={adminGuard("gift_cards.view", "Gift Cards", <GiftCardView />)}
+        />
+        <Route
+          path="/gift-cards/:id/edit"
+          element={
+            adminGuard("gift_cards.update", "Update Gift Cards", <GiftCardEditRoute />)
           }
         />
 
