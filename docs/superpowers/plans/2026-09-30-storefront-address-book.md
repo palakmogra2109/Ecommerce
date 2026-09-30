@@ -565,6 +565,17 @@ grep -n "updates.address\|address," /var/www/html/Node-JS/Ecommerce/backend/lib/
 
 Expected: The pre-existing update path still writes `customers.address`; the new code only reads/writes `customers.addresses`.
 
+Also verify the serialized-write contract:
+
+```bash
+grep -n "FOR UPDATE" /var/www/html/Node-JS/Ecommerce/backend/lib/models/customer.js
+grep -n "BEGIN" /var/www/html/Node-JS/Ecommerce/backend/lib/models/customer.js
+grep -n "COMMIT" /var/www/html/Node-JS/Ecommerce/backend/lib/models/customer.js
+grep -n "ROLLBACK" /var/www/html/Node-JS/Ecommerce/backend/lib/models/customer.js
+```
+
+Expected: Each command finds the address-book transaction statements added in this task.
+
 - [ ] **Step 3: Run the backend unit suite.**
 
 Run:
@@ -2379,9 +2390,10 @@ Using logged-in and logged-out sessions, verify:
   2. Login imports legacy `sf_addresses` only when the server book is empty, then clears that key.
   3. Add, edit, set-default, delete, and tenth/eleventh-address behavior all return the full updated book.
   4. Search suggestions, current-location reverse lookup, denied geolocation permission, and Nominatim outage messaging all behave per the spec.
-  5. Selecting an address changes the shown product and store results.
+  5. Selecting an address changes the shown product and store results. Inspect the product/branch request to confirm that an address without coordinates sends pincode only, with no `NaN`, empty coordinate, or malformed pincode parameter.
   6. Checkout prefill fills recipient, phone, address, city, state, and pincode.
   7. An admin editing the legacy customer `address` leaves the new `addresses` array intact.
+  8. In two logged-in tabs, save two different addresses at nearly the same time and reload both tabs; both addresses must persist.
 
 - [ ] **Step 6: Commit only if verification required a fix.**
 
