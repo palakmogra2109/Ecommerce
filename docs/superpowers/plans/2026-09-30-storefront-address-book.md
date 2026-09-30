@@ -143,8 +143,11 @@ git commit -m "feat: add additive customer address-book column"
   - `createAddressEntry(book: SavedAddress[], input: unknown, now?: string): { address?: SavedAddress; error?: string }`
   - `updateAddressEntry(book: SavedAddress[], id: string, patch: unknown): { addresses?: SavedAddress[]; error?: string }`
   - `deleteAddressEntry(book: SavedAddress[], id: string): SavedAddress[]`
-  - `mergeClaimedAddresses(book: SavedAddress[], claimed: unknown, now?: string): { addresses: SavedAddress[]; claimed: number }`
+  - `validateClaimedAddress(raw: unknown, fallback?: { name?: string; phone?: string }): { address?: SavedAddressFields; errors?: Record<string,string> }`
+  - `mergeClaimedAddresses(book: SavedAddress[], claimed: unknown, now?: string, fallback?: { name?: string; phone?: string }): { addresses: SavedAddress[]; claimed: number }`
   - `MAX_SAVED_ADDRESSES = 10`
+
+`NewAddressFields` is `SavedAddress` without `id`, `createdAt`, or `updatedAt`. `ClaimedAddressFields` is `NewAddressFields` without `isDefault`, because the merge function assigns default status itself.
 
 `SavedAddress` has this exact shape:
 
@@ -242,16 +245,17 @@ test("deleting the default promotes the next remaining address", () => {
   assert.equal(addresses[0].isDefault, true);
 });
 
-test("the legacy localStorage claim normalizes entries and enforces the cap", () => {
+test("legacy geography-only records are claimed with the account fallback", () => {
   const claimed = [
     { address: "12, Nehru Road", city: "Pune", state: "Maharashtra", pincode: "411001" },
     { line1: "", city: "Pune", state: "Maharashtra", postalCode: "411001" },
   ];
-  const result = mergeClaimedAddresses([], claimed, "2026-09-30T00:00:00.000Z");
+  const result = mergeClaimedAddresses([], claimed, "2026-09-30T00:00:00.000Z", { name: "Anita Sharma" });
   assert.equal(result.claimed, 1);
   assert.equal(result.addresses.length, 1);
   assert.equal(result.addresses[0].source, "claimed");
   assert.equal(result.addresses[0].postalCode, "411001");
+  assert.equal(result.addresses[0].recipient, "Anita Sharma");
 });
 
 test("address pincode and phone validation reject malformed values", () => {
@@ -394,37 +398,49 @@ export function deleteAddressEntry(book, id) {
   return remaining.map((entry, index) => ({ ...entry, isDefault: index === 0 }));
 }
 
-export function mergeClaimedAddresses(book, claimed, now = new Date().toISOString()) {
+export function validateClaimedAddress(raw = {}, fallback = {}) {
+  const legacy = raw && typeof raw === "object" ? raw : {};
+  const phoneDigits = text(legacy.phone || legacy.mobile || fallback.phone).replace(/\D/g, "").slice(-10);
+  const candidate = {
+    label: optionalText(legacy.label, 40) || "Home",
+    recipient: optionalText(legacy.recipient || legacy.name || fallback.name, 120) || "Saved address",
+    phone: phoneDigits,
+    line1: optionalText(legacy.line1 || legacy.address),
+    line2: optionalText(legacy.line2),
+    landmark: optionalText(legacy.landmark),
+    city: optionalText(legacy.city, 120),
+    state: optionalText(legacy.state, 120),
+    country: optionalText(legacy.country, 120) || "India",
+    postalCode: text(legacy.postalCode || legacy.pincode).replace(/\D/g, ""),
+    latitude: coordinate(legacy.latitude),
+    longitude: coordinate(legacy.longitude),
+    source: "claimed",
+  };
+  const errors = {};
+  if (!candidate.line1) errors.line1 = "Enter house, street, or area.";
+  if (!candidate.city) errors.city = "Enter city.";
+  if (!candidate.state) errors.state = "Enter state.";
+  if (!/^\d{6}$/.test(candidate.postalCode)) errors.postalCode = "Enter a 6-digit pincode.";
+  if (candidate.phone && validateMobile(candidate.phone).ok !== true) errors.phone = "Enter a 10-digit mobile number.";
+  if (Object.keys(errors).length > 0) return { errors };
+  return { address: candidate };
+}
+
+export function mergeClaimedAddresses(book, claimed, now = new Date().toISOString(), fallback = {}) {
   const merged = normalizeAddressBook(book);
   if (!Array.isArray(claimed)) return { addresses: merged, claimed: 0 };
   let claimedCount = 0;
   for (const raw of claimed) {
     if (merged.length >= MAX_SAVED_ADDRESSES) break;
-    const legacy = raw && typeof raw === "object" ? raw : {};
-    const result = createAddressEntry(
-      merged,
-      {
-        label: legacy.label,
-        recipient: legacy.recipient || legacy.name,
-        phone: legacy.phone || legacy.mobile,
-        line1: legacy.line1 || legacy.address,
-        line2: legacy.line2,
-        landmark: legacy.landmark,
-        city: legacy.city,
-        state: legacy.state,
-        country: legacy.country || "India",
-        postalCode: legacy.postalCode || legacy.pincode,
-        latitude: legacy.latitude,
-        longitude: legacy.longitude,
-        isDefault: merged.length === 0,
-        source: "claimed",
-      },
-      now
+    const { address, errors } = validateClaimedAddress(raw, fallback);
+    if (errors) continue;
+    merged.push(
+      stamp(
+        { ...address, id: randomUUID(), isDefault: merged.length === 0 },
+        now
+      )
     );
-    if (result.address) {
-      merged.push(result.address);
-      claimedCount += 1;
-    }
+    claimedCount += 1;
   }
   return { addresses: applySingleDefault(merged), claimed: claimedCount };
 }
@@ -456,12 +472,12 @@ git commit -m "feat: add pure customer address-book rules and tests"
 - Consumes: `normalizeAddressBook` and related helpers from `backend/lib/addressBook.js`.
 - Produces:
   - `Customer.getAddressBookByEmail(email: string): Promise<SavedAddress[]>`
-  - `Customer.replaceAddressBookByEmail(email: string, addresses: SavedAddress[], identity?: { name?: string }): Promise<SavedAddress[]>`
-  - `replaceAddressBookByEmail` uses `SELECT ... FOR UPDATE`, creates the customer row when absent, tolerates Postgres unique-violation code `23505`, and returns the normalized persisted array.
+  - `Customer.mutateAddressBookByEmail(email: string, mutate: (existing: SavedAddress[], context: { mobile: string | null }) => { addresses?: SavedAddress[]; claimed?: number; error?: string; errors?: Record<string,string>; status?: number }, identity?: { name?: string }): Promise<{ addresses?: SavedAddress[]; claimed?: number; error?: string; errors?: Record<string,string>; status?: number }>`
+  - The mutation callback runs only after `SELECT ... FOR UPDATE`, so concurrent browser tabs cannot read stale books, calculate divergent arrays, and overwrite each other.
 
 - [ ] **Step 1: Extend the customer model without touching `customers.address`.**
 
-Add these methods after `findByEmail`:
+Add `getAddressBookByEmail` and `mutateAddressBookByEmail` after `findByEmail`:
 
 ```js
 async getAddressBookByEmail(email) {
@@ -474,17 +490,17 @@ async getAddressBookByEmail(email) {
   return normalizeAddressBook(result.rows[0]?.addresses);
 },
 
-async replaceAddressBookByEmail(email, addresses, identity = {}) {
+async mutateAddressBookByEmail(email, mutate, identity = {}) {
   const normalizedEmail = (email ?? "").toLowerCase().trim();
   if (!normalizedEmail) throw new Error("A customer email is required");
-  const payload = JSON.stringify(normalizeAddressBook(addresses));
+  if (typeof mutate !== "function") throw new Error("An address-book mutation is required");
   const name = (identity.name ?? "").trim() || normalizedEmail;
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
     let row = (
       await client.query(
-        `SELECT id, addresses FROM ${TABLE} WHERE email = $1 FOR UPDATE`,
+        `SELECT id, mobile, addresses FROM ${TABLE} WHERE email = $1 FOR UPDATE`,
         [normalizedEmail]
       )
     ).rows[0];
@@ -493,33 +509,37 @@ async replaceAddressBookByEmail(email, addresses, identity = {}) {
         row = (
           await client.query(
             `INSERT INTO ${TABLE} (name, email, mobile, address, addresses, status)
-             VALUES ($1, $2, NULL, '{}', $3, 'ACTIVE')
-             RETURNING id, addresses`,
-            [name, normalizedEmail, payload]
+             VALUES ($1, $2, NULL, '{}', '[]', 'ACTIVE')
+             RETURNING id, mobile, addresses`,
+            [name, normalizedEmail]
           )
         ).rows[0];
       } catch (error) {
         if (error?.code !== "23505") throw error;
         row = (
           await client.query(
-            `SELECT id, addresses FROM ${TABLE} WHERE email = $1 FOR UPDATE`,
+            `SELECT id, mobile, addresses FROM ${TABLE} WHERE email = $1 FOR UPDATE`,
             [normalizedEmail]
           )
         ).rows[0];
       }
-    } else {
-      row = (
-        await client.query(
-          `UPDATE ${TABLE}
-           SET addresses = $1::jsonb, updated_at = now()
-           WHERE id = $2
-           RETURNING id, addresses`,
-          [payload, row.id]
-        )
-      ).rows[0];
     }
+    const mutation = await mutate(normalizeAddressBook(row?.addresses), { mobile: row?.mobile ?? null });
+    if (!mutation || mutation.error || !Array.isArray(mutation.addresses)) {
+      await client.query("ROLLBACK");
+      return mutation && mutation.error ? mutation : { error: "Could not save this address." };
+    }
+    const saved = (
+      await client.query(
+        `UPDATE ${TABLE}
+         SET addresses = $1::jsonb, updated_at = now()
+         WHERE id = $2
+         RETURNING addresses`,
+        [JSON.stringify(normalizeAddressBook(mutation.addresses)), row.id]
+      )
+    ).rows[0];
     await client.query("COMMIT");
-    return normalizeAddressBook(row?.addresses);
+    return { ...mutation, addresses: normalizeAddressBook(saved?.addresses) };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
@@ -568,7 +588,7 @@ git commit -m "feat: persist customer address books transactionally"
 - Create: `backend/app/api/store/addresses/route.js`
 
 **Interfaces:**
-- Consumes: `authenticate()` from `backend/lib/authorization.js`, `Customer.getAddressBookByEmail`, `Customer.replaceAddressBookByEmail`, and pure helpers from `backend/lib/addressBook.js`.
+- Consumes: `authenticate()` from `backend/lib/authorization.js`, `Customer.getAddressBookByEmail`, `Customer.mutateAddressBookByEmail`, and pure helpers from `backend/lib/addressBook.js`.
 - Produces:
   - `GET /api/store/addresses -> { success: true, addresses }`
   - `POST /api/store/addresses` accepts either `{ claim: [...] }` or one address object and returns `{ success: true, addresses, claimed? }`
@@ -619,20 +639,29 @@ export async function POST(request) {
     const auth = await authenticate();
     if (!auth.ok) return auth.response;
     const body = await request.json().catch(() => ({}));
-    const existing = await Customer.getAddressBookByEmail(auth.user.email);
-    if (Array.isArray(body.claim)) {
-      const { addresses, claimed } = mergeClaimedAddresses(existing, body.claim);
-      const saved = await Customer.replaceAddressBookByEmail(auth.user.email, addresses, { name: auth.user.name });
-      return success(saved, { claimed }, 201);
-    }
-    const { address, error, errors } = createAddressEntry(existing, body);
-    if (error) return Response.json({ success: false, message: error, errors }, { status: 400, headers: corsHeaders() });
-    const saved = await Customer.replaceAddressBookByEmail(
+    const result = await Customer.mutateAddressBookByEmail(
       auth.user.email,
-      [...existing, address],
+      (existing, context) => {
+        if (Array.isArray(body.claim)) {
+          const merged = mergeClaimedAddresses(existing, body.claim, new Date().toISOString(), {
+            name: auth.user.name,
+            phone: context.mobile,
+          });
+          return { addresses: merged.addresses, claimed: merged.claimed };
+        }
+        const created = createAddressEntry(existing, body);
+        if (created.error) return { error: created.error, errors: created.errors, status: 400 };
+        return { addresses: [...existing, created.address] };
+      },
       { name: auth.user.name }
     );
-    return success(saved, {}, 201);
+    if (result.error) {
+      return Response.json(
+        { success: false, message: result.error, errors: result.errors },
+        { status: result.status || 400, headers: corsHeaders() }
+      );
+    }
+    return success(result.addresses, result.claimed == null ? {} : { claimed: result.claimed }, 201);
   } catch (error) {
     console.error("Create storefront address error:", error);
     return failure("Could not save this address.", 500);
@@ -645,14 +674,28 @@ export async function PATCH(request) {
     if (!auth.ok) return auth.response;
     const body = await request.json().catch(() => ({}));
     if (!body?.id || typeof body.id !== "string") return failure("An address id is required.", 400);
-    const existing = await Customer.getAddressBookByEmail(auth.user.email);
-    const { addresses, error, errors } = updateAddressEntry(existing, body.id, body);
-    if (error) {
-      const status = error === "Address not found." ? 404 : 400;
-      return Response.json({ success: false, message: error, errors }, { status, headers: corsHeaders() });
+    const result = await Customer.mutateAddressBookByEmail(
+      auth.user.email,
+      (existing) => {
+        const updated = updateAddressEntry(existing, body.id, body);
+        if (updated.error) {
+          return {
+            error: updated.error,
+            errors: updated.errors,
+            status: updated.error === "Address not found." ? 404 : 400,
+          };
+        }
+        return { addresses: updated.addresses };
+      },
+      { name: auth.user.name }
+    );
+    if (result.error) {
+      return Response.json(
+        { success: false, message: result.error, errors: result.errors },
+        { status: result.status || 400, headers: corsHeaders() }
+      );
     }
-    const saved = await Customer.replaceAddressBookByEmail(auth.user.email, addresses, { name: auth.user.name });
-    return success(saved);
+    return success(result.addresses);
   } catch (error) {
     console.error("Update storefront address error:", error);
     return failure("Could not update this address.", 500);
@@ -665,14 +708,23 @@ export async function DELETE(request) {
     if (!auth.ok) return auth.response;
     const body = await request.json().catch(() => ({}));
     if (!body?.id || typeof body.id !== "string") return failure("An address id is required.", 400);
-    const existing = await Customer.getAddressBookByEmail(auth.user.email);
-    if (!existing.some((entry) => entry.id === body.id)) return failure("Address not found.", 404);
-    const saved = await Customer.replaceAddressBookByEmail(
+    const result = await Customer.mutateAddressBookByEmail(
       auth.user.email,
-      deleteAddressEntry(existing, body.id),
+      (existing) => {
+        if (!existing.some((entry) => entry.id === body.id)) {
+          return { error: "Address not found.", status: 404 };
+        }
+        return { addresses: deleteAddressEntry(existing, body.id) };
+      },
       { name: auth.user.name }
     );
-    return success(saved);
+    if (result.error) {
+      return Response.json(
+        { success: false, message: result.error },
+        { status: result.status || 400, headers: corsHeaders() }
+      );
+    }
+    return success(result.addresses);
   } catch (error) {
     console.error("Delete storefront address error:", error);
     return failure("Could not delete this address.", 500);
@@ -830,9 +882,7 @@ async listServingBranches({ pincode = "", lat = 0, lng = 0, limit = 100 } = {}) 
     params,
     branchIdColumn: "b.id",
   });
-  for (const condition of locationConditions) {
-    conditions.push(condition.replaceAll("branches nb", "branches nb").replace("nb.id = b.id", "nb.id = b.id"));
-  }
+  conditions.push(...locationConditions);
   const safeLimit = Math.min(100, Math.max(1, Number(limit) || 100));
   params.push(safeLimit);
   const result = await pool.query(
@@ -1223,7 +1273,7 @@ git commit -m "feat: add cached Nominatim search and reverse proxy"
   - `geocodeReverse({ lat, lng }): Promise<{ ok, data }>`
   - `getStoreBranches({ limit?, pincode?, lat?, lng? }): Promise<{ ok, data }>`
   - `getStoreProducts({ page?, limit?, search?, category?, branchId?, pincode?, lat?, lng? }): Promise<{ ok, data }>`
-  - `useAddressBook({ user, notify }): { addresses, selectedAddress, selectedAddressId, loading, error, refresh, selectAddress, saveAddress, editAddress, removeAddress, claimLegacyAddresses }`
+  - `useAddressBook({ user, notify }): { addresses, selectedAddress, selectedAddressId, loading, error, refresh, selectAddress, saveAddress, editAddress, removeAddress, claimLegacyAddresses(loginUser?) }`
 
 - [ ] **Step 1: Extend the storefront service.**
 
@@ -1325,8 +1375,8 @@ export default function useAddressBook({ user, notify }) {
   const [error, setError] = useState("");
   const abortRef = useRef(null);
 
-  const refresh = useCallback(async () => {
-    if (!user?.email) {
+  const loadAddresses = useCallback(async (email) => {
+    if (!email) {
       setAddresses([]);
       setSelectedAddressId(null);
       return [];
@@ -1336,7 +1386,7 @@ export default function useAddressBook({ user, notify }) {
     abortRef.current = controller;
     setLoading(true);
     setError("");
-    const { ok, data } = await getAddresses();
+    const { ok, data } = await safeRequest(getAddresses(), "Could not load saved addresses.");
     if (controller.signal.aborted) return [];
     if (!ok || !data.success) {
       setError(data.message || "Could not load saved addresses.");
@@ -1352,7 +1402,13 @@ export default function useAddressBook({ user, notify }) {
     });
     setLoading(false);
     return next;
-  }, [user?.email]);
+  }, []);
+
+  const refresh = useCallback(() => loadAddresses(user?.email), [loadAddresses, user?.email]);
+
+  useEffect(() => {
+    setSelectedAddressId(readJSON(selectionKey, null));
+  }, [selectionKey]);
 
   useEffect(() => {
     refresh();
@@ -1368,14 +1424,27 @@ export default function useAddressBook({ user, notify }) {
     [addresses, selectedAddressId]
   );
 
+  async function safeRequest(promise, fallbackMessage) {
+    try {
+      return await promise;
+    } catch {
+      return { ok: false, data: { message: fallbackMessage } };
+    }
+  }
+
   async function mutate(promise, successMessage) {
-    const { ok, data } = await promise;
+    const { ok, data } = await safeRequest(promise, "Could not save this address.");
     if (!ok || !data.success) {
       notify(data.message || "Could not save this address.");
       return null;
     }
     const next = Array.isArray(data.addresses) ? data.addresses : [];
     setAddresses(next);
+    setSelectedAddressId((current) => {
+      if (current && next.some((entry) => entry.id === current)) return current;
+      const fallback = next.find((entry) => entry.isDefault) || next[0];
+      return fallback ? fallback.id : null;
+    });
     if (successMessage) notify(successMessage);
     return next;
   }
@@ -1385,17 +1454,18 @@ export default function useAddressBook({ user, notify }) {
   const editAddress = useCallback((id, patch) => mutate(updateAddress(id, patch), "Address updated."), [notify]);
   const removeAddress = useCallback((id) => mutate(deleteAddress(id), "Address deleted."), [notify]);
 
-  const claimLegacyAddresses = useCallback(async () => {
+  const claimLegacyAddresses = useCallback(async (loginUser) => {
+    const email = loginUser?.email || user?.email;
     let legacy = [];
     try {
       legacy = JSON.parse(localStorage.getItem("sf_addresses")) || [];
     } catch {
       legacy = [];
     }
-    if (!user?.email || !Array.isArray(legacy) || legacy.length === 0) return 0;
-    const current = await refresh();
+    if (!email || !Array.isArray(legacy) || legacy.length === 0) return 0;
+    const current = await loadAddresses(email);
     if (current.length > 0) return 0;
-    const { ok, data } = await claimAddresses(legacy);
+    const { ok, data } = await safeRequest(claimAddresses(legacy), "Could not import saved addresses.");
     if (ok && data.success) {
       const next = Array.isArray(data.addresses) ? data.addresses : [];
       setAddresses(next);
@@ -1409,7 +1479,7 @@ export default function useAddressBook({ user, notify }) {
     }
     notify(data.message || "Could not import saved addresses.");
     return 0;
-  }, [notify, refresh, user?.email]);
+  }, [loadAddresses, notify, user?.email]);
 
   return {
     addresses,
@@ -1457,7 +1527,7 @@ git commit -m "feat: add storefront address-book services and hook"
 - Produces:
   - `<LocationChip address loading onOpen />`
   - `<AddressBookModal open addressBook user onSelect onClose notify />`
-  - `<AddressForm initial suggestionsBusy suggestions onSearchSuggestion onUseCurrentLocation saving serverErrors onCancel onSubmit />`
+  - `<AddressForm initial saving serverErrors notify onCancel onSubmit />`
   - New `.sf-location-*` and `.sf-address-*` styles and a `max-width: 640px` responsive rule.
 
 - [ ] **Step 1: Create the header chip.**
@@ -1481,9 +1551,13 @@ export default function LocationChip({ address, loading, onOpen }) {
 
 - [ ] **Step 2: Create the shared address form.**
 
+The form owns Nominatim search and current-location lookup, so the modal and
+full-page address book share exactly one implementation.
+
 ```jsx
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { validatePhone } from "../../utils/validation";
+import { geocodeReverse, geocodeSearch } from "../../services/storefront";
 
 const LABELS = ["Home", "Work", "Other"];
 const EMPTY = {
@@ -1502,33 +1576,110 @@ const EMPTY = {
   isDefault: false,
 };
 
-export default function AddressForm({
-  initial,
-  searchText,
-  suggestions,
-  suggestionsBusy,
-  onSearchText,
-  onChooseSuggestion,
-  onUseCurrentLocation,
-  locating,
-  saving,
-  serverErrors,
-  onCancel,
-  onSubmit,
-}) {
+export default function AddressForm({ initial, saving, serverErrors, notify, onCancel, onSubmit }) {
   const [form, setForm] = useState({ ...EMPTY, ...(initial || {}) });
   const [errors, setErrors] = useState({});
+  const [searchText, setSearchText] = useState("");
+  const [suggestions, setSuggestions] = useState([]);
+  const [suggestionsBusy, setSuggestionsBusy] = useState(false);
+  const [locating, setLocating] = useState(false);
+  const searchAbort = useRef(null);
 
   useEffect(() => {
     setForm({ ...EMPTY, ...(initial || {}) });
     setErrors({});
   }, [initial?.id]);
 
+  useEffect(() => {
+    if (searchText.trim().length < 3) {
+      setSuggestions([]);
+      setSuggestionsBusy(false);
+      return;
+    }
+    searchAbort.current?.abort();
+    const controller = new AbortController();
+    searchAbort.current = controller;
+    setSuggestionsBusy(true);
+    const timer = setTimeout(async () => {
+      let response;
+      try {
+        response = await geocodeSearch(searchText.trim());
+      } catch {
+        response = { ok: false, data: { message: "Location search is temporarily unavailable." } };
+      }
+      if (controller.signal.aborted) return;
+      setSuggestionsBusy(false);
+      if (!response.ok || !response.data.success) {
+        notify(response.data.message || "Location search is temporarily unavailable.");
+        setSuggestions([]);
+        return;
+      }
+      setSuggestions(Array.isArray(response.data.results) ? response.data.results : []);
+    }, 350);
+    return () => {
+      clearTimeout(timer);
+      controller.abort();
+    };
+  }, [notify, searchText]);
+
   const set = (key) => (event) => {
     const value = event.target.value;
     setForm((current) => ({ ...current, [key]: value }));
     setErrors((current) => ({ ...current, [key]: "" }));
   };
+
+  function chooseSuggestion(suggestion) {
+    setForm((current) => ({
+      ...current,
+      line1: suggestion.line1 || current.line1,
+      line2: suggestion.line2 || current.line2,
+      city: suggestion.city || current.city,
+      state: suggestion.state || current.state,
+      postalCode: suggestion.postalCode || current.postalCode,
+      latitude: Number.isFinite(Number(suggestion.latitude)) ? Number(suggestion.latitude) : current.latitude,
+      longitude: Number.isFinite(Number(suggestion.longitude)) ? Number(suggestion.longitude) : current.longitude,
+    }));
+  }
+
+  function useCurrentLocation() {
+    if (!("geolocation" in navigator)) {
+      notify("Location is unavailable in this browser. Add your address manually.");
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        let response;
+        try {
+          response = await geocodeReverse({ lat: position.coords.latitude, lng: position.coords.longitude });
+        } catch {
+          response = { ok: false, data: { message: "Location search is temporarily unavailable." } };
+        }
+        setLocating(false);
+        if (!response.ok || !response.data.success || !response.data.result) {
+          notify(response.data.message || "Location search is temporarily unavailable.");
+          return;
+        }
+        const result = response.data.result;
+        setForm((current) => ({
+          ...current,
+          line1: result.line1 || current.line1,
+          line2: result.line2 || current.line2,
+          city: result.city || current.city,
+          state: result.state || current.state,
+          postalCode: result.postalCode || current.postalCode,
+          latitude: position.coords.latitude,
+          longitude: position.coords.longitude,
+          source: "geolocation",
+        }));
+      },
+      () => {
+        setLocating(false);
+        notify("Location permission denied — add your address manually.");
+      },
+      { timeout: 10000 }
+    );
+  }
 
   function submit(event) {
     event.preventDefault();
@@ -1548,7 +1699,7 @@ export default function AddressForm({
       recipient: form.recipient.trim(),
       phone: form.phone.trim(),
       line1: form.line1.trim(),
-      line2: form.line1.trim(),
+      line2: form.line2.trim(),
       landmark: form.landmark.trim(),
       city: form.city.trim(),
       state: form.state.trim(),
@@ -1563,12 +1714,12 @@ export default function AddressForm({
     <form className="sf-address-form" onSubmit={submit} noValidate>
       <div className="sf-field">
         <label>Search location</label>
-        <input className="sf-input" value={searchText} onChange={(event) => onSearchText(event.target.value)} placeholder="Search area, landmark, or pincode" />
+        <input className="sf-input" value={searchText} onChange={(event) => setSearchText(event.target.value)} placeholder="Search area, landmark, or pincode" />
         {suggestionsBusy && <p className="muted small">Searching locations…</p>}
         {suggestions.length > 0 && (
           <div className="sf-address-suggestions">
             {suggestions.map((suggestion, index) => (
-              <button type="button" key={`${suggestion.label}-${index}`} onClick={() => onChooseSuggestion(suggestion)}>
+              <button type="button" key={`${suggestion.label}-${index}`} onClick={() => chooseSuggestion(suggestion)}>
                 <strong>{suggestion.city || suggestion.label}</strong>
                 <span>{suggestion.label}</span>
               </button>
@@ -1577,15 +1728,15 @@ export default function AddressForm({
         )}
       </div>
 
-      <button type="button" className="sf-btn sf-address-current" onClick={onUseCurrentLocation} disabled={locating}>
+      <button type="button" className="sf-btn sf-address-current" onClick={useCurrentLocation} disabled={locating}>
         {locating ? "Detecting current location…" : "Use my current location"}
       </button>
 
       <div className="sf-row-2">
         <div className="sf-field">
           <label>Label *</label>
-          <select className="sf-input" value={LABELS.includes(form.label) ? form.label : "Other"} onChange={set("label")}>
-            {LABELS.map((label) => <option key={label} value={label}>{label}</option>)}
+          <select className="sf-input" value={form.label} onChange={set("label")}>
+            {(LABELS.includes(form.label) ? LABELS : [...LABELS, form.label]).map((label) => <option key={label} value={label}>{label}</option>)}
           </select>
         </div>
         <div className="sf-field">
@@ -1654,11 +1805,13 @@ export default function AddressForm({
 
 - [ ] **Step 3: Create the address-book modal.**
 
+The modal filters saved addresses locally. Location search remains inside
+`AddressForm`, so it is not duplicated here.
+
 ```jsx
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { FiCheck, FiMapPin, FiPencil, FiPlus, FiTrash2, FiX } from "react-icons/fi";
 import AddressForm from "./AddressForm";
-import { geocodeReverse, geocodeSearch } from "../../services/storefront";
 
 function formatAddress(entry) {
   return [entry.line1, entry.line2, entry.landmark].filter(Boolean).join(", ");
@@ -1668,14 +1821,10 @@ export default function AddressBookModal({ open, addressBook, user, notify, onSe
   const [tab, setTab] = useState("saved");
   const [editing, setEditing] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [locating, setLocating] = useState(false);
-  const [searchText, setSearchText] = useState("");
-  const [suggestions, setSuggestions] = useState([]);
-  const [suggestionsBusy, setSuggestionsBusy] = useState(false);
-  const searchAbort = useRef(null);
+  const [filterText, setFilterText] = useState("");
 
   const filtered = useMemo(() => {
-    const q = searchText.trim().toLowerCase();
+    const q = filterText.trim().toLowerCase();
     if (!q) return addressBook.addresses;
     return addressBook.addresses.filter((entry) =>
       [entry.label, entry.recipient, entry.line1, entry.line2, entry.city, entry.state, entry.postalCode]
@@ -1683,42 +1832,14 @@ export default function AddressBookModal({ open, addressBook, user, notify, onSe
         .toLowerCase()
         .includes(q)
     );
-  }, [addressBook.addresses, searchText]);
+  }, [addressBook.addresses, filterText]);
 
   useEffect(() => {
     if (!open) return;
     setTab("saved");
     setEditing(null);
-    setSearchText("");
-    setSuggestions([]);
+    setFilterText("");
   }, [open ]);
-
-  useEffect(() => {
-    if (!open || searchText.trim().length < 3) {
-      setSuggestions([]);
-      setSuggestionsBusy(false);
-      return;
-    }
-    searchAbort.current?.abort();
-    const controller = new AbortController();
-    searchAbort.current = controller;
-    setSuggestionsBusy(true);
-    const timer = setTimeout(async () => {
-      const { ok, data } = await geocodeSearch(searchText.trim());
-      if (controller.signal.aborted) return;
-      setSuggestionsBusy(false);
-      if (!ok || !data.success) {
-        notify(data.message || "Location search is temporarily unavailable.");
-        setSuggestions([]);
-        return;
-      }
-      setSuggestions(Array.isArray(data.results) ? data.results : []);
-    }, 350);
-    return () => {
-      clearTimeout(timer);
-      controller.abort();
-    };
-  }, [notify, open, searchText]);
 
   if (!open) return null;
 
@@ -1732,57 +1853,6 @@ export default function AddressBookModal({ open, addressBook, user, notify, onSe
       setEditing(null);
       setTab("saved");
     }
-  }
-
-  function chooseSuggestion(suggestion) {
-    setEditing((current) => ({
-      ...(current || {}),
-      line1: suggestion.line1 || current?.line1 || "",
-      line2: suggestion.line2 || current?.line2 || "",
-      city: suggestion.city || current?.city || "",
-      state: suggestion.state || current?.state || "",
-      postalCode: suggestion.postalCode || current?.postalCode || "",
-      latitude: Number.isFinite(Number(suggestion.latitude)) ? Number(suggestion.latitude) : null,
-      longitude: Number.isFinite(Number(suggestion.longitude)) ? Number(suggestion.longitude) : null,
-    }));
-  }
-
-  async function useCurrentLocation() {
-    if (!("geolocation" in navigator)) {
-      notify("Location is unavailable in this browser. Add your address manually.");
-      return;
-    }
-    setLocating(true);
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { ok, data } = await geocodeReverse({
-          lat: position.coords.latitude,
-          lng: position.coords.longitude,
-        });
-        setLocating(false);
-        if (!ok || !data.success || !data.result) {
-          notify(data.message || "Location search is temporarily unavailable.");
-          return;
-        }
-        setEditing((current) => ({
-          ...(current || {}),
-          line1: data.result.line1 || current?.line1 || "",
-          line2: data.result.line2 || current?.line2 || "",
-          city: data.result.city || current?.city || "",
-          state: data.result.state || current?.state || "",
-          postalCode: data.result.postalCode || current?.postalCode || "",
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          source: "geolocation",
-        }));
-        setTab("add");
-      },
-      () => {
-        setLocating(false);
-        notify("Location permission denied — add your address manually.");
-      },
-      { timeout: 10000 }
-    );
   }
 
   return (
@@ -1805,6 +1875,10 @@ export default function AddressBookModal({ open, addressBook, user, notify, onSe
 
         {tab === "saved" && (
           <div className="sf-address-list">
+            <div className="sf-field">
+              <label>Filter saved addresses</label>
+              <input className="sf-input" value={filterText} onChange={(event) => setFilterText(event.target.value)} placeholder="Search Home, city, or pincode" />
+            </div>
             {addressBook.loading && <p className="muted">Loading saved addresses…</p>}
             {addressBook.error && <p className="sf-err">{addressBook.error}</p>}
             {!addressBook.loading && filtered.length === 0 && (
@@ -1832,14 +1906,8 @@ export default function AddressBookModal({ open, addressBook, user, notify, onSe
         {tab === "add" && (
           <AddressForm
             initial={editing}
-            searchText={searchText}
-            suggestions={suggestions}
-            suggestionsBusy={suggestionsBusy}
-            onSearchText={setSearchText}
-            onChooseSuggestion={chooseSuggestion}
-            onUseCurrentLocation={useCurrentLocation}
-            locating={locating}
             saving={saving}
+            notify={notify}
             onCancel={() => { setEditing(null); setTab("saved"); }}
             onSubmit={handleSubmit}
           />
@@ -1932,27 +2000,30 @@ git commit -m "feat: build delivery-location picker and address form"
 
 - [ ] **Step 1: Wire hook state, modal visibility, and location-aware fetching.**
 
-Apply these behavioral changes:
-
-```jsx
-import LocationChip from "../components/storefront/LocationChip";
-import AddressBookModal from "../components/storefront/AddressBookModal";
-import AddressForm from "../components/storefront/AddressForm";
-import useAddressBook from "../hooks/useAddressBook";
-```
-
-Inside `Storefront()`:
+Declare the hook immediately after `postLoginView`, so it is available to login
+and navigation handlers:
 
 ```jsx
 const addressBook = useAddressBook({ user, notify });
 const [addressModalOpen, setAddressModalOpen] = useState(false);
 const [storeCount, setStoreCount] = useState(null);
+```
+
+Add this helper and derived location object near the cart totals:
+
+```js
+function locationParamsFor(address) {
+  const latitude = Number(address?.latitude);
+  const longitude = Number(address?.longitude);
+  return {
+    pincode: address?.postalCode || "",
+    lat: Number.isFinite(latitude) ? latitude : null,
+    lng: Number.isFinite(longitude) ? longitude : null,
+  };
+}
+
 const selectedAddress = addressBook.selectedAddress;
-const locationParams = {
-  pincode: selectedAddress?.postalCode || "",
-  lat: Number.isFinite(Number(selectedAddress?.latitude)) ? Number(selectedAddress.latitude) : null,
-  lng: Number.isFinite(Number(selectedAddress?.longitude)) ? Number(selectedAddress.longitude) : null,
-};
+const locationParams = locationParamsFor(selectedAddress);
 ```
 
 Change the catalog request to:
@@ -1972,41 +2043,95 @@ getStoreProducts({
 
 Add `selectedAddress?.id`, `selectedAddress?.postalCode`, `selectedAddress?.latitude`, and `selectedAddress?.longitude` to that effect’s dependency array.
 
-Change `loadBranches` to:
+Replace `loadBranches` with a location-aware version:
 
 ```js
-async function loadBranches() {
-  const { ok, data } = await getStoreBranches({
-    limit: 100,
-    pincode: locationParams.pincode,
-    lat: locationParams.lat,
-    lng: locationParams.lng,
-  });
-  if (ok && data.success) {
-    setBranchList(data.branches || []);
-    setStoreCount(Array.isArray(data.branches) ? data.branches.length : 0);
+async function loadBranchesFor(address) {
+  const location = locationParamsFor(address);
+  let response;
+  try {
+    response = await getStoreBranches({
+      limit: 100,
+      pincode: location.pincode,
+      lat: location.lat,
+      lng: location.lng,
+    });
+  } catch {
+    response = { ok: false, data: { message: "Could not load stores." } };
   }
+  if (!response.ok || !response.data.success) {
+    notify(response.data.message || "Could not load stores.");
+    return null;
+  }
+  const branches = Array.isArray(response.data.branches) ? response.data.branches : [];
+  setBranchList(branches);
+  setStoreCount(branches.length);
+  return branches;
+}
+
+async function loadBranches() {
+  return loadBranchesFor(selectedAddress);
 }
 ```
 
-Add:
+Replace `handleAddressSelect` with a version that refreshes compatible stores:
 
 ```js
-function handleAddressSelect(entry) {
+async function handleAddressSelect(entry) {
   addressBook.selectAddress(entry.id);
   setAddressModalOpen(false);
   setPage(1);
-  const count = storeCount == null ? "" : ` — ${storeCount} store${storeCount === 1 ? "" : "s"}`;
-  notify(`Delivering to ${entry.label || "saved address"} · ${entry.city || ""}${count}`);
+  const branches = await loadBranchesFor(entry);
+  if (!branches) {
+    notify(`Delivering to ${entry.label || "saved address"} · ${entry.city || ""}`);
+    return;
+  }
+  if (selectedBranch && !branches.some((branch) => branch.uuid === selectedBranch.uuid)) {
+    setSelectedBranch(null);
+    try {
+      localStorage.removeItem("sf_branch");
+    } catch {}
+  }
+  notify(`Delivering to ${entry.label || "saved address"} · ${entry.city || ""} — ${branches.length} store${branches.length === 1 ? "" : "s"}`);
 }
 ```
 
-Update `handleLogin` to call `addressBook.claimLegacyAddresses()` after setting the user, without blocking navigation if the claim fails.
+Replace `handleLogin` with an explicit-user claim:
+
+```js
+function handleLogin(u) {
+  setUser(u);
+  try { localStorage.setItem("sf_user", JSON.stringify(u)); } catch {}
+  setView(postLoginView || VIEWS.CATALOG);
+  setPostLoginView(null);
+  addressBook.claimLegacyAddresses(u);
+  notify(`Welcome, ${u?.name || u?.email || "back"}!`);
+}
+```
+
+Require login before opening the address modal or full-page address view:
+
+```js
+function openAddressBook() {
+  if (!requireLogin(VIEWS.ADDRESSES, "Please log in to manage saved addresses.")) return;
+  setAddressModalOpen(true);
+}
+
+function goTo(v) {
+  if (v === VIEWS.ADDRESSES && !user) {
+    setShowUserMenu(false);
+    requireLogin(VIEWS.ADDRESSES, "Please log in to manage saved addresses.");
+    return;
+  }
+  setShowUserMenu(false);
+  setView(v);
+}
+```
 
 Place this immediately after the brand button and before `<nav className="sf-nav">`:
 
 ```jsx
-<LocationChip address={selectedAddress} loading={addressBook.loading} onOpen={() => setAddressModalOpen(true)} />
+<LocationChip address={selectedAddress} loading={addressBook.loading} onOpen={openAddressBook} />
 ```
 
 Render this immediately before `</main>`:
@@ -2024,7 +2149,11 @@ Render this immediately before `</main>`:
 
 - [ ] **Step 2: Replace local saved-address behavior in checkout.**
 
-Pass the hook into checkout:
+Change the checkout signature to accept the hook, then pass it in:
+
+```jsx
+function CheckoutForm({ lines, subtotal, selectedBranch, user, addressBook, notify, onDone, onBack }) {
+```
 
 ```jsx
 <CheckoutForm
@@ -2065,7 +2194,71 @@ Change its signature to:
 function AddressesPanel({ addressBook, notify, onBack }) { ... }
 ```
 
-Render the server-backed list with edit/delete/default controls and reuse `AddressForm` for add/edit. Delete every `localStorage.getItem("sf_addresses")` and `localStorage.setItem("sf_addresses", ...)` call from this component.
+Replace the component body with this server-backed implementation. Delete every `localStorage.getItem("sf_addresses")` and `localStorage.setItem("sf_addresses", ...)` call from this component.
+
+```jsx
+function AddressesPanel({ addressBook, notify, onBack }) {
+  const [mode, setMode] = useState("list");
+  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
+
+  async function handleSubmit(payload) {
+    setSaving(true);
+    const saved = editing
+      ? await addressBook.editAddress(editing.id, payload)
+      : await addressBook.saveAddress(payload);
+    setSaving(false);
+    if (saved) {
+      setEditing(null);
+      setMode("list");
+    }
+  }
+
+  return (
+    <div className="sf-auth-wrap">
+      <div className="sf-page-title">
+        <button className="sf-link" onClick={onBack}><FiChevronLeft /> Back to shop</button>
+        <h2>Saved addresses</h2>
+      </div>
+      {mode === "list" ? (
+        <>
+          <div className="sf-address-list">
+            {addressBook.loading && <p className="muted">Loading saved addresses…</p>}
+            {addressBook.error && <p className="sf-err">{addressBook.error}</p>}
+            {!addressBook.loading && addressBook.addresses.length === 0 && (
+              <div className="sf-empty"><p>No saved addresses yet.</p></div>
+            )}
+            {addressBook.addresses.map((entry) => (
+              <div key={entry.id} className="sf-address-row">
+                <div className="sf-line-mid">
+                  <div className="sf-line-name"><FiMapPin /> {entry.label}{entry.isDefault ? " · Default" : ""}</div>
+                  <div className="muted">{[entry.line1, entry.line2, entry.landmark].filter(Boolean).join(", ")}</div>
+                  <div className="muted">{entry.city}, {entry.state} — {entry.postalCode} · {entry.phone}</div>
+                </div>
+                <span className="sf-address-row-actions">
+                  <button type="button" className="sf-icon-btn" title="Edit" onClick={() => { setEditing(entry); setMode("form"); }}><FiPencil /></button>
+                  <button type="button" className="sf-icon-btn" title="Delete" onClick={() => addressBook.removeAddress(entry.id)}><FiTrash2 /></button>
+                </span>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="sf-btn green" style={{ width: "100%", marginTop: 14, padding: 12 }} onClick={() => { setEditing(null); setMode("form"); }}>
+            <FiPlus /> Add address
+          </button>
+        </>
+      ) : (
+        <AddressForm
+          initial={editing}
+          saving={saving}
+          notify={notify}
+          onCancel={() => { setEditing(null); setMode("list"); }}
+          onSubmit={handleSubmit}
+        />
+      )}
+    </div>
+  );
+}
+```
 
 Pass props at the route:
 
