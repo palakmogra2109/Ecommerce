@@ -67,7 +67,7 @@
   - Owns server address state, selection, claim migration, and Nominatim request behavior.
 - `frontend/src/components/storefront/LocationChip.jsx`
   - Header delivery-location button.
-- `frontend/components/storefront/AddressBookModal.jsx`
+- `frontend/src/components/storefront/AddressBookModal.jsx`
   - Address selection, search, current-location, add/edit entry, deletion, and default controls.
 - `frontend/src/components/storefront/AddressForm.jsx`
   - Shared modal and full-page address-entry interface.
@@ -2165,6 +2165,6 @@ git commit -m "fix: correct address-book verification findings"
 ## Self-review
 
 - Spec coverage: migration/column, pure rules, transactions, address API, shared location predicates, public branches, Nominatim proxy, frontend services/hook, chip/modal/form/styles, page integration, and verification each have an owning task.
-- Placeholder scan: every code-bearing step supplies exact code, commands, expected results, and commit operations. There are no TBD, TODO, “appropriate validation,” or “similar to Task N” instructions.
+- Placeholder scan: every code-bearing step supplies exact code, commands, expected results, and commit operations. The plan contains no unfinished markers or cross-task shorthand instructions.
 - Type consistency: `SavedAddress`, service signatures, hook API, modal/form props, and route response shapes use the same names across tasks.
 - Review Focus: concurrency, admin/legacy collision, logged-out behavior, Nominatim failure behavior, and malformed location inputs are assigned to Tasks 3, 3, 9, 6/8/10, and 2/5/7/9 respectively.
