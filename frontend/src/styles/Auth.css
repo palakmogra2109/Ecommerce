@@ -1,0 +1,349 @@
+/* Shared auth screens: login + register, admin and storefront.
+   Everything is scoped under .auth-root so it cannot leak into the admin
+   shell, which uses its own .dashboard / sidebar tokens. */
+
+.auth-root {
+  --au-ac: #1f9d55;
+  --au-ac-dark: #157347;
+  --au-ac-soft: #eaf7ef;
+  --au-ink: #101b10;
+  --au-mut: #68766b;
+  --au-line: #e2e7e2;
+  --au-red: #dc2626;
+  --au-red-soft: #fef2f2;
+  --au-r: 14px;
+  --au-sh: 0 1px 2px rgba(16, 27, 16, .04), 0 12px 32px rgba(16, 27, 16, .08);
+
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+  -webkit-font-smoothing: antialiased;
+  color: var(--au-ink);
+}
+
+.auth-page {
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(880px 520px at 50% -12%, #c6e6d1 0%, transparent 58%),
+    radial-gradient(760px 520px at 8% 112%, #cfe9d6 0%, transparent 60%),
+    linear-gradient(168deg, #edf5ee 0%, #dfe8dd 100%);
+}
+
+.auth-card {
+  width: 440px;
+  max-width: 100%;
+  background: #fff;
+  border: 1px solid var(--au-line);
+  border-radius: 18px;
+  box-shadow: var(--au-sh);
+  padding: 34px 32px 30px;
+}
+
+.auth-head {
+  text-align: center;
+  margin-bottom: 26px;
+}
+
+.auth-head h1 {
+  margin: 0 0 6px;
+  font-size: 24px;
+  font-weight: 800;
+  letter-spacing: -.4px;
+}
+
+.auth-head p {
+  margin: 0;
+  font-size: 14px;
+  color: var(--au-mut);
+  line-height: 1.5;
+}
+
+/* ---- Fields ---- */
+
+.auth-field {
+  margin-bottom: 16px;
+}
+
+.auth-field > label {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--au-ink);
+}
+
+.auth-field input {
+  display: block;
+  width: 100%;
+  height: 46px;
+  padding: 0 14px;
+  border: 1px solid var(--au-line);
+  border-radius: var(--au-r);
+  background: #fff;
+  color: var(--au-ink);
+  font-size: 14.5px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color .15s, box-shadow .15s;
+}
+
+.auth-field input::placeholder {
+  color: #a8b3a9;
+}
+
+.auth-field input:focus {
+  border-color: var(--au-ac);
+  box-shadow: 0 0 0 3px rgba(31, 157, 85, .14);
+}
+
+/* The error is announced politely rather than interrupting the field. */
+.auth-field .auth-err {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 12.5px;
+  color: var(--au-red);
+  line-height: 1.4;
+}
+
+.auth-field .auth-err svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.auth-field.invalid input {
+  border-color: #f3b0b0;
+  background: var(--au-red-soft);
+}
+
+.auth-field.invalid input:focus {
+  border-color: var(--au-red);
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, .12);
+}
+
+/* Show/hide password sits inside the input box. */
+.auth-field .auth-pw {
+  position: relative;
+}
+
+.auth-field .auth-pw input {
+  padding-right: 46px;
+}
+
+.auth-field .auth-pw .auth-eye {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 38px;
+  height: 38px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  background: none;
+  border-radius: 9px;
+  color: var(--au-mut);
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+
+.auth-field .auth-pw .auth-eye:hover {
+  background: var(--au-ac-soft);
+  color: var(--au-ac-dark);
+}
+
+/* ---- Password strength ---- */
+
+.auth-strength {
+  margin: -6px 0 16px;
+}
+
+.auth-meter {
+  display: flex;
+  gap: 5px;
+  margin-bottom: 7px;
+}
+
+.auth-meter i {
+  flex: 1;
+  height: 4px;
+  border-radius: 3px;
+  background: #e8ece7;
+  transition: background .25s;
+}
+
+.auth-meter.s1 i:nth-child(1) { background: #dc2626; }
+.auth-meter.s2 i:nth-child(-n+2) { background: #f59e0b; }
+.auth-meter.s3 i:nth-child(-n+3) { background: #84cc16; }
+.auth-meter.s4 i { background: var(--au-ac); }
+
+.auth-strength .auth-strength-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 6px;
+  color: var(--au-mut);
+}
+
+.auth-strength.s1 .auth-strength-label { color: #dc2626; }
+.auth-strength.s2 .auth-strength-label { color: #b45309; }
+.auth-strength.s3 .auth-strength-label { color: #4d7c0f; }
+.auth-strength.s4 .auth-strength-label { color: var(--au-ac-dark); }
+
+/* The rules the password still has to satisfy, ticked off live. */
+.auth-rules {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.auth-rules li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--au-mut);
+  transition: color .15s;
+}
+
+.auth-rules li svg {
+  flex-shrink: 0;
+}
+
+.auth-rules li.ok {
+  color: var(--au-ac-dark);
+}
+
+/* ---- Submit + feedback ---- */
+
+.auth-submit {
+  width: 100%;
+  height: 48px;
+  border: 0;
+  border-radius: var(--au-r);
+  background: var(--au-ac);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  transition: background .15s;
+}
+
+.auth-submit:hover:not(:disabled) {
+  background: var(--au-ac-dark);
+}
+
+.auth-submit:disabled {
+  opacity: .6;
+  cursor: not-allowed;
+}
+
+/* Small spinner so a slow login still looks like it is working. */
+.auth-spinner {
+  width: 15px;
+  height: 15px;
+  border: 2px solid rgba(255, 255, 255, .45);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: auth-spin .7s linear infinite;
+}
+
+@keyframes auth-spin {
+  to { transform: rotate(360deg); }
+}
+
+.auth-msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0 0 16px;
+  padding: 11px 13px;
+  border-radius: 11px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.auth-msg svg {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.auth-msg.error {
+  background: var(--au-red-soft);
+  border: 1px solid #f6cccc;
+  color: var(--au-red);
+}
+
+.auth-msg.ok {
+  background: var(--au-ac-soft);
+  border: 1px solid #bfe7cd;
+  color: var(--au-ac-dark);
+}
+
+/* ---- Footer links ---- */
+
+.auth-foot {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #f0f3ef;
+  display: grid;
+  gap: 8px;
+  text-align: center;
+  font-size: 13.5px;
+  color: var(--au-mut);
+}
+
+.auth-foot a {
+  color: var(--au-ac-dark);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.auth-foot a:hover {
+  text-decoration: underline;
+}
+
+.auth-forgot {
+  display: block;
+  margin-bottom: 4px;
+}
+
+.auth-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13.5px;
+  color: var(--au-mut);
+  text-decoration: none;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.auth-back:hover {
+  color: var(--au-ac-dark);
+}
+
+@media (max-width: 480px) {
+  .auth-card {
+    padding: 26px 20px 24px;
+  }
+
+  .auth-head h1 {
+    font-size: 21px;
+  }
+}

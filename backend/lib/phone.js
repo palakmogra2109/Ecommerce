@@ -246,7 +246,7 @@ export function getCountryByDialCode(dialCode) {
 
 // Length constraints for the national (local) number part, enforced on top of
 // the library's own validation. Global default is 8-10 digits.
-const DIGIT_LENGTHS = { default: [8, 10] };
+const DIGIT_LENGTHS = { default: [10, 12] };
 
 export const MOBILE_DIGIT_MIN = DIGIT_LENGTHS.default[0];
 export const MOBILE_DIGIT_MAX = DIGIT_LENGTHS.default[1];

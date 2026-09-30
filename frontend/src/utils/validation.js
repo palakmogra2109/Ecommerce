@@ -32,7 +32,7 @@ export const validationMessages = {
     phone: {
         required: "Phone number is required",
         invalid: "Please enter a valid phone number",
-        length: "Mobile number must be 8 to 10 digits",
+        length: "Mobile number must be 10 to 12 digits",
     },
 
     message: {
@@ -188,7 +188,7 @@ export function validatePhone(phone) {
 
 // Validate a mobile number that includes a country code in E.164 form
 // (+<dial><number>). The dial code is stripped using known prefixes and
-// the remaining national part must be 8 to 10 digits.
+// the remaining national part must be 10 to 12 digits.
 export function validateMobile(mobile) {
     const requiredError = validateRequired(
         mobile,
@@ -201,7 +201,17 @@ export function validateMobile(mobile) {
 
     const value = String(mobile).trim();
 
-    if (!/^\+[0-9]{7,14}$/.test(value)) {
+    // Plain national digits (legacy stored numbers) validate directly;
+    // +-prefixed values go through the dial-code strip below.
+    if (!value.startsWith("+")) {
+        const plain = value.replace(/\D/g, "");
+        if (!/^\d+$/.test(plain) || plain.length < 10 || plain.length > 12) {
+            return validationMessages.phone.length;
+        }
+        return "";
+    }
+
+    if (!/^\+[0-9]{11,16}$/.test(value)) {
         return validationMessages.phone.invalid;
     }
 
@@ -234,8 +244,8 @@ export function validateMobile(mobile) {
         : digits;
 
     if (
-        national.length < 8 ||
-        national.length > 10
+        national.length < 10 ||
+        national.length > 12
     ) {
         return validationMessages.phone.length;
     }

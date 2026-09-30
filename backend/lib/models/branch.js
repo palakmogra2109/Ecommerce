@@ -1,5 +1,6 @@
 import pool from "../db.js";
 import { paginate } from "../pagination.js";
+import { buildLocationPredicates } from "../storeCatalogScope.js";
 
 const TABLE = "branches";
 
@@ -224,6 +225,34 @@ export const Branch = {
       outOfStockCount: parseInt(outOfStockResult.rows[0].count, 10),
       totalOrders: parseInt(totalOrdersResult.rows[0].count, 10),
     };
+  },
+
+  // Public storefront lookup: ACTIVE branches with delivery enabled that serve
+  // the given pincode and/or coordinate box. Shares its predicates with the
+  // product catalog through buildLocationPredicates so the two can never
+  // disagree about which branches serve a location.
+  async listServingBranches({ pincode = "", lat = 0, lng = 0, limit = 100 } = {}) {
+    const params = [];
+    const conditions = ["status = 'ACTIVE'", "deliveryenabled = TRUE"];
+    const locationConditions = buildLocationPredicates({
+      pincode: (pincode ?? "").trim(),
+      lat,
+      lng,
+      params,
+      branchIdColumn: "b.id",
+    });
+    conditions.push(...locationConditions);
+    const safeLimit = Math.min(100, Math.max(1, Number(limit) || 100));
+    params.push(safeLimit);
+    const result = await pool.query(
+      `SELECT ${PUBLIC_COLUMNS}
+       FROM ${TABLE} b
+       WHERE ${conditions.join(" AND ")}
+       ORDER BY name ASC
+       LIMIT $${params.length}`,
+      params
+    );
+    return result.rows;
   },
 
   async getById(id) {

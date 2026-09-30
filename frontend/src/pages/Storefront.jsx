@@ -1,63 +1,63 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   FiHome, FiShoppingCart, FiTruck, FiUser, FiSearch,
   FiChevronLeft, FiChevronRight, FiPlus, FiMinus, FiTrash2,
   FiShield, FiCreditCard, FiRefreshCw, FiStar, FiMapPin, FiShoppingBag,
-  FiArrowRight, FiChevronDown, FiClock, FiPhoneCall, FiMail, FiCheckCircle,
+  FiChevronDown, FiClock, FiPhoneCall, FiMail, FiCheckCircle,
+  FiLogIn, FiLogOut, FiPackage, FiGift, FiEdit2,
 } from "react-icons/fi";
 
-const BACKEND_BASE = "/api/store";
-const ADMIN_BASE = "/api";
+import "../styles/Storefront.css";
+// The account panel reuses the shared auth field styling; Auth.css is pulled
+// in here because this page does not render AuthCard (which would import it).
+import "../styles/Auth.css";
 
-async function api(path, options = {}) {
-  const res = await fetch(`${BACKEND_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, data };
-}
+import AuthField from "../components/auth/AuthField";
+import PasswordStrength from "../components/auth/PasswordStrength";
+import PhoneInput from "../components/PhoneInput";
+import LocationChip from "../components/storefront/LocationChip";
+import AddressBookModal from "../components/storefront/AddressBookModal";
+import AddressForm from "../components/storefront/AddressForm";
+import useAddressBook from "../hooks/useAddressBook";
+import { validateName, validateEmail, validatePassword, validateMobile } from "../utils/validation";
 
-async function adminApi(path, options = {}) {
-  const res = await fetch(`${ADMIN_BASE}${path}`, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
-  const data = await res.json().catch(() => ({}));
-  return data;
-}
+import {
+  getStoreProducts, getStoreProduct, getStoreBanners, getStoreBranches,
+  placeStoreOrder, trackStoreOrder, downloadOrderInvoice,
+  storeLogin, storeRegister, setStoreToken, requestOtp, verifyOtp, updateStoreProfile, getMyOrders,
+  inr, asText, cartLineId, sanitizeCartLine,
+  resolveDisplayPrice, linePrice, discountOf, isDiscounted, discountPercent,
+  PLACEHOLDER_IMAGE, ORDER_STEPS, STEP_LABELS, PAYMENT_METHODS,
+  bannerIsLive, bannerTimeLeft,
+} from "../services/storefront";
 
-const VIEWS = { CATALOG: 1, DETAIL: 2, CART: 3, CHECKOUT: 4, TRACK: 5, ACCOUNT: 6 };
-
-const PH =
-  "data:image/svg+xml;utf8," +
-  encodeURIComponent(
-    `<svg xmlns='http://www.w3.org/2000/svg' width='400' height='400'><rect width='400' height='400' fill='#eef2f7'/><text x='50%' y='50%' fill='#94a3b8' font-family='sans-serif' font-size='18' text-anchor='middle'>ShopCart</text></svg>`
-  );
-
-const inr = (n) => "₹" + Number(n || 0).toLocaleString("en-IN");
-
-// Coerce anything (stale localStorage carts may hold objects) to safe text.
-const asText = (v) => {
-  if (v == null) return "";
-  if (typeof v === "string") return v;
-  if (typeof v === "number") return String(v);
-  if (typeof v === "object" && v.name != null) return String(v.name);
-  return "";
+const VIEWS = {
+  CATALOG: 1,
+  DETAIL: 2,
+  CART: 3,
+  CHECKOUT: 4,
+  TRACK: 5,
+  ACCOUNT: 6,
+  PROFILE: 7,
+  ADDRESSES: 8,
+  GIFTCARDS: 9,
 };
 
-// Repair cart lines persisted by older builds (e.g. _variant stored as an
-// object rendered as "[object Object]"). Runs on every load.
-function sanitizeCartLine(l) {
-  if (!l || typeof l !== "object" || !l.uuid) return null;
-  return {
-    ...l,
-    name: asText(l.name) || "Product",
-    _variant: asText(l._variant) || null,
-    _variantSku: asText(l._variantSku) || null,
-    price: Number(l.price) || 0,
-    quantity: Math.max(1, Number(l.quantity) || 1),
-  };
+// The shopper's view survives reloads via localStorage: plain views store
+// the id, product detail stores { view, productUuid } and refetches on mount.
+function readSavedView() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("sf_view"));
+    const view = typeof saved === "number" ? saved : saved?.view;
+    if (!Object.values(VIEWS).includes(view)) return {};
+    if (view === VIEWS.DETAIL) {
+      const productUuid = typeof saved === "object" ? asText(saved.productUuid) : "";
+      return productUuid ? { view, productUuid } : {};
+    }
+    return { view };
+  } catch {
+    return {};
+  }
 }
 
 function Stars({ rating, reviews }) {
@@ -78,10 +78,11 @@ function Stars({ rating, reviews }) {
 
 export default function Storefront() {
   const [error, setError] = useState("");
-  const [view, setView] = useState(VIEWS.CATALOG);
+  const [view, setView] = useState(() => readSavedView().view || VIEWS.CATALOG);
   const [products, setProducts] = useState([]);
   const [page, setPage] = useState(1);
   const [pagination, setPagination] = useState({ total: 0, pages: 1 });
+  const [locationFallback, setLocationFallback] = useState(false);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [loading, setLoading] = useState(false);
@@ -98,16 +99,119 @@ export default function Storefront() {
     }
   });
   const [selectedBranch, setSelectedBranch] = useState(() => {
-    try { return localStorage.getItem("sf_branch") ? JSON.parse(localStorage.getItem("sf_branch")) : null; } catch { return null; }
+    try { return JSON.parse(localStorage.getItem("sf_branch")) || null; } catch { return null; }
   });
   const [branchList, setBranchList] = useState([]);
   const [showBranchSelector, setShowBranchSelector] = useState(false);
   const [toast, setToast] = useState(null);
   const [placedOrder, setPlacedOrder] = useState(null);
 
+  // ---- Logged-in user + account dropdown ----
+  const [user, setUser] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("sf_user")) || null; } catch { return null; }
+  });
+  const [showUserMenu, setShowUserMenu] = useState(false);
+  const userMenuRef = useRef(null);
+  const branchMenuRef = useRef(null);
+  // Where to send the user after they log in (e.g. back to the product page)
+  const [postLoginView, setPostLoginView] = useState(null);
+
+  // Server-backed address book (selection only is mirrored to localStorage).
+  const addressBook = useAddressBook({ user, notify });
+  const [addressModalOpen, setAddressModalOpen] = useState(false);
+  const [storeCount, setStoreCount] = useState(null);
+
+  const needsRealEmail = (u) => (u?.email || "").toLowerCase().endsWith("@mobile.local");
+
+  // Safety nets: checkout is never reachable while logged out, and never
+  // on a placeholder OTP email — registration is only complete with a real
+  // address, since orders and the address book key off it.
+  useEffect(() => {
+    if (view === VIEWS.CHECKOUT && !user) {
+      setPostLoginView(VIEWS.CHECKOUT);
+      setView(VIEWS.ACCOUNT);
+      notify("Please log in to checkout");
+      return;
+    }
+    if (view === VIEWS.CHECKOUT && needsRealEmail(user)) {
+      setPostLoginView(VIEWS.CHECKOUT);
+      setView(VIEWS.PROFILE);
+      notify("Add your real email to complete registration");
+    }
+  }, [view, user]);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    function onDoc(e) {
+      if (userMenuRef.current && !userMenuRef.current.contains(e.target)) {
+        setShowUserMenu(false);
+      }
+      if (branchMenuRef.current && !branchMenuRef.current.contains(e.target)) {
+        setShowBranchSelector(false);
+      }
+    }
+    document.addEventListener("mousedown", onDoc);
+    return () => document.removeEventListener("mousedown", onDoc);
+  }, []);
+
   useEffect(() => {
     localStorage.setItem("sf_cart", JSON.stringify(cart));
   }, [cart]);
+
+  useEffect(() => {
+    try {
+      if (view === VIEWS.DETAIL && current?.uuid) {
+        localStorage.setItem("sf_view", JSON.stringify({ view, productUuid: current.uuid }));
+      } else if (view !== VIEWS.DETAIL) {
+        localStorage.setItem("sf_view", JSON.stringify({ view }));
+      }
+    } catch {}
+  }, [view, current?.uuid]);
+
+  // A reloaded product page refetches its product, then steps back in.
+  useEffect(() => {
+    const saved = readSavedView();
+    if (saved.view !== VIEWS.DETAIL || !saved.productUuid) return;
+    let live = true;
+    getStoreProduct(saved.productUuid).then(({ ok, data }) => {
+      if (!live) return;
+      if (ok && data.product) {
+        setCurrent(data.product);
+        setView(VIEWS.DETAIL);
+      }
+    });
+    return () => { live = false; };
+    // Mount-only: afterwards the persist effect above owns sf_view.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Checkout with an empty cart (e.g. restored after the cart was cleared)
+  // drops back to the cart instead of stranding on an empty form.
+  useEffect(() => {
+    if (view === VIEWS.CHECKOUT && cart.length === 0) setView(VIEWS.CART);
+  }, [view, cart.length]);
+
+  // A persisted store id can go stale (store deleted, renamed, or saved from
+  // another database). A stale id scopes the catalog to zero rows, so the
+  // grid renders "No products found" with no way out. Validate it once on
+  // mount against the public store list and drop it when the server no
+  // longer knows it. A failed fetch keeps the selection: offline is not
+  // proof the store is gone.
+  useEffect(() => {
+    let live = true;
+    if (!selectedBranch?.uuid) return;
+    getStoreBranches({ limit: 100 }).then(({ ok, data }) => {
+      if (!live || !ok || !data.success) return;
+      const stillThere = (data.branches || []).some((b) => b.uuid === selectedBranch.uuid);
+      if (!stillThere) {
+        clearBranch();
+        notify("Your saved store is no longer available — showing all stores.");
+      }
+    });
+    return () => { live = false; };
+    // Mount-only: re-validating on every branch change would fight the selector.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function notify(msg) {
     setToast(msg);
@@ -115,108 +219,223 @@ export default function Storefront() {
     notify._t = setTimeout(() => setToast(null), 2600);
   }
 
-  async function loadProducts() {
-    setLoading(true);
-    setError("");
-    const qs = new URLSearchParams({ page, limit: 12 });
-    if (search.trim()) qs.set("search", search.trim());
-    if (category) qs.set("category", category);
-    if (selectedBranch) qs.set("branchId", selectedBranch.uuid);
-    const { ok, data } = await api(`/products?${qs}`);
-    if (!ok) {
-      setError(data.message || "Could not load products");
-    } else {
-      setProducts(data.products || []);
-      setPagination(data.pagination || { total: 0, pages: 1 });
+  function handleLogin(u) {
+    setUser(u);
+    try { localStorage.setItem("sf_user", JSON.stringify(u)); } catch {}
+    addressBook.claimLegacyAddresses(u);
+    if (needsRealEmail(u)) {
+      // postLoginView is left intact: after the email is saved the shopper
+      // can continue wherever they were headed.
+      setView(VIEWS.PROFILE);
+      notify("Welcome! Add your real email to complete registration.");
+      return;
     }
-    setLoading(false);
+    setView(postLoginView || VIEWS.CATALOG);
+    setPostLoginView(null);
+    notify(`Welcome, ${u?.name || u?.email || "back"}!`);
   }
 
-  useEffect(() => {
-    loadProducts();
-  }, [page, category]);
+  // Returns true if logged in; otherwise sends the user to the login page.
+  function requireLogin(nextView, msg) {
+    if (user) return true;
+    setPostLoginView(nextView || VIEWS.CATALOG);
+    setShowUserMenu(false);
+    setView(VIEWS.ACCOUNT);
+    notify(msg || "Please log in to continue");
+    return false;
+  }
 
-  // Load branch list when selector is shown
-  async function loadBranches() {
+  function handleLogout() {
+    setUser(null);
+    setShowUserMenu(false);
+    setStoreToken(null);
+    try { localStorage.removeItem("sf_user"); } catch {}
+    setView(VIEWS.CATALOG);
+    notify("Logged out");
+  }
+
+  function openAddressBook() {
+    if (!requireLogin(VIEWS.ADDRESSES, "Please log in to manage saved addresses.")) return;
+    setAddressModalOpen(true);
+  }
+
+  function goTo(v) {
+    if (v === VIEWS.ADDRESSES && !user) {
+      setShowUserMenu(false);
+      requireLogin(VIEWS.ADDRESSES, "Please log in to manage saved addresses.");
+      return;
+    }
+    setShowUserMenu(false);
+    setView(v);
+  }
+
+  function locationParamsFor(address) {
+    const latitude = Number(address?.latitude);
+    const longitude = Number(address?.longitude);
+    return {
+      pincode: address?.postalCode || "",
+      lat: Number.isFinite(latitude) ? latitude : null,
+      lng: Number.isFinite(longitude) ? longitude : null,
+    };
+  }
+
+  const selectedAddress = addressBook.selectedAddress;
+  const locationParams = locationParamsFor(selectedAddress);
+
+  // One fetch, one effect. Previously two effects both called loadProducts
+  // (so every mount and every branch change fired the request twice), and the
+  // branch handlers called it a third time alongside the setter. `search` is a
+  // dependency here so the hero tag chips and the empty-state reset actually
+  // search for the value they just set instead of the previous one.
+  useEffect(() => {
+    let live = true;
+    setLoading(true);
+    setError("");
+
+    getStoreProducts({
+      page,
+      limit: 12,
+      search,
+      category,
+      branchId: selectedBranch?.uuid || null,
+      pincode: locationParams.pincode,
+      lat: locationParams.lat,
+      lng: locationParams.lng,
+    }).then(({ ok, data }) => {
+      if (!live) return;
+      if (!ok) {
+        setError(data.message || "Could not load products");
+        setLocationFallback(false);
+      } else {
+        setProducts(data.products || []);
+        setPagination(data.pagination || { total: 0, pages: 1 });
+        setLocationFallback(data.locationFallback === true);
+      }
+      setLoading(false);
+    });
+
+    return () => { live = false; };
+  }, [page, category, search, selectedBranch?.uuid, selectedAddress?.id, selectedAddress?.postalCode, selectedAddress?.latitude, selectedAddress?.longitude]);
+
+  async function loadBranchesFor(address) {
+    const location = locationParamsFor(address);
+    let response;
     try {
-      const res = await fetch(`${ADMIN_BASE}/branches?limit=100`, { credentials: "include" });
-      const data = await res.json();
-      if (data.success) setBranchList(data.branches || []);
-    } catch {}
+      response = await getStoreBranches({
+        limit: 100,
+        pincode: location.pincode,
+        lat: location.lat,
+        lng: location.lng,
+      });
+    } catch {
+      response = { ok: false, data: { message: "Could not load stores." } };
+    }
+    if (!response.ok || !response.data.success) {
+      notify(response.data.message || "Could not load stores.");
+      return null;
+    }
+    const branches = Array.isArray(response.data.branches) ? response.data.branches : [];
+    setBranchList(branches);
+    setStoreCount(branches.length);
+    return branches;
+  }
+
+  async function loadBranches() {
+    return loadBranchesFor(selectedAddress);
+  }
+
+  async function handleAddressSelect(entry) {
+    addressBook.selectAddress(entry.id);
+    setAddressModalOpen(false);
+    setPage(1);
+    const branches = await loadBranchesFor(entry);
+    if (!branches) {
+      notify(`Delivering to ${entry.label || "saved address"} · ${entry.city || ""}`);
+      return;
+    }
+    if (selectedBranch && !branches.some((branch) => branch.uuid === selectedBranch.uuid)) {
+      setSelectedBranch(null);
+      try {
+        localStorage.removeItem("sf_branch");
+      } catch {}
+    }
+    notify(`Delivering to ${entry.label || "saved address"} · ${entry.city || ""} — ${branches.length} store${branches.length === 1 ? "" : "s"}`);
+  }
+
+  function clearBranch() {
+    setSelectedBranch(null);
+    try { localStorage.removeItem("sf_branch"); } catch {}
   }
 
   function handleBranchSelect(branch) {
     setSelectedBranch(branch);
-    localStorage.setItem("sf_branch", JSON.stringify(branch));
+    if (branch) {
+      localStorage.setItem("sf_branch", JSON.stringify(branch));
+    } else {
+      localStorage.removeItem("sf_branch");
+    }
     setShowBranchSelector(false);
     setPage(1);
-    loadProducts();
   }
-
-  useEffect(() => {
-    loadProducts();
-  }, [selectedBranch]);
 
   function goCatalog() {
     setView(VIEWS.CATALOG);
     setCurrent(null);
     setPage(1);
     setSearch("");
+    setCategory("");
   }
 
   function addToCart(product, quantity = 1, variant = null) {
+    if (!requireLogin(view, "Please log in to add items to your cart")) return;
     const q = Math.max(1, parseInt(quantity, 10) || 1);
     const variantName = variant?.name != null ? asText(variant.name) : null;
     const variantPrice = variant?.price != null ? Number(variant.price) : Number(product.price);
     const variantStock = variant?.stock ?? product.stock;
-    const variantDiscount = (variant?.discount_price ?? variant?.discountPrice) != null
-      ? Number((variant?.discount_price ?? variant?.discountPrice) ?? 0)
-      : Number((product.discount_price ?? product.discountPrice) || 0);
-    const hasDiscount = variantDiscount > 0 && variantDiscount < variantPrice;
+    const variantDiscount = discountOf(variant) ?? discountOf(product) ?? 0;
+    const hasDiscount = isDiscounted(variantDiscount, variantPrice);
     const effectivePrice = hasDiscount ? variantDiscount : variantPrice;
+    const lineId = cartLineId(product.uuid, variantName);
+
     setCart((prev) => {
-      const line = prev.find(
-        (i) => i.uuid === product.uuid && i._variant === variantName
-      );
-      if (line) {
+      const existing = prev.find((i) => i.lineId === lineId);
+      if (existing) {
         return prev.map((i) =>
-          i.uuid === product.uuid && i._variant === variantName
+          i.lineId === lineId
             ? { ...i, quantity: Math.min(i.quantity + q, variantStock || 99) }
-            : i
+            : i,
         );
       }
       return [
         ...prev,
         {
           ...product,
+          lineId,
           quantity: Math.min(q, variantStock || 99),
           price: effectivePrice,
-          discount_price: hasDiscount ? variantDiscount : (product.discount_price ?? product.discountPrice),
+          discount_price: hasDiscount ? variantDiscount : discountOf(product),
           _variant: variantName,
           _variantSku: variant?.sku || product.sku,
         },
       ];
     });
-    const vLabel = variantName ? ` (${variantName})` : "";
-    notify(`"${product.name}${vLabel}" added to cart`);
+
+    notify(`"${product.name}${variantName ? ` (${variantName})` : ""}" added to cart`);
   }
 
-  function updateQty(uuid, q) {
+  // Keyed on lineId, not uuid: the same product in two variants is two lines
+  // and each needs its own stepper. Matching on uuid alone moved both at once
+  // and removing one removed both.
+  function updateQty(lineId, q) {
     setCart((prev) =>
       prev
-        .map((i) => (i.uuid === uuid ? { ...i, quantity: Math.max(0, q) } : i))
-        .filter((i) => i.quantity > 0)
+        .map((i) => (i.lineId === lineId ? { ...i, quantity: Math.max(0, q) } : i))
+        .filter((i) => i.quantity > 0),
     );
   }
 
   const cartCount = cart.reduce((s, i) => s + Number(i.quantity || 0), 0);
-  const cartTotal = cart.reduce(
-    (s, i) =>
-      s +
-      Number(i.quantity || 0) *
-        (Number((i.discount_price ?? i.discountPrice) != null && Number((i.discount_price ?? i.discountPrice)) > 0 ? (i.discount_price ?? i.discountPrice) : i.price) || 0),
-    0
-  );
+  const cartTotal = cart.reduce((s, i) => s + Number(i.quantity || 0) * linePrice(i), 0);
 
   const subViews = {
     [VIEWS.DETAIL]: current && (
@@ -235,7 +454,7 @@ export default function Storefront() {
         lines={cart}
         onBack={() => setView(VIEWS.CATALOG)}
         onUpdate={updateQty}
-        onRemove={(uuid) => updateQty(uuid, 0)}
+        onRemove={(lineId) => updateQty(lineId, 0)}
         onCheckout={() => setView(VIEWS.CHECKOUT)}
         onShop={goCatalog}
         total={cartTotal}
@@ -247,6 +466,9 @@ export default function Storefront() {
         lines={cart}
         subtotal={cartTotal}
         selectedBranch={selectedBranch}
+        user={user}
+        addressBook={addressBook}
+        notify={notify}
         onDone={(order) => {
           setPlacedOrder(order);
           setCart([]);
@@ -255,23 +477,22 @@ export default function Storefront() {
         onBack={() => setView(VIEWS.CART)}
       />
     ),
-    [VIEWS.TRACK]: <OrderTrack prefilledOrder={placedOrder} onBack={goCatalog} />,
-    [VIEWS.ACCOUNT]: <AccountPanel onBack={goCatalog} />,
+    [VIEWS.TRACK]: <OrderTrack prefilledOrder={placedOrder} user={user} onBack={goCatalog} onLogin={() => requireLogin(VIEWS.TRACK, "Please log in to see your orders")} />,
+    [VIEWS.ACCOUNT]: <AccountPanel onBack={goCatalog} onLogin={handleLogin} />,
+    [VIEWS.PROFILE]: <ProfilePanel user={user} onBack={goCatalog} onUpdate={(u) => { setUser(u); try { localStorage.setItem("sf_user", JSON.stringify(u)); } catch {} }} />,
+    [VIEWS.ADDRESSES]: <AddressesPanel addressBook={addressBook} notify={notify} onBack={goCatalog} />,
+    [VIEWS.GIFTCARDS]: <GiftCardsPanel onBack={goCatalog} />,
   };
 
   const showBanner = view === VIEWS.CATALOG;
 
   return (
     <div className="sf-root">
-      <style>{CSS}</style>
-
       <div className="sf-announce">
         <span className="sf-announce-in">
           <span className="sf-announce-item"><FiTruck /> Free delivery on orders above ₹499</span>
           <span className="sf-announce-dot" />
           <span className="sf-announce-item">Cash on Delivery available</span>
-          <span className="sf-announce-dot" />
-          <span className="sf-announce-item">Easy 7-day returns</span>
         </span>
       </div>
 
@@ -281,12 +502,10 @@ export default function Storefront() {
             <span className="sf-logo"><FiHome /></span>
             <span>Earth<em>धान्य</em></span>
           </button>
+          <LocationChip address={selectedAddress} loading={addressBook.loading} onOpen={openAddressBook} />
           <nav className="sf-nav">
             <button className={view === VIEWS.TRACK ? "on" : ""} onClick={() => setView(VIEWS.TRACK)}>
               <FiTruck /> Track
-            </button>
-            <button className={view === VIEWS.ACCOUNT ? "on" : ""} onClick={() => setView(VIEWS.ACCOUNT)}>
-              <FiUser /> Account
             </button>
           </nav>
           <div className="sf-spacer" />
@@ -295,8 +514,10 @@ export default function Storefront() {
             <span>Cart</span>
             {cartCount > 0 && <b>{cartCount}</b>}
           </button>
-          <div className="sf-branch-wrap">
-            <button className="sf-branch-btn" onClick={() => { loadBranches(); setShowBranchSelector(!showBranchSelector); }}>
+
+          {/* Store selector */}
+          {/* <div className="sf-branch-wrap" ref={branchMenuRef}>
+            <button className="sf-branch-btn" onClick={() => { loadBranches(); setShowBranchSelector(!showBranchSelector); setShowUserMenu(false); }}>
               <FiShoppingBag />
               <span className="sf-branch-txt">
                 <small>Deliver from</small>
@@ -307,7 +528,7 @@ export default function Storefront() {
             {showBranchSelector && (
               <div className="sf-branch-dropdown">
                 <div className="sf-branch-head">Choose your store</div>
-                <button className="sf-branch-option" onClick={() => { setSelectedBranch(null); localStorage.removeItem("sf_branch"); setShowBranchSelector(false); setPage(1); loadProducts(); }}>
+                <button className="sf-branch-option" onClick={() => handleBranchSelect(null)}>
                   <strong>All Stores</strong>
                   <span>Browse the full catalogue</span>
                 </button>
@@ -322,7 +543,44 @@ export default function Storefront() {
                 )}
               </div>
             )}
-          </div>
+          </div> */}
+
+          {/* Account: Login button when logged out, dropdown when logged in */}
+          {user ? (
+            <div className="sf-user-wrap" ref={userMenuRef}>
+              <button
+                className="sf-user-btn"
+                onClick={() => { setShowUserMenu((s) => !s); setShowBranchSelector(false); }}
+              >
+                <span className="sf-avatar">
+                  {(user.name || user.email || "U").trim().charAt(0).toUpperCase()}
+                </span>
+                <span className="sf-user-txt">
+                  <small>Hello,</small>
+                  <strong>{(user.name || user.email || "User").split(" ")[0]}</strong>
+                </span>
+                <FiChevronDown />
+              </button>
+
+              {showUserMenu && (
+                <div className="sf-user-dropdown">
+                  <div className="sf-user-head">
+                    <b>{user.name || "My account"}</b>
+                    <span>{user.email}</span>
+                  </div>
+                  <button onClick={() => goTo(VIEWS.TRACK)}><FiPackage /> Orders</button>
+                  <button onClick={() => goTo(VIEWS.PROFILE)}><FiUser /> Account details</button>
+                  <button onClick={() => goTo(VIEWS.ADDRESSES)}><FiMapPin /> Saved addresses</button>
+                  <button onClick={() => goTo(VIEWS.GIFTCARDS)}><FiGift /> E-Gift Cards</button>
+                  <button className="danger" onClick={handleLogout}><FiLogOut /> Logout</button>
+                </div>
+              )}
+            </div>
+          ) : (
+            <button className="sf-btn primary sf-login-btn" onClick={() => setView(VIEWS.ACCOUNT)}>
+              <FiLogIn /> Login
+            </button>
+          )}
         </div>
       </header>
 
@@ -342,21 +600,17 @@ export default function Storefront() {
                   <input
                     placeholder="Search for grains, oils, spices…"
                     value={search}
-                    onChange={(e) => setSearch(e.target.value)}
+                    onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                     onKeyDown={(e) => {
-                      if (e.key === "Enter") {
-                        setPage(1);
-                        loadProducts();
-                      }
+                      if (e.key === "Enter") setPage(1);
                     }}
                   />
- <button className="sf-btn primary sf-hero-go" onClick={() => { setPage(1); loadProducts(); }}>Search</button>
+                  <button className="sf-btn primary sf-hero-go" onClick={() => setPage(1)}>Search</button>
                 </div>
                 <div className="sf-hero-tags">
-                  <button onClick={() => { setSearch("Rice"); setPage(1); loadProducts(); }}>Rice</button>
-                  <button onClick={() => { setSearch("Oil"); setPage(1); loadProducts(); }}>Oil</button>
-                  <button onClick={() => { setSearch("Wheat"); setPage(1); loadProducts(); }}>Wheat</button>
-                  <button onClick={() => { setSearch("Spices"); setPage(1); loadProducts(); }}>Spices</button>
+                  {["Rice", "Oil", "Wheat", "Spices"].map((tag) => (
+                    <button key={tag} onClick={() => { setSearch(tag); setPage(1); }}>{tag}</button>
+                  ))}
                 </div>
               </div>
             </section>
@@ -372,21 +626,16 @@ export default function Storefront() {
 
             {!loading && products.length > 0 && (
               <div className="sf-cats">
-                <button className={!category ? "on" : ""} onClick={() => setCategory("")}>
+                <button className={!category ? "on" : ""} onClick={() => { setCategory(""); setPage(1); }}>
                   All
                 </button>
                 {[
-                  ...new Map(
-                    products.map((p) => [p.category_slug, p.category_name])
-                  ),
+                  ...new Map(products.map((p) => [p.category_slug, p.category_name])),
                 ].map(([slug, name]) => (
                   <button
                     key={slug || name}
                     className={category === slug ? "on" : ""}
-                    onClick={() => {
-                      setCategory(slug || "");
-                      setPage(1);
-                    }}
+                    onClick={() => { setCategory(slug || ""); setPage(1); }}
                   >
                     {name}
                   </button>
@@ -413,20 +662,17 @@ export default function Storefront() {
               <div className="sf-empty">
                 <FiSearch size={34} />
                 <p>No products found.</p>
-                <button
-                  className="sf-btn primary"
-                  onClick={() => {
-                    setSearch("");
-                    setCategory("");
-                    setPage(1);
-                    loadProducts();
-                  }}
-                >
+                <button className="sf-btn primary" onClick={() => { setSearch(""); setCategory(""); setPage(1); clearBranch(); }}>
                   View all products
                 </button>
               </div>
             ) : (
               <>
+                {locationFallback && selectedAddress && (
+                  <div className="sf-notice">
+                    No stores deliver to {selectedAddress.city || selectedAddress.postalCode || "your location"} yet — showing all products.
+                  </div>
+                )}
                 <div className="sf-section-head">
                   <div>
                     <h2>{category ? "Filtered picks" : search ? "Search results" : "Trending now"}</h2>
@@ -444,10 +690,7 @@ export default function Storefront() {
                     <ProductCard
                       key={p.uuid}
                       p={p}
-                      onOpen={() => {
-                        setCurrent(p);
-                        setView(VIEWS.DETAIL);
-                      }}
+                      onOpen={() => { setCurrent(p); setView(VIEWS.DETAIL); }}
                       onAdd={() => addToCart(p)}
                     />
                   ))}
@@ -467,7 +710,7 @@ export default function Storefront() {
                         (n) =>
                           n === 1 ||
                           n === pagination.pages ||
-                          Math.abs(n - page) <= 2
+                          Math.abs(n - page) <= 2,
                       )
                       .map((n, idx, arr) => (
                         <span key={n} className="sf-pager-pos">
@@ -497,6 +740,15 @@ export default function Storefront() {
         )}
 
         {subViews[view]}
+
+        <AddressBookModal
+          open={addressModalOpen}
+          addressBook={addressBook}
+          user={user}
+          notify={notify}
+          onSelect={handleAddressSelect}
+          onClose={() => setAddressModalOpen(false)}
+        />
       </main>
 
       <footer className="sf-footer">
@@ -513,7 +765,7 @@ export default function Storefront() {
             <b>Shop</b>
             <button onClick={goCatalog}>All products</button>
             <button onClick={() => setView(VIEWS.TRACK)}>Track order</button>
-            <button onClick={() => setView(VIEWS.ACCOUNT)}>My account</button>
+            <button onClick={() => setView(user ? VIEWS.PROFILE : VIEWS.ACCOUNT)}>My account</button>
           </div>
           <div className="sf-footer-col">
             <b>Support</b>
@@ -532,43 +784,11 @@ export default function Storefront() {
 
 function ProductCard({ p, onOpen, onAdd }) {
   const variants = Array.isArray(p.variants) && p.variants.length > 0 ? p.variants : [];
-
-  // Branch-specific pricing takes priority when branch is selected
-  const branchPrice = p.effectivePrice != null && Number(p.effectivePrice) > 0 ? Number(p.effectivePrice) : null;
-  const branchCompare = p.effectiveCompareAtPrice != null ? Number(p.effectiveCompareAtPrice) : null;
-
-  const productDisc = p.discount_price ?? p.discountPrice;
-  const productUseDisc = productDisc != null && Number(productDisc) > 0;
-  const discountVariants = variants.filter((v) => {
-    const d = v.discount_price ?? v.discountPrice;
-    return d != null && Number(d) > 0 && Number(d) < Number(v.price);
-  });
-
-  let mrp = Number(p.price) || 0;
-  let price = Number(p.price) || 0;
-
-  if (branchPrice != null) {
-    price = branchPrice;
-    mrp = branchCompare != null && branchCompare > branchPrice ? branchCompare : (Number(p.price) || 0);
-  } else if (productUseDisc) {
-    mrp = Number(p.price) || 0;
-    price = Number(productDisc);
-  } else if (discountVariants.length > 0) {
-    const best = discountVariants.reduce((a, b) =>
-      (Number(a.discount_price ?? a.discountPrice) / Number(a.price)) <
-        (Number(b.discount_price ?? b.discountPrice) / Number(b.price))
-        ? a : b
-    );
-    mrp = Number(best.price);
-    price = Number(best.discount_price ?? best.discountPrice);
-  }
-
+  const { price, mrp } = resolveDisplayPrice(p);
   const useDisc = mrp > 0 && price < mrp;
-  const off = useDisc && Number(mrp) > 0
-    ? Math.round((1 - price / mrp) * 100)
-    : 0;
+  const off = useDisc ? discountPercent(price, mrp) : 0;
   const out = p.stock <= 0;
-  const img = p.images && p.images[0] ? p.images[0] : PH;
+  const img = p.images && p.images[0] ? p.images[0] : PLACEHOLDER_IMAGE;
   const variantLabels = variants.map((v) => v.name);
 
   return (
@@ -602,7 +822,7 @@ function ProductCard({ p, onOpen, onAdd }) {
             className="sf-add-btn"
             disabled={out}
             title={out ? "Out of stock" : "Add to cart"}
-            onClick={() => onAdd(p, 1, variants[0] || null)}
+            onClick={(e) => { e.stopPropagation(); onAdd(p, 1, variants[0] || null); }}
           >
             <FiPlus />
           </button>
@@ -628,7 +848,7 @@ function BannerCarousel() {
       const t = new Date(bn.ends_at).getTime();
       return m.endsAt && m.endsAt < t ? m : { endsAt: t, uuid: bn.uuid };
     },
-    { endsAt: null, uuid: null }
+    { endsAt: null, uuid: null },
   );
 
   useEffect(() => {
@@ -639,7 +859,7 @@ function BannerCarousel() {
   }, [longer.endsAt, longer.uuid, now]);
 
   useEffect(() => {
-    api("/banners?position=hero").then(({ ok, data }) => {
+    getStoreBanners("hero").then(({ ok, data }) => {
       if (ok) setBanners(data.banners || []);
     });
   }, []);
@@ -653,12 +873,7 @@ function BannerCarousel() {
   // Client-side guard as well as the server's: a banner is only shown while it
   // is scheduled (starts_at past, ends_at not expired). This also culls
   // anything whose expiry passes while the carousel is on screen.
-  const live = banners.filter((bn) => {
-    const nowMs = Date.now();
-    if (bn.starts_at && new Date(bn.starts_at).getTime() > nowMs) return false;
-    if (bn.ends_at && new Date(bn.ends_at).getTime() <= nowMs) return false;
-    return true;
-  });
+  const live = banners.filter((bn) => bannerIsLive(bn, now));
 
   useEffect(() => {
     if (idx >= live.length) setIdx(0);
@@ -666,28 +881,14 @@ function BannerCarousel() {
 
   if (live.length === 0) return null;
   const b = live[idx % live.length];
-
-  let expiry = null;
-  if (b.ends_at) {
-    const leftMs = new Date(b.ends_at).getTime() - Date.now();
-    if (leftMs > 0) {
-      const leftDays = Math.floor(leftMs / 86400000);
-      const leftHrs = Math.floor((leftMs % 86400000) / 3600000);
-      expiry =
-        leftDays >= 1
-          ? `${leftDays} day${leftDays === 1 ? "" : "s"} left`
-          : leftHrs >= 1
-            ? `${leftHrs} hr${leftHrs === 1 ? "" : "s"} left`
-            : "Ends soon";
-    }
-  }
+  const expiry = b.ends_at ? bannerTimeLeft(b.ends_at) : null;
 
   return (
     <div
       className="sf-banner"
       onClick={() => b.link && window.open(b.link, "_blank")}
     >
-      <img src={b.image || PH} alt={b.title} />
+      <img src={b.image || PLACEHOLDER_IMAGE} alt={b.title} />
       {!b.link && <div className="sf-banner-veil" />}
       <div className="sf-banner-text">
         <h2>{b.title}</h2>
@@ -701,10 +902,7 @@ function BannerCarousel() {
             <span
               key={i}
               className={i === idx ? "on" : ""}
-              onClick={(e) => {
-                e.stopPropagation();
-                setIdx(i);
-              }}
+              onClick={(e) => { e.stopPropagation(); setIdx(i); }}
             />
           ))}
         </div>
@@ -718,48 +916,33 @@ function ProductDetail({ product: initial, onAdd, onBack, onBuy }) {
   const [qty, setQty] = useState(1);
   const [activeImg, setActiveImg] = useState(0);
   const [selectedVariantIdx, setSelectedVariantIdx] = useState(-1);
-  const variants =
-    Array.isArray(p.variants) && p.variants.length > 0 ? p.variants : [];
+  const variants = Array.isArray(p.variants) && p.variants.length > 0 ? p.variants : [];
 
   useEffect(() => {
     let live = true;
-    api(`/products/${initial.uuid}`).then(({ ok, data }) => {
+    getStoreProduct(initial.uuid).then(({ ok, data }) => {
       if (live && ok && data.product) setP({ ...initial, ...data.product });
     });
-    return () => {
-      live = false;
-    };
+    return () => { live = false; };
   }, [initial.uuid]);
 
-  // Reset variant selection when product data changes
+  // Reset variant selection when the shopper opens a different product.
   useEffect(() => {
     setSelectedVariantIdx(-1);
-  }, [p.uuid]);
+  }, [initial.uuid]);
 
   const hasVariants = variants.length > 0;
   const activeVariant = hasVariants ? variants[selectedVariantIdx] || variants[0] : null;
-  const variantBasePrice = activeVariant?.price != null ? Number(activeVariant.price) : Number(p.price);
-  const variantDiscount = (activeVariant?.discount_price ?? activeVariant?.discountPrice) != null
-    ? Number((activeVariant?.discount_price ?? activeVariant?.discountPrice) ?? 0)
-    : Number(p.discount_price || 0);
-  const hasDiscount = variantDiscount > 0 && variantDiscount < variantBasePrice;
-  const price = hasDiscount ? variantDiscount : variantBasePrice;
+  const basePrice = activeVariant?.price != null ? Number(activeVariant.price) : Number(p.price);
+  const discount = discountOf(activeVariant) ?? discountOf(p) ?? 0;
+  const hasDiscount = isDiscounted(discount, basePrice);
+  const price = hasDiscount ? discount : basePrice;
   const variantStock = activeVariant?.stock ?? Number(p.stock);
-  const off = hasDiscount
-    ? Math.round((1 - variantDiscount / variantBasePrice) * 100)
-    : 0;
+  const off = hasDiscount ? discountPercent(discount, basePrice) : 0;
   const out = variantStock <= 0;
   const images = p.images && p.images.length ? p.images : [null];
   const hasSpecs =
     p.attributes && typeof p.attributes === "object" && Object.keys(p.attributes).length > 0;
-
-  function handleAdd() {
-    onAdd(p, qty, activeVariant);
-  }
-
-  function handleBuy() {
-    onBuy(p, qty, activeVariant);
-  }
 
   return (
     <div>
@@ -772,13 +955,13 @@ function ProductDetail({ product: initial, onAdd, onBack, onBuy }) {
 
       <div className="sf-detail">
         <div className="sf-gallery">
-          <img src={images[activeImg] || PH} alt={p.name} />
+          <img src={images[activeImg] || PLACEHOLDER_IMAGE} alt={p.name} />
           {images.length > 1 && (
             <div className="sf-thumbs">
               {images.map((img, i) => (
                 <img
                   key={i}
-                  src={img || PH}
+                  src={img || PLACEHOLDER_IMAGE}
                   alt=""
                   onClick={() => setActiveImg(i)}
                   className={i === activeImg ? "on" : ""}
@@ -796,9 +979,7 @@ function ProductDetail({ product: initial, onAdd, onBack, onBuy }) {
           <h2>{p.name}</h2>
           <Stars rating={p.rating} reviews={p.review_count} />
 
-          {p.short_description && (
-            <p className="sf-short">{p.short_description}</p>
-          )}
+          {p.short_description && <p className="sf-short">{p.short_description}</p>}
 
           {hasVariants && (
             <div className="sf-variants">
@@ -823,11 +1004,11 @@ function ProductDetail({ product: initial, onAdd, onBack, onBuy }) {
             </div>
           )}
 
-            <div className="sf-price">
-              <span className="sf-now">{inr(price)}</span>
-              {hasDiscount && <span className="sf-was">{inr(variantBasePrice)}</span>}
-              {off > 0 && <span className="sf-off">{off}% off</span>}
-            </div>
+          <div className="sf-price">
+            <span className="sf-now">{inr(price)}</span>
+            {hasDiscount && <span className="sf-was">{inr(basePrice)}</span>}
+            {off > 0 && <span className="sf-off">{off}% off</span>}
+          </div>
 
           <div className={out ? "sf-stock low" : "sf-stock ok"} style={{ marginBottom: 12 }}>
             {out
@@ -855,11 +1036,14 @@ function ProductDetail({ product: initial, onAdd, onBack, onBuy }) {
             <div className="sf-qty">
               <span>Qty</span>
               <div className="sf-stepper">
-                <button onClick={() => setQty((q) => Math.max(1, q - 1))}>
-                  <FiMinus />
-                </button>
+                <button onClick={() => setQty((q) => Math.max(1, q - 1))}><FiMinus /></button>
                 <b>{qty}</b>
-                <button onClick={() => setQty((q) => Math.min(variantStock, q + 1))}>
+                {/* Capped at the variant's own stock, and reset when the
+                    shopper switches to a variant with less available. */}
+                <button
+                  onClick={() => setQty((q) => Math.max(1, Math.min(variantStock, q + 1)))}
+                  disabled={qty >= variantStock}
+                >
                   <FiPlus />
                 </button>
               </div>
@@ -867,10 +1051,10 @@ function ProductDetail({ product: initial, onAdd, onBack, onBuy }) {
           )}
 
           <div className="sf-cta">
-            <button className="sf-btn primary" disabled={out} onClick={handleAdd}>
+            <button className="sf-btn primary" disabled={out} onClick={() => onAdd(p, qty, activeVariant)}>
               <FiShoppingCart /> Add to cart
             </button>
-            <button className="sf-btn green" disabled={out} onClick={handleBuy}>
+            <button className="sf-btn green" disabled={out} onClick={() => onBuy(p, qty, activeVariant)}>
               Buy now
             </button>
           </div>
@@ -896,9 +1080,7 @@ function CartView({ lines, onBack, onUpdate, onRemove, onCheckout, onShop, total
   return (
     <div className="sf-cart">
       <div className="sf-page-title">
-        <button className="sf-link" onClick={onBack}>
-          <FiChevronLeft /> Continue shopping
-        </button>
+        <button className="sf-link" onClick={onBack}><FiChevronLeft /> Continue shopping</button>
         <h2>Your cart {count > 0 && <span>({count})</span>}</h2>
       </div>
 
@@ -906,44 +1088,34 @@ function CartView({ lines, onBack, onUpdate, onRemove, onCheckout, onShop, total
         <div className="sf-empty">
           <FiShoppingCart size={34} />
           <p>Your cart is empty.</p>
-          <button className="sf-btn primary" onClick={onShop}>
-            Start shopping
-          </button>
+          <button className="sf-btn primary" onClick={onShop}>Start shopping</button>
         </div>
       ) : (
         <div className="sf-cart-cols">
           <div className="sf-lines">
             {lines.map((l) => {
-              const useDisc =
-                (l.discount_price ?? l.discountPrice) != null && Number((l.discount_price ?? l.discountPrice)) > 0;
-              const price = useDisc ? Number((l.discount_price ?? l.discountPrice)) : Number(l.price);
-              const img = l.images && l.images[0] ? l.images[0] : PH;
-              const variantLabel = l._variant != null ? asText(l._variant) : null;
+              const price = linePrice(l);
+              const img = l.images && l.images[0] ? l.images[0] : PLACEHOLDER_IMAGE;
+              const variantLabel = asText(l._variant) || null;
               const variantSku = asText(l._variantSku) || asText(l.sku) || null;
               return (
-                <div className="sf-line" key={l.uuid}>
+                <div className="sf-line" key={l.lineId}>
                   <img src={img} alt={l.name} />
                   <div className="sf-line-mid">
                     <div className="sf-line-name">
                       {l.name}
-                      {variantLabel && (
-                        <span className="sf-line-variant">{variantLabel}</span>
-                      )}
+                      {variantLabel && <span className="sf-line-variant">{variantLabel}</span>}
                     </div>
                     <div className="muted">{inr(price)} each{variantSku ? ` · SKU: ${variantSku}` : ""}</div>
                     <div className="sf-stepper small">
-                      <button onClick={() => onUpdate(l.uuid, l.quantity - 1)}>
-                        <FiMinus />
-                      </button>
+                      <button onClick={() => onUpdate(l.lineId, l.quantity - 1)}><FiMinus /></button>
                       <b>{l.quantity}</b>
-                      <button onClick={() => onUpdate(l.uuid, l.quantity + 1)}>
-                        <FiPlus />
-                      </button>
+                      <button onClick={() => onUpdate(l.lineId, l.quantity + 1)}><FiPlus /></button>
                     </div>
                   </div>
                   <div className="sf-line-right">
                     <div className="sf-line-total">{inr(price * l.quantity)}</div>
-                    <button className="sf-icon-btn" onClick={() => onRemove(l.uuid)} title="Remove">
+                    <button className="sf-icon-btn" onClick={() => onRemove(l.lineId)} title="Remove">
                       <FiTrash2 />
                     </button>
                   </div>
@@ -954,21 +1126,10 @@ function CartView({ lines, onBack, onUpdate, onRemove, onCheckout, onShop, total
 
           <div className="sf-totals">
             <h3>Order summary</h3>
-            <div className="sf-totals-row">
-              <span>Items ({count})</span>
-              <span>{inr(total)}</span>
-            </div>
-            <div className="sf-totals-row">
-              <span>Delivery</span>
-              <span className="ok-text">Free</span>
-            </div>
-            <div className="sf-totals-row grand">
-              <span>Total</span>
-              <span>{inr(total)}</span>
-            </div>
-            <button className="sf-btn green checkout" onClick={onCheckout}>
-              Proceed to checkout →
-            </button>
+            <div className="sf-totals-row"><span>Items ({count})</span><span>{inr(total)}</span></div>
+            <div className="sf-totals-row"><span>Delivery</span><span className="ok-text">Free</span></div>
+            <div className="sf-totals-row grand"><span>Total</span><span>{inr(total)}</span></div>
+            <button className="sf-btn green checkout" onClick={onCheckout}>Proceed to checkout →</button>
             <p className="muted small">
               COD or sandbox card · prices verified server-side at checkout.
             </p>
@@ -979,12 +1140,13 @@ function CartView({ lines, onBack, onUpdate, onRemove, onCheckout, onShop, total
   );
 }
 
-function CheckoutForm({ lines, subtotal, selectedBranch, onDone, onBack }) {
+function CheckoutForm({ lines, subtotal, selectedBranch, user, addressBook, notify, onDone, onBack }) {
   const [sending, setSending] = useState(false);
   const [err, setErr] = useState("");
+  const [addrModalOpen, setAddrModalOpen] = useState(false);
+  const appliedDefaultRef = useRef(false);
   const [form, setForm] = useState({
-    customerName: "",
-    customerEmail: "",
+    customerName: user?.name || "",
     customerMobile: "",
     paymentMethod: "cod",
     pincode: "",
@@ -992,13 +1154,50 @@ function CheckoutForm({ lines, subtotal, selectedBranch, onDone, onBack }) {
     city: "",
     state: "",
   });
-  const METHODS = [
-    { id: "cod", icon: FiCreditCard, label: "Cash on Delivery", hint: "Pay when your order arrives" },
-    { id: "stripe_sandbox", icon: FiCreditCard, label: "Card (sandbox)", hint: "Demo card — no real charge" },
-    { id: "paypal_sandbox", icon: FiCreditCard, label: "PayPal (sandbox)", hint: "Demo checkout — no real charge" },
-  ];
+
+  // Saved addresses come from the server-backed address book. Manual entry
+  // always stays available, so checkout never depends on the book loading.
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+
+  // The default (or currently selected) saved address fills the form on
+  // its own. Runs once and backs off the moment any field holds typed text,
+  // so it can never clobber the shopper's own edits.
+  useEffect(() => {
+    if (appliedDefaultRef.current) return;
+    const current = addressBook.selectedAddress;
+    if (!current) return;
+    setForm((f) => {
+      if (f.address.trim() || f.city.trim() || f.pincode.trim()) {
+        appliedDefaultRef.current = true;
+        return f;
+      }
+      return {
+        ...f,
+        customerName: current.recipient || f.customerName,
+        customerMobile: current.phone || f.customerMobile,
+        address: [current.line1, current.line2, current.landmark].filter(Boolean).join(", "),
+        city: current.city || "",
+        state: current.state || "",
+        pincode: current.postalCode || "",
+      };
+    });
+    appliedDefaultRef.current = true;
+  }, [addressBook.selectedAddress]);
+
+  // Named applySaved, not useSaved: the `use` prefix makes the linter treat
+  // this as a hook and rules-of-hooks rejects a hook called from a callback.
+  function applySaved(a) {
+    setForm((f) => ({
+      ...f,
+      customerName: a.recipient || f.customerName,
+      customerMobile: a.phone || f.customerMobile,
+      address: [a.line1, a.line2, a.landmark].filter(Boolean).join(", "),
+      city: a.city || "",
+      state: a.state || "",
+      pincode: a.postalCode || "",
+    }));
+  }
 
   async function placeOrder(e) {
     e.preventDefault();
@@ -1009,29 +1208,27 @@ function CheckoutForm({ lines, subtotal, selectedBranch, onDone, onBack }) {
       setSending(false);
       return;
     }
-    const shipping = {
-      pincode: form.pincode.trim(),
-      address: form.address.trim(),
-      city: form.city.trim(),
-      state: form.state.trim(),
-    };
-    const { ok, data } = await api("/orders/store", {
-      method: "POST",
-      body: JSON.stringify({
-        customerName: form.customerName.trim(),
-        customerEmail: form.customerEmail.trim().toLowerCase(),
-        customerMobile: form.customerMobile.trim(),
-        shippingAddress: shipping,
-        paymentMethod: form.paymentMethod,
-        ...(selectedBranch ? { branchId: selectedBranch.uuid } : {}),
-        items: lines.map((l) => ({
-          product_uuid: l.uuid,
-          quantity: l.quantity,
-          ...(l._variant ? { variant: l._variant } : {}),
-          ...(l._variantSku ? { sku: l._variantSku } : {}),
-        })),
-      }),
+
+    const { ok, data } = await placeStoreOrder({
+      customerName: form.customerName.trim(),
+      customerEmail: (user?.email || "").trim().toLowerCase(),
+      customerMobile: form.customerMobile.trim(),
+      shippingAddress: {
+        pincode: form.pincode.trim(),
+        address: form.address.trim(),
+        city: form.city.trim(),
+        state: form.state.trim(),
+      },
+      paymentMethod: form.paymentMethod,
+      ...(selectedBranch ? { branchId: selectedBranch.uuid } : {}),
+      items: lines.map((l) => ({
+        product_uuid: l.uuid,
+        quantity: l.quantity,
+        ...(l._variant ? { variant: l._variant } : {}),
+        ...(l._variantSku ? { sku: l._variantSku } : {}),
+      })),
     });
+
     setSending(false);
     if (!ok) {
       setErr(data.message || "Checkout failed. Try again.");
@@ -1043,9 +1240,7 @@ function CheckoutForm({ lines, subtotal, selectedBranch, onDone, onBack }) {
   return (
     <div>
       <div className="sf-page-title">
-        <button className="sf-link" onClick={onBack}>
-          <FiChevronLeft /> Back to cart
-        </button>
+        <button className="sf-link" onClick={onBack}><FiChevronLeft /> Back to cart</button>
         <h2>Checkout</h2>
       </div>
 
@@ -1053,24 +1248,66 @@ function CheckoutForm({ lines, subtotal, selectedBranch, onDone, onBack }) {
         <form className="sf-checkout-form" onSubmit={placeOrder}>
           <section className="sf-section">
             <h3><FiUser /> Contact details</h3>
-            <div className="sf-field">
-              <label>Full name *</label>
-              <input className="sf-input" required value={form.customerName} onChange={set("customerName")} placeholder="Your name" />
-            </div>
             <div className="sf-row-2">
               <div className="sf-field">
-                <label>Email *</label>
-                <input className="sf-input" type="email" required value={form.customerEmail} onChange={set("customerEmail")} placeholder="you@email.com" />
+                <label>Recipient name *</label>
+                <input className="sf-input" required value={form.customerName} onChange={set("customerName")} placeholder="Who will receive the order" />
               </div>
               <div className="sf-field">
-                <label>Mobile *</label>
-                <input className="sf-input" required value={form.customerMobile} onChange={set("customerMobile")} placeholder="10-digit mobile" />
+                <label>Mobile</label>
+                <PhoneInput
+                  name="customerMobile"
+                  value={form.customerMobile}
+                  onChange={(v) => setForm((f) => ({ ...f, customerMobile: v }))}
+                  placeholder="Mobile (optional)"
+                  defaultDialCode="+91"
+                />
               </div>
             </div>
           </section>
 
           <section className="sf-section">
             <h3><FiMapPin /> Delivery address</h3>
+            {(() => {
+              const active = addressBook.selectedAddress;
+              return (
+                <div className="sf-deliver-to">
+                  <div className="sf-deliver-to-txt">
+                    <small>{active ? "Delivering to" : "Delivery address"}</small>
+                    {active ? (
+                      <>
+                        <strong>{active.label}{active.recipient ? ` · ${active.recipient}` : ""}</strong>
+                        <span>
+                          {[active.line1, active.line2].filter(Boolean).join(", ")}
+                          {active.city ? `, ${active.city}` : ""}{active.postalCode ? ` — ${active.postalCode}` : ""}
+                        </span>
+                      </>
+                    ) : (
+                      <span>No saved address yet — fill the form or add one.</span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    className="sf-btn"
+                    onClick={() => { appliedDefaultRef.current = true; setAddrModalOpen(true); }}
+                  >
+                    {active ? "Change" : "Choose"}
+                  </button>
+                </div>
+              );
+            })()}
+            <AddressBookModal
+              open={addrModalOpen}
+              addressBook={addressBook}
+              user={user}
+              notify={notify}
+              onSelect={(entry) => {
+                addressBook.selectAddress(entry.id);
+                applySaved(entry);
+                setAddrModalOpen(false);
+              }}
+              onClose={() => setAddrModalOpen(false)}
+            />
             <div className="sf-field">
               <label>Address *</label>
               <textarea className="sf-input" required value={form.address} onChange={set("address")} placeholder="House / street / landmark" rows={2} />
@@ -1093,27 +1330,21 @@ function CheckoutForm({ lines, subtotal, selectedBranch, onDone, onBack }) {
 
           <section className="sf-section">
             <h3><FiCreditCard /> Payment method</h3>
-            {METHODS.map((m) => {
-              const Icon = m.icon;
-              return (
-                <label
-                  key={m.id}
-                  className={`sf-radio ${form.paymentMethod === m.id ? "on" : ""}`}
-                >
-                  <input
-                    type="radio"
-                    name="pm"
-                    checked={form.paymentMethod === m.id}
-                    onChange={() => setForm((f) => ({ ...f, paymentMethod: m.id }))}
-                  />
-                  <Icon />
-                  <span>
-                    <b>{m.label}</b>
-                    <small>{m.hint}</small>
-                  </span>
-                </label>
-              );
-            })}
+            {PAYMENT_METHODS.map((m) => (
+              <label key={m.id} className={`sf-radio ${form.paymentMethod === m.id ? "on" : ""}`}>
+                <input
+                  type="radio"
+                  name="pm"
+                  checked={form.paymentMethod === m.id}
+                  onChange={() => setForm((f) => ({ ...f, paymentMethod: m.id }))}
+                />
+                <FiCreditCard />
+                <span>
+                  <b>{m.label}</b>
+                  <small>{m.hint}</small>
+                </span>
+              </label>
+            ))}
           </section>
 
           {err && <div className="sf-err">{err}</div>}
@@ -1124,29 +1355,15 @@ function CheckoutForm({ lines, subtotal, selectedBranch, onDone, onBack }) {
 
         <div className="sf-totals sticky">
           <h3>Order summary</h3>
-          {lines.map((l) => {
-            const price =
-              (l.discount_price ?? l.discountPrice) != null && Number((l.discount_price ?? l.discountPrice)) > 0
-                ? Number((l.discount_price ?? l.discountPrice))
-                : Number(l.price);
-            return (                <div className="sf-totals-row" key={l.uuid}>
-                  <span>{asText(l.name) || "Product"} × {l.quantity}</span>
-                  <span>{inr(price * l.quantity)}</span>
-                </div>
-            );
-          })}
-          <div className="sf-totals-row">
-            <span>Subtotal</span>
-            <span>{inr(subtotal)}</span>
-          </div>
-          <div className="sf-totals-row">
-            <span>Delivery</span>
-            <span className="ok-text">Free</span>
-          </div>
-          <div className="sf-totals-row grand">
-            <span>Total</span>
-            <span>{inr(subtotal)}</span>
-          </div>
+          {lines.map((l) => (
+            <div className="sf-totals-row" key={l.lineId}>
+              <span>{asText(l.name) || "Product"} × {l.quantity}</span>
+              <span>{inr(linePrice(l) * l.quantity)}</span>
+            </div>
+          ))}
+          <div className="sf-totals-row"><span>Subtotal</span><span>{inr(subtotal)}</span></div>
+          <div className="sf-totals-row"><span>Delivery</span><span className="ok-text">Free</span></div>
+          <div className="sf-totals-row grand"><span>Total</span><span>{inr(subtotal)}</span></div>
           {selectedBranch && (
             <div className="sf-checkout-store">
               <FiShoppingBag /> Fulfilled by <b>{selectedBranch.name}</b>
@@ -1162,46 +1379,80 @@ function CheckoutForm({ lines, subtotal, selectedBranch, onDone, onBack }) {
   );
 }
 
-function OrderTrack({ prefilledOrder, onBack }) {
-  const [form, setForm] = useState({ order_number: "", email: "" });
+function pillClass(status) {
+  if (status === "DELIVERED") return "green";
+  if (status === "CANCELLED") return "red";
+  return "amber";
+}
+
+function OrderTrack({ prefilledOrder, user, onBack, onLogin }) {
   const [result, setResult] = useState(prefilledOrder || null);
+  const [fromList, setFromList] = useState(false);
+  const [orders, setOrders] = useState([]);
+  const [page, setPage] = useState(1);
+  const [pages, setPages] = useState(1);
+  const [loadingList, setLoadingList] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const STEPS = ["PLACED", "PACKED", "SHIPPED", "OUT_FOR_DELIVERY", "DELIVERED"];
-  const LABELS = {
-    PLACED: "Placed",
-    PACKED: "Packed",
-    SHIPPED: "Shipped",
-    OUT_FOR_DELIVERY: "Out for delivery",
-    DELIVERED: "Delivered",
-  };
+  // A different account (or a fresh login) restarts the view.
+  useEffect(() => {
+    setResult(prefilledOrder || null);
+    setFromList(false);
+    setPage(1);
+  }, [user?.email, prefilledOrder]);
 
-  async function track(e) {
-    if (e) e.preventDefault();
+  // The account's full order history — no order number needed.
+  useEffect(() => {
+    if (result || !user?.email) return;
+    let live = true;
+    setLoadingList(true);
+    setErr("");
+    getMyOrders({ page, limit: 10 }).then(({ ok, data }) => {
+      if (!live) return;
+      setLoadingList(false);
+      if (!ok || !data.success) {
+        setErr(data.message || "Could not load your orders.");
+        return;
+      }
+      setOrders(data.orders || []);
+      setPages(data.pagination?.pages || 1);
+    });
+    return () => { live = false; };
+  }, [user?.email, page, result]);
+
+  // Row click loads the same guarded detail the search form used to show:
+  // the row already carries this account's order number and email.
+  async function openOrder(order) {
     setBusy(true);
     setErr("");
-    const { ok, data } = await api(
-      `/orders/track?order_number=${encodeURIComponent(form.order_number.trim())}&email=${encodeURIComponent(form.email.trim().toLowerCase())}`
-    );
+    const { ok, data } = await trackStoreOrder(order.order_number, user.email);
     setBusy(false);
     if (!ok) {
-      setErr(data.message || "Order not found. Check your order number and email.");
-      setResult(null);
+      setErr(data.message || "Could not open this order.");
       return;
     }
-    // API returns { order, statusHistory, ... } — keep both for the UI.
     setResult({ ...data.order, statusHistory: data.statusHistory || [] });
+    setFromList(true);
+    window.scrollTo({ top: 0 });
   }
 
-  // Customer bill download (guarded by order number + email).
+  function backFromDetail() {
+    if (fromList) {
+      setResult(null);
+      setFromList(false);
+      return;
+    }
+    onBack();
+  }
+
+  // Customer bill download (guarded by the detail's own order + email).
   async function downloadBill() {
     try {
-      const res = await fetch(
-        `${BACKEND_BASE}/orders/track/invoice?order_number=${encodeURIComponent(form.order_number.trim() || result.order_number)}&email=${encodeURIComponent(form.email.trim().toLowerCase() || result.customer_email)}`
+      const blob = await downloadOrderInvoice(
+        result.order_number,
+        result.customer_email,
       );
-      if (!res.ok) throw new Error();
-      const blob = await res.blob();
       const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
@@ -1217,26 +1468,16 @@ function OrderTrack({ prefilledOrder, onBack }) {
 
   const fmtTime = (v) =>
     v
-      ? new Date(v).toLocaleString("en-IN", {
-          dateStyle: "medium",
-          timeStyle: "short",
-        })
+      ? new Date(v).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" })
       : "";
 
   if (result && result.uuid && result.status) {
     const details = result;
-    const stepIdx = STEPS.indexOf(details.status);
+    const stepIdx = ORDER_STEPS.indexOf(details.status);
     return (
       <div>
         <div className="sf-page-title">
-          <button
-            className="sf-link"
-            onClick={() => {
-              setResult(null);
-              setForm({ order_number: "", email: "" });
-              onBack();
-            }}
-          >
+          <button className="sf-link" onClick={backFromDetail}>
             <FiChevronLeft /> Back
           </button>
           <h2>Order {details.order_number}</h2>
@@ -1244,20 +1485,15 @@ function OrderTrack({ prefilledOrder, onBack }) {
 
         <div className="sf-track-card">
           <div className="sf-track-meta">
-            <div><span>Status</span><b>{LABELS[details.status] || details.status.replace(/_/g, " ")}</b></div>
+            <div><span>Status</span><b>{STEP_LABELS[details.status] || details.status.replace(/_/g, " ")}</b></div>
             <div><span>Total</span><b>{inr(details.total)}</b></div>
             <div>
               <span>Payment</span>
               <b>{(details.payment_method || "").replace(/_/g, " ").toUpperCase()} · {details.payment_status}</b>
             </div>
-            {details.storeName && (
-              <div><span>Store</span><b>{details.storeName}</b></div>
-            )}
-            {details.estimatedDeliveryAt && !"DELIVERED,CANCELLED".includes(details.status) && (
-              <div>
-                <span>Estimated delivery</span>
-                <b>By {fmtTime(details.estimatedDeliveryAt)}</b>
-              </div>
+            {details.storeName && <div><span>Store</span><b>{details.storeName}</b></div>}
+            {details.estimatedDeliveryAt && !["DELIVERED", "CANCELLED"].includes(details.status) && (
+              <div><span>Estimated delivery</span><b>By {fmtTime(details.estimatedDeliveryAt)}</b></div>
             )}
             <div>
               <span></span>
@@ -1266,14 +1502,14 @@ function OrderTrack({ prefilledOrder, onBack }) {
           </div>
 
           <div className="sf-timeline">
-            {STEPS.map((s) => {
-              const stIdx = STEPS.indexOf(s);
+            {ORDER_STEPS.map((s) => {
+              const stIdx = ORDER_STEPS.indexOf(s);
               const done = stepIdx >= 0 && stIdx <= stepIdx;
               const current = s === details.status;
               return (
                 <div key={s} className={`sf-step ${done ? "done" : ""} ${current ? "current" : ""}`}>
                   <div className="sf-dot">{done && <span>{current ? "●" : "✓"}</span>}</div>
-                  <span>{LABELS[s]}</span>
+                  <span>{STEP_LABELS[s]}</span>
                 </div>
               );
             })}
@@ -1285,23 +1521,21 @@ function OrderTrack({ prefilledOrder, onBack }) {
               <h4>Status updates</h4>
               {details.statusHistory.map((h, i) => (
                 <div className="sf-history-row" key={i}>
-                  <b>{LABELS[h.status] || h.status.replace(/_/g, " ")}</b>
+                  <b>{STEP_LABELS[h.status] || h.status.replace(/_/g, " ")}</b>
                   <span className="sf-h-time">{fmtTime(h.createdAt)}</span>
                 </div>
               ))}
             </div>
           )}
 
-              {details.items && details.items.length > 0 && (
+          {details.items && details.items.length > 0 && (
             <div className="sf-lines">
               {details.items.map((it, i) => (
                 <div className="sf-line" key={i}>
                   <div className="sf-line-mid">
                     <div className="sf-line-name">
                       {it.product_name}
-                      {it.variant && (
-                        <span className="sf-line-variant">{it.variant}</span>
-                      )}
+                      {it.variant && <span className="sf-line-variant">{it.variant}</span>}
                     </div>
                     <div className="muted">
                       {it.quantity} × {inr(it.price)}
@@ -1325,595 +1559,608 @@ function OrderTrack({ prefilledOrder, onBack }) {
     );
   }
 
-  return (
-    <div className="sf-track-form-wrap">
-      <div className="sf-page-title">
-        <button className="sf-link" onClick={onBack}>
-          <FiChevronLeft /> Back to shop
-        </button>
-        <h2>Track your order</h2>
+  if (!user) {
+    return (
+      <div className="sf-track-form-wrap">
+        <div className="sf-page-title">
+          <button className="sf-link" onClick={onBack}><FiChevronLeft /> Back to shop</button>
+          <h2>My orders</h2>
+        </div>
+        <div className="sf-empty">
+          <FiPackage size={34} />
+          <p>Log in to see all your orders in one place.</p>
+          <button className="sf-btn primary" onClick={onLogin}><FiLogIn /> Login</button>
+        </div>
       </div>
-      <form className="sf-track-form" onSubmit={track}>
-        <div className="sf-field">
-          <label>Order number</label>
-          <input
-            className="sf-input"
-            required
-            value={form.order_number}
-            onChange={(e) => setForm((f) => ({ ...f, order_number: e.target.value }))}
-            placeholder="ORD-0000001"
-          />
+    );
+  }
+
+  return (
+    <div>
+      <div className="sf-page-title">
+        <button className="sf-link" onClick={onBack}><FiChevronLeft /> Back to shop</button>
+        <h2>My orders</h2>
+      </div>
+
+      {err && <div className="sf-err">{err}</div>}
+
+      {loadingList ? (
+        <div className="sf-orders-table-wrap">
+          <table className="sf-orders-table">
+            <tbody>
+              {Array.from({ length: 4 }).map((_, i) => (
+                <tr key={i}><td colSpan={7}><div className="sk sk-l" /></td></tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-        <div className="sf-field">
-          <label>Email used at checkout</label>
-          <input
-            className="sf-input"
-            type="email"
-            required
-            value={form.email}
-            onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-            placeholder="you@email.com"
-          />
+      ) : orders.length === 0 ? (
+        <div className="sf-empty">
+          <FiPackage size={34} />
+          <p>No orders yet — your orders will appear here.</p>
         </div>
-        {err && <div className="sf-err">{err}</div>}
-        <button className="sf-btn primary" disabled={busy} style={{ width: "100%", justifyContent: "center", padding: 13 }}>
-          {busy ? "Checking…" : <><FiTruck /> Track order</>}
-        </button>
-      </form>
+      ) : (
+        <>
+          <div className="sf-orders-table-wrap">
+            <table className="sf-orders-table">
+              <thead>
+                <tr>
+                  <th>Order</th>
+                  <th>Date</th>
+                  <th>Items</th>
+                  <th>Total</th>
+                  <th>Status</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {orders.map((o) => (
+                  <tr key={o.uuid} className="sf-order-row" onClick={() => openOrder(o)}>
+                    <td><b>{o.order_number}</b></td>
+                    <td className="muted">{fmtTime(o.created_at)}</td>
+                    <td>{o.itemCount}</td>
+                    <td><b>{inr(o.total)}</b></td>
+                    <td>
+                      <span className={`sf-pill ${pillClass(o.status)}`}>
+                        {STEP_LABELS[o.status] || o.status.replace(/_/g, " ")}
+                      </span>
+                    </td>
+                    <td><FiChevronRight /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          {pages > 1 && (
+            <div className="sf-pager">
+              <button className="sf-btn" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                <FiChevronLeft />
+              </button>
+              <span className="sf-section-page">Page {page} of {pages}</span>
+              <button className="sf-btn" disabled={page >= pages} onClick={() => setPage((p) => Math.min(pages, p + 1))}>
+                <FiChevronRight />
+              </button>
+            </div>
+          )}
+        </>
+      )}
+
+      {busy && <div className="sf-toast">Opening order…</div>}
     </div>
   );
 }
 
-function AccountPanel({ onBack }) {
+function OtpPanel({ onLogin }) {
+  const [step, setStep] = useState("mobile");
+  const [mobile, setMobile] = useState("");
+  const [otp, setOtp] = useState("");
+  const [demoOtp, setDemoOtp] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function send(e) {
+    e.preventDefault();
+    setErr("");
+    const digits = mobile.replace(/\D/g, "");
+    if (digits.length < 8 || digits.length > 15) {
+      setErr("Enter a valid mobile number.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { ok, data } = await requestOtp(mobile.trim());
+      if (!ok || !data.success) {
+        setErr(data.message || "Could not send OTP.");
+        return;
+      }
+      // Demo mode: the code is returned for testing until an SMS sender is
+      // wired in. It is shown once, here, instead of arriving by text.
+      setDemoOtp(data.demoOtp || null);
+      setStep("code");
+    } catch {
+      setErr("Unable to connect. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function confirm(e) {
+    e.preventDefault();
+    setErr("");
+    if (!/^\d{6}$/.test(otp.trim())) {
+      setErr("Enter the 6-digit code.");
+      return;
+    }
+    setBusy(true);
+    try {
+      const { ok, data } = await verifyOtp(mobile.trim(), otp.trim());
+      if (!ok || !data.success) {
+        setErr(data.message || "Verification failed.");
+        return;
+      }
+      setStoreToken(data.token);
+      if (onLogin) onLogin(data.user || { mobile });
+    } catch {
+      setErr("Unable to connect. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (step === "code") {
+    return (
+      <form onSubmit={confirm} noValidate>
+        {err && <p className="auth-msg error" role="alert">{err}</p>}
+        {demoOtp && (
+          <p className="auth-msg ok" role="status">
+            Demo mode — your code is <b>{demoOtp}</b>
+          </p>
+        )}
+        <AuthField
+          label="6-digit code"
+          name="otp"
+          value={otp}
+          onChange={(e) => { setOtp(e.target.value); setErr(""); }}
+          placeholder="123456"
+          autoComplete="one-time-code"
+          inputMode="numeric"
+        />
+        <button className="auth-submit" type="submit" disabled={busy}>
+          {busy && <span className="auth-spinner" aria-hidden="true" />}
+          {busy ? "Verifying…" : "Verify & log in"}
+        </button>
+        <div className="auth-foot">
+          <p>
+            Wrong number?{" "}
+            <button type="button" className="sf-link" onClick={() => { setStep("mobile"); setOtp(""); setDemoOtp(null); setErr(""); }}>
+              Change mobile number
+            </button>
+          </p>
+        </div>
+      </form>
+    );
+  }
+
+  return (
+    <form onSubmit={send} noValidate>
+      {err && <p className="auth-msg error" role="alert">{err}</p>}
+      <div className="sf-field">
+        <label>Mobile number</label>
+        <PhoneInput
+          name="mobile"
+          value={mobile}
+          onChange={(v) => { setMobile(v); setErr(""); }}
+          placeholder="98765 43210"
+          defaultDialCode="+91"
+        />
+      </div>
+      <button className="auth-submit" type="submit" disabled={busy}>
+        {busy && <span className="auth-spinner" aria-hidden="true" />}
+        {busy ? "Sending…" : "Send OTP"}
+      </button>
+      <div className="auth-foot">
+        <p>New numbers get an account automatically on first login.</p>
+      </div>
+    </form>
+  );
+}
+
+function AccountPanel({ onBack, onLogin }) {
   const [mode, setMode] = useState("login");
+  const [form, setForm] = useState({ name: "", email: "", password: "" });
+  const [errors, setErrors] = useState({});
   const [err, setErr] = useState("");
   const [ok, setOk] = useState("");
-  const [form, setForm] = useState({ name: "", email: "", password: "" });
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  const [busy, setBusy] = useState(false);
+
+  const set = (k) => (e) => {
+    setForm((f) => ({ ...f, [k]: e.target.value }));
+    setErrors((prev) => ({ ...prev, [k]: "" }));
+    setErr("");
+    setOk("");
+  };
+
+  function switchMode(next) {
+    setMode(next);
+    setErrors({});
+    setErr("");
+    setOk("");
+  }
 
   async function submit(e) {
     e.preventDefault();
     setErr("");
     setOk("");
-    const body = { email: form.email.trim().toLowerCase(), password: form.password };
-    if (mode === "register") body.name = form.name.trim();
-    const res = await fetch(
-      mode === "login" ? "/api/auth/login" : "/api/auth/register",
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      }
-    );
-    const data = await res.json().catch(() => ({}));
-    if (!data.success) {
-      setErr(data.message || "Something went wrong");
-      return;
+
+    // The storefront panel previously posted whatever it had and rendered
+    // whatever the server said. It now uses the same validators as the admin
+    // auth screens, so a typo is caught before the round trip.
+    const newErrors = {};
+    const emailError = validateEmail(form.email.trim());
+    const passwordError = validatePassword(form.password);
+    if (emailError) newErrors.email = emailError;
+    if (passwordError) newErrors.password = passwordError;
+
+    if (mode === "register") {
+      const nameError = validateName(form.name.trim());
+      if (nameError) newErrors.name = nameError;
     }
-    if (mode === "login") {
-      setOk(`Logged in as ${data.user?.email || form.email}`);
-      try {
-        localStorage.setItem("sf_token", data.token);
-      } catch {}
-    } else {
+
+    setErrors(newErrors);
+    if (Object.keys(newErrors).length > 0) return;
+
+    setBusy(true);
+
+    try {
+      const email = form.email.trim().toLowerCase();
+      const { data } =
+        mode === "login"
+          ? await storeLogin(email, form.password)
+          : await storeRegister(form.name.trim(), email, form.password);
+
+      if (!data.success) {
+        setErr(data.message || "Something went wrong");
+        return;
+      }
+
+      if (mode === "login") {
+        setStoreToken(data.token);
+        // Tell the parent so the header switches to the account dropdown
+        if (onLogin) onLogin(data.user || { email });
+        return;
+      }
       setOk("Registered! Check your email to verify, then log in.");
+    } catch {
+      setErr("Unable to connect. Please try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    // auth-root only supplies the shared tokens and field styling. The card
+    // shell is deliberately not used here: this panel lives inside the shop
+    // page, which brings its own header, background and max-width.
+    <div className="auth-root sf-auth-wrap">
+      <div className="sf-page-title">
+        <button className="sf-link" onClick={onBack}><FiChevronLeft /> Back to shop</button>
+        <h2>My account</h2>
+      </div>
+      <div className="sf-auth">
+        <div className="sf-auth-tabs">
+          <button className={mode === "login" ? "on" : ""} onClick={() => switchMode("login")}>
+            Login
+          </button>
+          <button className={mode === "register" ? "on" : ""} onClick={() => switchMode("register")}>
+            Create account
+          </button>
+          <button className={mode === "otp" ? "on" : ""} onClick={() => switchMode("otp")}>
+            Mobile OTP
+          </button>
+        </div>
+
+        {mode === "otp" && <OtpPanel onLogin={onLogin} />}
+
+        {mode !== "otp" && (
+        <form onSubmit={submit} noValidate>
+          {err && <p className="auth-msg error" role="alert">{err}</p>}
+          {ok && <p className="auth-msg ok" role="status">{ok}</p>}
+
+          {mode === "register" && (
+            <AuthField
+              label="Full name"
+              name="name"
+              value={form.name}
+              onChange={set("name")}
+              error={errors.name}
+              placeholder="Your name"
+              autoComplete="name"
+            />
+          )}
+
+          <AuthField
+            label="Email"
+            name="email"
+            type="email"
+            value={form.email}
+            onChange={set("email")}
+            error={errors.email}
+            placeholder="you@email.com"
+            autoComplete="username"
+          />
+
+          <AuthField
+            label="Password"
+            name="password"
+            type="password"
+            value={form.password}
+            onChange={set("password")}
+            error={errors.password}
+            placeholder="Your password"
+            autoComplete={mode === "login" ? "current-password" : "new-password"}
+          >
+            {mode === "register" && <PasswordStrength password={form.password} />}
+          </AuthField>
+
+          <button className="auth-submit" type="submit" disabled={busy}>
+            {busy && <span className="auth-spinner" aria-hidden="true" />}
+            {busy
+              ? mode === "login" ? "Logging in…" : "Creating…"
+              : mode === "login" ? "Login" : "Create account"}
+          </button>
+        </form>
+        )}
+
+        {/* Plain <a>, not react-router <Link>. Storefront is mounted by two
+            different entry points: the admin app (inside <BrowserRouter>) and
+            storepub, a standalone buyer site that renders <Storefront /> with
+            NO router at all. A <Link> needs router context, so it threw
+            "Cannot destructure property 'basename' of ... as it is null" on
+            storepub. Host-relative anchors need no context and work in both.
+            The catch: on storepub these destinations are the host's job to
+            serve, since that site defines no /forgot-password route. */}
+        <div className="auth-foot">
+          {mode === "login" && (
+            <a className="auth-forgot" href="/forgot-password">Forgot password?</a>
+          )}
+          {mode === "register" ? (
+            <p>Already have an account? <a href="/store">Log in</a></p>
+          ) : (
+            <p>
+              Want to open a store?{" "}
+              <a href="/register/store">Register your store</a>
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ProfilePanel({ user, onBack, onUpdate }) {
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState({ name: user?.name || "", mobile: user?.mobile || "", email: user?.email || "" });
+  // OTP auto-created accounts carry a placeholder address and must swap it
+  // for a real one; everyone else's email is immutable (address-link key).
+  const emailEditable = (user?.email || "").toLowerCase().endsWith("@mobile.local");
+  const [errors, setErrors] = useState({});
+  const [msg, setMsg] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  // Refresh the draft when the account changes underneath the panel.
+  useEffect(() => {
+    if (!editing) setForm({ name: user?.name || "", mobile: user?.mobile || "", email: user?.email || "" });
+  }, [user?.email, editing]);
+
+  const set = (k) => (e) => {
+    setForm((f) => ({ ...f, [k]: e.target.value }));
+    setErrors((prev) => ({ ...prev, [k]: "" }));
+    setMsg("");
+  };
+
+  async function save(e) {
+    e.preventDefault();
+    setMsg("");
+    const nextErrors = {};
+    if (!form.name.trim()) nextErrors.name = "Enter your name.";
+    if (emailEditable && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) {
+      nextErrors.email = "Enter a valid email address.";
+    }
+    if (form.mobile.trim()) {
+      const mobileError = validateMobile(form.mobile.trim());
+      if (mobileError) nextErrors.mobile = mobileError;
+    }
+    setErrors(nextErrors);
+    if (Object.keys(nextErrors).length > 0) return;
+
+    setBusy(true);
+    try {
+      const { ok, data } = await updateStoreProfile({
+        name: form.name.trim(),
+        mobile: form.mobile.trim(),
+        ...(emailEditable ? { email: form.email.trim() } : {}),
+      });
+      if (!ok || !data.success) {
+        setErrors(data.errors || {});
+        setMsg(data.message || "Could not update profile.");
+        return;
+      }
+      setEditing(false);
+      setMsg("Profile updated.");
+      if (onUpdate) onUpdate({ ...(user || {}), ...(data.user || {}) });
+    } catch {
+      setMsg("Unable to connect. Please try again.");
+    } finally {
+      setBusy(false);
     }
   }
 
   return (
     <div className="sf-auth-wrap">
       <div className="sf-page-title">
-        <button className="sf-link" onClick={onBack}>
-          <FiChevronLeft /> Back to shop
-        </button>
-        <h2>My account</h2>
+        <button className="sf-link" onClick={onBack}><FiChevronLeft /> Back to shop</button>
+        <h2>Account details</h2>
       </div>
       <div className="sf-auth">
-        <div className="sf-auth-tabs">
-          <button className={mode === "login" ? "on" : ""} onClick={() => { setMode("login"); setErr(""); setOk(""); }}>
-            Login
-          </button>
-          <button className={mode === "register" ? "on" : ""} onClick={() => { setMode("register"); setErr(""); setOk(""); }}>
-            Create account
-          </button>
-        </div>
-        <form onSubmit={submit}>
-          {mode === "register" && (
+        {msg && <p className={errors && Object.keys(errors).length ? "auth-msg error" : "auth-msg ok"} role="status">{msg}</p>}
+        {!editing ? (
+          <>
             <div className="sf-field">
               <label>Name</label>
-              <input className="sf-input" required value={form.name} onChange={set("name")} />
+              <input className="sf-input" value={user?.name || ""} readOnly />
             </div>
-          )}
-          <div className="sf-field">
-            <label>Email</label>
-            <input className="sf-input" type="email" required value={form.email} onChange={set("email")} />
-          </div>
-          <div className="sf-field">
-            <label>Password</label>
-            <input className="sf-input" type="password" required minLength={6} value={form.password} onChange={set("password")} />
-          </div>
-          {err && <div className="sf-err">{err}</div>}
-          {ok && <div className="sf-stock ok" style={{ margin: "8px 0" }}>{ok}</div>}
-          <button className="sf-btn green" style={{ width: "100%", justifyContent: "center", padding: 13 }}>
-            {mode === "login" ? "Login" : "Register"}
-          </button>
-        </form>
+            <div className="sf-field" style={{ marginTop: 12 }}>
+              <label>Email</label>
+              <input className="sf-input" value={user?.email || ""} readOnly />
+            </div>
+            <div className="sf-field" style={{ marginTop: 12 }}>
+              <label>Mobile</label>
+              <input className="sf-input" value={user?.mobile || ""} readOnly placeholder="Not set" />
+            </div>
+            <button className="sf-btn green" style={{ width: "100%", marginTop: 14, padding: 12 }} onClick={() => { setEditing(true); setForm({ name: user?.name || "", mobile: user?.mobile || "", email: user?.email || "" }); setErrors({}); setMsg(""); }}>
+              <FiEdit2 /> Update details
+            </button>
+          </>
+        ) : (
+          <form onSubmit={save} noValidate>
+            <div className="sf-field">
+              <label>Name *</label>
+              <input className="sf-input" value={form.name} onChange={set("name")} placeholder="Your name" autoComplete="name" />
+              {errors.name && <p className="sf-field-error">{errors.name}</p>}
+            </div>
+            <div className="sf-field" style={{ marginTop: 12 }}>
+              <label>Email{emailEditable ? " *" : " (cannot be changed)"}</label>
+              <input
+                className="sf-input"
+                value={emailEditable ? form.email : user?.email || ""}
+                onChange={emailEditable ? (e) => { setForm((f) => ({ ...f, email: e.target.value })); setErrors((prev) => ({ ...prev, email: "" })); setMsg(""); } : undefined}
+                readOnly={!emailEditable}
+                type="email"
+                placeholder={emailEditable ? "you@email.com" : undefined}
+                autoComplete="email"
+              />
+              {emailEditable && <p className="muted small">Add your real email to complete registration.</p>}
+              {errors.email && <p className="sf-field-error">{errors.email}</p>}
+            </div>
+            <div className="sf-field" style={{ marginTop: 12 }}>
+              <label>Mobile (used for OTP login)</label>
+              <PhoneInput
+                name="mobile"
+                value={form.mobile}
+                onChange={(v) => { setForm((f) => ({ ...f, mobile: v })); setErrors((prev) => ({ ...prev, mobile: "" })); setMsg(""); }}
+                placeholder="98765 43210"
+                defaultDialCode="+91"
+                error={errors.mobile}
+              />
+            </div>
+            <div className="sf-address-actions" style={{ marginTop: 14 }}>
+              <button type="button" className="sf-btn" onClick={() => { setEditing(false); setErrors({}); setMsg(""); }} disabled={busy}>
+                Cancel
+              </button>
+              <button type="submit" className="sf-btn primary" disabled={busy}>
+                {busy ? "Saving…" : "Save changes"}
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
 }
 
-const CSS = `
-.sf-root {
-  --sf-bg:#f6f7f9; --sf-card:#fff; --sf-ink:#111827; --sf-mut:#6b7280;
-  --sf-ac:#16a34a; --sf-ac-dark:#15803d; --sf-red:#dc2626; --sf-amber:#f59e0b;
-  font-family: system-ui, "Segoe UI", Roboto, sans-serif;
-  background:var(--sf-bg); color:var(--sf-ink); min-height:100vh;
-  display:flex; flex-direction:column;
-}
-.sf-root * { box-sizing:border-box; }
-.muted{color:var(--sf-mut)} .small{font-size:12px} .ok-text{color:var(--sf-ac);font-weight:600}
+function AddressesPanel({ addressBook, notify, onBack }) {
+  const [mode, setMode] = useState("list");
+  const [editing, setEditing] = useState(null);
+  const [saving, setSaving] = useState(false);
 
-/* Announcement bar */
-.sf-announce{background:var(--sf-ink);color:#fff;text-align:center;font-size:12.5px;padding:7px 14px;letter-spacing:.2px}
+  async function handleSubmit(payload) {
+    setSaving(true);
+    const saved = editing
+      ? await addressBook.editAddress(editing.id, payload)
+      : await addressBook.saveAddress(payload);
+    setSaving(false);
+    if (saved) {
+      setEditing(null);
+      setMode("list");
+    }
+  }
 
-/* Header */
-.sf-top{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.95);backdrop-filter:blur(8px);border-bottom:1px solid #e5e7eb}
-.sf-top-in{max-width:1140px;margin:0 auto;display:flex;align-items:center;gap:18px;padding:12px 20px}
-.sf-brand{display:flex;align-items:center;gap:9px;background:none;border:0;cursor:pointer;font-size:19px;font-weight:800;color:var(--sf-ink)}
-.sf-logo{width:34px;height:34px;border-radius:10px;background:var(--sf-ac);color:#fff;display:flex;align-items:center;justify-content:center}
-.sf-brand em{font-style:normal;color:var(--sf-ac)}
-.sf-nav{display:flex;gap:4px;margin-left:8px}
-.sf-nav button{display:flex;align-items:center;gap:6px;background:none;border:0;cursor:pointer;font-size:14px;color:var(--sf-mut);padding:8px 12px;border-radius:9px}
-.sf-nav button:hover{background:#eff6f0;color:var(--sf-ink)}
-.sf-nav button.on{background:var(--sf-ac);color:#fff}
-.sf-spacer{flex:1}
-.sf-cart-btn{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:9px 14px;cursor:pointer;font-size:14px;font-weight:600;position:relative}
-.sf-cart-btn:hover{border-color:var(--sf-ac);background:#f0fdf4}
-.sf-cart-btn b{position:absolute;top:-7px;right:-7px;background:var(--sf-red);color:#fff;border-radius:50%;min-width:19px;height:19px;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid #fff}
-.sf-branch-btn{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:9px 14px;cursor:pointer;font-size:13px;font-weight:600;color:var(--sf-ink);position:relative;z-index:10}
-.sf-branch-btn:hover{border-color:var(--sf-ac);background:#f0fdf4}
-.sf-branch-dropdown{position:absolute;top:calc(100% + 6px);right:0;background:#fff;border:1px solid #e5e7eb;border-radius:12px;box-shadow:0 12px 40px rgba(0,0,0,.12);min-width:240px;z-index:50;overflow:hidden}
-.sf-branch-option{display:block;width:100%;text-align:left;background:none;border:0;padding:10px 16px;cursor:pointer;font-size:13px;border-bottom:1px solid #f3f4f6}
-.sf-branch-option:last-child{border-bottom:0}
-.sf-branch-option:hover{background:#f0fdf4}
-.sf-branch-option.on{background:#f0fdf4;color:var(--sf-ac);font-weight:700}
-.sf-branch-option strong{display:block;font-size:14px;color:var(--sf-ink)}
-.sf-branch-option span{display:block;font-size:11.5px;color:var(--sf-mut)}
-.sf-branch-option.on strong{color:var(--sf-ac)}
-.sf-branch-option.on span{color:var(--sf-ac)}
-
-/* Body / footer */
-.sf-body{flex:1;max-width:1140px;margin:0 auto;padding:24px 20px 60px;width:100%}
-.sf-footer{margin-top:30px;background:var(--sf-ink);color:#d1d5db;display:grid;grid-template-columns:2fr 1fr 1fr;gap:30px;padding:40px 20px}
-.sf-footer > div{max-width:1140px;margin:0 auto;width:100%}
-.sf-footer-b{border-top:1px solid rgba(255,255,255,.1);padding-top:20px;margin-top:30px;max-width:1140px;margin-left:auto;margin-right:auto}
-.sf-footer b{display:block;color:#fff;margin-bottom:10px}
-.sf-footer-brand{font-size:18px;color:var(--sf-ac)}
-.sf-footer-brand em{font-style:normal;color:#fff}
-.sf-footer p{font-size:13px;line-height:1.6;max-width:320px}
-.sf-footer button,.sf-footer span{display:block;background:none;border:0;color:#d1d5db;font-size:13px;padding:3px 0;cursor:pointer;text-align:left}
-.sf-footer button:hover{color:#fff}
-
-/* Trust strip */
-.sf-trust{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:20px}
-.sf-trust span{display:flex;align-items:center;gap:6px;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 13px;font-size:12.5px;font-weight:600;color:var(--sf-mut)}
-.sf-trust svg{color:var(--sf-ac)}
-
-/* Banner */
-.sf-banner{position:relative;border-radius:16px;overflow:hidden;margin-bottom:22px;cursor:pointer;box-shadow:0 4px 18px rgba(0,0,0,.08)}
-.sf-banner img{width:100%;height:280px;object-fit:cover;display:block;background:#eef2f7}
-.sf-banner-veil{position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.45),transparent 60%)}
-.sf-banner-text{position:absolute;left:26px;top:50%;transform:translateY(-50%);color:#fff;max-width:420px}
-.sf-banner-text h2{font-size:26px;margin:0 0 6px;text-shadow:0 2px 6px rgba(0,0,0,.4)}
-.sf-banner-text p{margin:0;font-size:14px;opacity:.95}
-.sf-banner-cta{display:inline-block;margin-top:14px;background:var(--sf-ac);padding:9px 16px;border-radius:9px;font-weight:700;font-size:13px}
-.sf-banner-expiry{display:inline-flex;align-items:center;gap:6px;margin-top:12px;padding:8px 12px;border-radius:8px;background:#0f172a;color:#fecaca;font-weight:600;font-size:11.5px;font-style:normal}
-.sf-banner-expiry::before{content:"";width:7px;height:7px;border-radius:50%;background:#f87171;animation:sf-pulse 1.2s infinite}
-@keyframes sf-pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(.85)}}
-.sf-banner-dots{position:absolute;bottom:14px;left:50%;transform:translateX(-50%);display:flex;gap:7px}
-.sf-banner-dots span{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,.6);cursor:pointer}
-.sf-banner-dots span.on{background:#fff;width:22px;border-radius:4px}
-
-/* Category chips */
-.sf-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px}
-.sf-cats button{background:#fff;border:1px solid #e5e7eb;border-radius:20px;padding:7px 15px;font-size:13px;cursor:pointer;font-weight:600;color:var(--sf-mut)}
-.sf-cats button:hover{border-color:var(--sf-ac);color:var(--sf-ac)}
-.sf-cats button.on{background:var(--sf-ac);border-color:var(--sf-ac);color:#fff}
-
-/* Toolbar / search */
-.sf-toolbar{display:flex;gap:10px;margin-bottom:20px}
-.sf-search{flex:1;display:flex;align-items:center;gap:9px;background:#fff;border:1px solid #e5e7eb;border-radius:11px;padding:0 14px;max-width:460px}
-.sf-search svg{color:var(--sf-mut)}
-.sf-search input{border:0;outline:0;flex:1;padding:12px 0;font-size:14px;background:transparent;color:var(--sf-ink)}
-.sf-search input:focus+.sf-search{outline:none}
-
-/* Buttons */
-.sf-btn{border:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:14px;font-weight:600;padding:10px 16px;border-radius:10px;color:var(--sf-ink);background:#f3f4f6}
-.sf-btn:hover{filter:brightness(.97)}
-.sf-btn.primary{background:var(--sf-ac);color:#fff}
-.sf-btn.primary:hover{background:var(--sf-ac-dark)}
-.sf-btn.green{background:var(--sf-ac);color:#fff}
-.sf-btn.green:hover{background:var(--sf-ac-dark)}
-.sf-btn.ghost{background:#fff;border:1px solid #e5e7eb}
-.sf-btn:disabled{opacity:.45;cursor:not-allowed}
-
-/* Inputs */
-.sf-input{border:1px solid #d1d5db;border-radius:10px;padding:10px 12px;font-size:14px;background:#fff;color:var(--sf-ink);width:100%}
-.sf-input:focus{outline:2px solid var(--sf-ac);outline-offset:1px;border-color:transparent}
-.sf-field label{display:block;font-size:13px;font-weight:600;margin-bottom:5px}
-
-/* Product grid / cards */
-.sf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:16px}
-.sf-card{background:var(--sf-card);border-radius:14px;border:1px solid #e5e7eb;overflow:hidden;display:flex;flex-direction:column;cursor:pointer;transition:transform .15s,box-shadow .15s}
-.sf-card:hover{transform:translateY(-3px);box-shadow:0 10px 24px rgba(0,0,0,.10)}
-.sf-card-img{position:relative;overflow:hidden;background:#fff}
-.sf-card-img img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;transition:transform .3s}
-.sf-card:hover .sf-card-img img{transform:scale(1.05)}
-.sf-badge-off{position:absolute;top:10px;left:10px;background:var(--sf-red);color:#fff;font-size:12px;font-weight:700;padding:3px 9px;border-radius:8px}
-.sf-badge-feat{position:absolute;top:10px;right:10px;background:var(--sf-amber);color:#fff;font-size:11px;font-weight:700;padding:3px 8px;border-radius:8px}
-.sf-cover{position:absolute;inset:0;background:rgba(255,255,255,.75);display:flex;align-items:center;justify-content:center;color:var(--sf-red);font-weight:700;font-size:15px}
-.sf-card-body{padding:13px;display:flex;flex-direction:column;gap:6px;flex:1}
-.sf-cat{font-size:11.5px;color:var(--sf-mut);text-transform:uppercase;letter-spacing:.4px}
-.sf-name{font-weight:600;font-size:14px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:38px}
-.sf-stars{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--sf-innk)}
-.sf-stars-row{display:inline-flex;color:var(--sf-amber)}
-.sf-stars svg.off{color:#d1d5db}
-.sf-price{display:flex;align-items:baseline;gap:8px}
-.sf-now{font-weight:800;font-size:16px}
-.sf-was{font-size:12px;color:var(--sf-mut);text-decoration:line-through}
-.sf-off{font-size:12px;color:var(--sf-ac);font-weight:700}
-.sf-stock{font-size:12px}
-.sf-stock.low{color:var(--sf-red);font-weight:600}
-.sf-stock.ok{color:var(--sf-ac)}
-.sf-card-actions{margin-top:auto;display:flex;gap:8px;padding-top:6px}
-.sf-card-actions .sf-btn{flex:1;font-size:13px;padding:9px 6px}
-.sf-card-actions .add{background:var(--sf-ac);color:#fff}
-
-/* Skeleton */
-.sf-skeleton{pointer-events:none}
-.sk-img{aspect-ratio:1/1;background:linear-gradient(100deg,#eef2f7 40%,#f8fafc 50%,#eef2f7 60%)}
-.sf-skeleton .sk{display:block;border-radius:6px;background:linear-gradient(100deg,#eef2f7 40%,#f8fafc 50%,#eef2f7 60%)}
-.sk-l{height:14px;width:70%}.sk-m{height:12px;width:90%}.sk-s{height:11px;width:45%}
-
-/* Pagination */
-.sf-pager{display:flex;justify-content:center;align-items:center;gap:6px;margin-top:26px}
-.sf-pager .sf-btn{border:1px solid #e5e7eb;background:#fff;min-width:36px;height:36px}
-.sf-page{min-width:36px;height:36px;border-radius:9px;border:1px solid #e5e7eb;background:#fff;cursor:pointer;font-weight:600}
-.sf-page.active{background:var(--sf-ac);color:#fff;border-color:var(--sf-ac)}
-.sf-pager-pos{display:flex;gap:6px;align-items:center}
-.sf-ellipsis{color:var(--sf-mut);padding:0 2px}
-
-/* Toast / errors / empty */
-.sf-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--sf-ink);color:#fff;padding:11px 18px;border-radius:11px;font-size:14px;z-index:100;box-shadow:0 8px 24px rgba(0,0,0,.25);animation:sfPop .2s ease}
-@keyframes sfPop{from{opacity:0;transform:translateX(-50%) translateY(8px)}}
-.sf-err{background:#fef2f2;color:var(--sf-red);border:1px solid #fecaca;padding:11px 14px;border-radius:10px;font-size:14px;margin-bottom:14px}
-.sf-empty{text-align:center;color:var(--sf-mut);padding:60px 16px}
-.sf-empty svg{margin:0 auto 12px;color:var(--sf-mut)}
-.sf-empty p{margin:0 0 16px;font-size:15px}
-.sf-empty{margin:0}
-.sf-empty .sf-btn{display:inline-flex;margin:0 auto}
-
-/* Breadcrumb */
-.sf-breadcrumb{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--sf-mut);margin-bottom:16px;flex-wrap:wrap}
-.sf-breadcrumb button{background:none;border:0;cursor:pointer;color:var(--sf-ac);font-weight:600;font-size:13px;padding:0}
-.sf-breadcrumb b{color:var(--sf-ink)}
-
-/* Detail */
-.sf-detail{display:grid;grid-template-columns:1fr 1fr;gap:32px;background:var(--sf-card);border:1px solid #e5e7eb;border-radius:16px;padding:24px}
-.sf-gallery img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:12px;background:#f1f5f9}
-.sf-thumbs{display:flex;gap:9px;margin-top:10px}
-.sf-thumbs img{width:60px;height:60px;object-fit:cover;border-radius:9px;cursor:pointer;border:2px solid transparent}
-.sf-thumbs img.on{border-color:var(--sf-ac)}
-.sf-info h2{margin:2px 0 8px;font-size:22px}
-.sf-short{color:var(--sf-mut);font-size:14px;margin:4px 0 12px;line-height:1.5}
-.sf-specs{display:grid;grid-template-columns:1fr 1fr;gap:1px;background:#e5e7eb;border:1px solid #e5e7eb;border-radius:10px;overflow:hidden;margin:16px 0;font-size:13px}
-.sf-spec{background:#fff;padding:9px 12px;display:flex;justify-content:space-between;gap:10px}
-.sf-spec span{color:var(--sf-mut)}
-.sf-qty{display:flex;align-items:center;gap:14px;margin:18px 0}
-.sf-qty > span{font-weight:600;font-size:14px}
-.sf-stepper{display:flex;align-items:center;gap:2px;border:1px solid #d1d5db;border-radius:10px;overflow:hidden;background:#fff}
-.sf-stepper button{width:36px;height:38px;border:0;background:#f9fafb;cursor:pointer;display:flex;align-items:center;justify-content:center;color:var(--sf-ink)}
-.sf-stepper button:hover{background:#eef2f7}
-.sf-stepper b{min-width:36px;text-align:center;font-size:15px}
-.sf-stepper.small button{width:30px;height:30px}
-.sf-stepper.small b{min-width:30px;font-size:14px}
-.sf-cta{display:flex;gap:10px}
-.sf-cta .sf-btn{flex:1;padding:13px;font-size:15px}
-.sf-offers{display:grid;gap:8px;margin-top:16px;padding-top:16px;border-top:1px dashed #e5e7eb}
-.sf-offers div{display:flex;align-items:center;gap:9px;font-size:13px;color:var(--sf-mut)}
-.sf-offers svg{color:var(--sf-ac)}
-.sf-desc{margin-top:22px}
-.sf-desc h3{font-size:15px;margin:0 0 6px}
-.sf-desc p{font-size:14px;color:var(--sf-mut);white-space:pre-line;line-height:1.6}
-
-/* Page title */
-.sf-page-title{margin-bottom:18px}
-.sf-page-title h2{margin:6px 0 0;font-size:22px}
-.sf-link{display:inline-flex;align-items:center;gap:4px;background:none;border:0;cursor:pointer;color:var(--sf-ac);font-weight:600;font-size:14px;padding:0}
-
-/* Cart */
-.sf-cart-cols{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start}
-.sf-lines{display:grid;gap:10px}
-.sf-line{display:flex;gap:14px;align-items:center;background:var(--sf-card);border:1px solid #e5e7eb;border-radius:12px;padding:12px}
-.sf-line img{width:70px;height:70px;object-fit:cover;border-radius:9px;background:#f1f5f9}
-.sf-line-mid{flex:1}
-.sf-line-name{font-weight:600;font-size:14px}
-.sf-line-right{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
-.sf-line-total{font-weight:700;font-size:15px}
-.sf-icon-btn{background:none;border:0;cursor:pointer;color:var(--sf-mut);padding:6px}
-.sf-icon-btn:hover{color:var(--sf-red)}
-.sf-totals{background:var(--sf-card);border:1px solid #e5e7eb;border-radius:14px;padding:18px}
-.sf-totals h3{margin:0 0 12px;font-size:16px}
-.sf-totals-row{display:flex;justify-content:space-between;padding:7px 0;font-size:13.5px;gap:10px}
-.sf-totals-row.grand{font-weight:800;font-size:16px;border-top:1px solid #e5e7eb;margin-top:6px;padding-top:12px}
-.sf-totals .checkout{width:100%;margin-top:14px;padding:13px}
-.sf-totals .small{padding-top:10px;color:var(--sf-mut)}
-.sf-totals.sticky{position:sticky;top:84px}
-.sf-totals .sf-totals-row span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis}
-
-/* Checkout */
-.sf-checkout-cols{display:grid;grid-template-columns:1fr 340px;gap:20px;align-items:start}
-.sf-checkout-form{display:grid;gap:16px}
-.sf-section{background:var(--sf-card);border:1px solid #e5e7eb;border-radius:14px;padding:18px}
-.sf-section h3{display:flex;align-items:center;gap:8px;margin:0 0 14px;font-size:15px}
-.sf-section h3 svg{color:var(--sf-ac)}
-.sf-row-2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.sf-row-3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-.sf-radio{display:flex;align-items:center;gap:11px;border:1px solid #d1d5db;border-radius:11px;padding:13px;cursor:pointer;margin-bottom:9px;background:#fff}
-.sf-radio svg{color:var(--sf-mut)}
-.sf-radio.on{border-color:var(--sf-ac);background:#f0fdf4}
-.sf-radio.on svg{color:var(--sf-ac)}
-.sf-radio input{accent-color:var(--sf-ac)}
-.sf-radio span{display:flex;flex-direction:column;gap:2px}
-.sf-radio small{color:var(--sf-mut)}
-.sf-btn.place{width:100%;padding:14px;font-size:15px}
-
-/* Track */
-.sf-track-card{background:var(--sf-card);border:1px solid #e5e7eb;border-radius:16px;padding:22px}
-.sf-track-meta{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:6px}
-.sf-track-meta > div{background:#f9fafb;border:1px solid #e5e7eb;border-radius:11px;padding:12px 14px;display:flex;flex-direction:column;gap:3px}
-.sf-track-meta span{font-size:12px;color:var(--sf-mut)}
-.sf-track-meta b{font-size:14px}
-.sf-timeline{display:flex;justify-content:space-between;margin:26px 0;position:relative}
-.sf-timeline:before{content:"";position:absolute;top:12px;left:8%;right:8%;height:3px;border-radius:3px;background:#e5e7eb}
-.sf-step{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;gap:7px;width:20%;font-size:11.5px;color:var(--sf-mut);text-align:center}
-.sf-dot{width:25px;height:25px;border-radius:50%;background:#fff;border:2.5px solid #e5e7eb;display:flex;align-items:center;justify-content:center;font-size:11px;color:#fff;transition:all .2s}
-.sf-step.done .sf-dot{border-color:var(--sf-ac);background:var(--sf-ac)}
-.sf-step.done{color:var(--sf-ink);font-weight:600}
-.sf-step.current .sf-dot{border-color:var(--sf-ac);background:#fff;color:var(--sf-ac);box-shadow:0 0 0 4px rgba(22,163,74,.15)}
-.sf-step.current .sf-dot span{color:var(--sf-ac);font-size:9px}
-.sf-history{margin:18px 0 4px;padding:14px 16px;background:#f8faf7;border:1px solid #e3ece5;border-radius:12px}
-.sf-history h4{margin:0 0 10px;font-size:12px;text-transform:uppercase;letter-spacing:.5px;color:var(--sf-mut)}
-.sf-history-row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;font-size:13px;border-bottom:1px dashed #dfe8e1}
-.sf-history-row:last-child{border-bottom:0}
-.sf-history-row b{font-weight:600;color:var(--sf-ink)}
-.sf-history-row .sf-h-time{color:var(--sf-mut);font-size:12.5px}
-.sf-checkout-store{display:flex;align-items:center;gap:8px;margin-top:12px;padding:11px 13px;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;font-size:13px;color:var(--sf-ac-dark)}
-.sf-checkout-store b{font-weight:700}
-.sf-checkout-store svg{flex-shrink:0}
-.sf-addr{display:flex;align-items:flex-start;gap:8px;margin-top:16px;padding:13px;background:#f9fafb;border-radius:10px;font-size:13.5px;color:var(--sf-mut)}
-.sf-addr svg{color:var(--sf-ac);flex-shrink:0;margin-top:2px}
-.sf-track-form-wrap,.sf-auth-wrap{max-width:520px}
-.sf-track-form{background:var(--sf-card);border:1px solid #e5e7eb;border-radius:14px;padding:20px;display:grid;gap:4px}
-
-/* Auth */
-.sf-auth{background:var(--sf-card);border:1px solid #e5e7eb;border-radius:16px;padding:22px}
-.sf-auth-tabs{display:flex;gap:8px;margin-bottom:18px;background:#f3f4f6;border-radius:11px;padding:5px}
-.sf-auth-tabs button{flex:1;border:0;background:none;cursor:pointer;padding:9px;border-radius:8px;font-weight:600;font-size:14px;color:var(--sf-mut)}
-.sf-auth-tabs button.on{background:#fff;color:var(--sf-ac);box-shadow:0 1px 4px rgba(0,0,0,.08)}
-
-@media (max-width:820px){
-  .sf-detail{grid-template-columns:1fr}
-  .sf-cart-cols,.sf-checkout-cols{grid-template-columns:1fr}
-  .sf-totals.sticky{position:static}
-  .sf-track-meta{grid-template-columns:1fr}
-  .sf-footer{grid-template-columns:1fr}
-  .sf-banner-text h2{font-size:20px}
-}
-@media (max-width:520px){
-  .sf-top-in{flex-wrap:wrap;gap:8px}
-  .sf-nav{margin-left:0;order:3}
-  .sf-toolbar{flex-direction:column}
-  .sf-search{max-width:none}
-  .sf-row-2,.sf-row-3{grid-template-columns:1fr}
-  .sf-banner img{height:200px}
+  return (
+    <div className="sf-auth-wrap">
+      <div className="sf-page-title">
+        <button className="sf-link" onClick={onBack}><FiChevronLeft /> Back to shop</button>
+        <h2>Saved addresses</h2>
+      </div>
+      {mode === "list" ? (
+        <>
+          <div className="sf-address-list">
+            {addressBook.loading && <p className="muted">Loading saved addresses…</p>}
+            {addressBook.error && <p className="sf-err">{addressBook.error}</p>}
+            {!addressBook.loading && addressBook.addresses.length === 0 && (
+              <div className="sf-empty"><p>No saved addresses yet.</p></div>
+            )}
+            {addressBook.addresses.map((entry) => (
+              <div key={entry.id} className="sf-address-row">
+                <div className="sf-line-mid">
+                  <div className="sf-line-name"><FiMapPin /> {entry.label}{entry.isDefault ? " · Default" : ""}</div>
+                  <div className="muted">{[entry.line1, entry.line2, entry.landmark].filter(Boolean).join(", ")}</div>
+                  <div className="muted">{entry.city}, {entry.state} — {entry.postalCode} · {entry.phone}</div>
+                </div>
+                <span className="sf-address-row-actions">
+                  <button type="button" className="sf-icon-btn" title="Edit" onClick={() => { setEditing(entry); setMode("form"); }}><FiEdit2 /></button>
+                  <button type="button" className="sf-icon-btn" title="Delete" onClick={() => addressBook.removeAddress(entry.id)}><FiTrash2 /></button>
+                </span>
+              </div>
+            ))}
+          </div>
+          <button type="button" className="sf-btn green" style={{ width: "100%", marginTop: 14, padding: 12 }} onClick={() => { setEditing(null); setMode("form"); }}>
+            <FiPlus /> Add address
+          </button>
+        </>
+      ) : (
+        <AddressForm
+          initial={editing}
+          saving={saving}
+          notify={notify}
+          onCancel={() => { setEditing(null); setMode("list"); }}
+          onSubmit={handleSubmit}
+        />
+      )}
+    </div>
+  );
 }
 
-/* Variant selector */
-.sf-variants{margin:10px 0}
-.sf-variants-label{font-size:13px;font-weight:600;margin-bottom:6px;color:var(--sf-ink)}
-.sf-variants-list{display:flex;flex-wrap:wrap;gap:8px}
-.sf-variant-btn{background:#fff;border:1.5px solid #d1d5db;border-radius:9px;padding:7px 14px;font-size:13px;font-weight:600;cursor:pointer;color:var(--sf-mut);transition:border-color .15s,background .15s}
-.sf-variant-btn:hover{border-color:var(--sf-ac);color:var(--sf-ac)}
-.sf-variant-btn.on{background:var(--sf-ac);border-color:var(--sf-ac);color:#fff}
-.sf-variant-btn.disabled{opacity:.4;cursor:not-allowed;text-decoration:line-through}
-.sf-variant-btn.disabled:hover{border-color:#d1d5db;color:var(--sf-mut)}
-.sf-variant-oo{display:block;font-size:10px;font-weight:400;color:var(--sf-red);text-align:center;margin-top:2px}
-.sf-variants-preview{display:flex;flex-wrap:wrap;gap:5px;margin:4px 0 6px}
-.sf-variant-chip{background:#f0fdf4;border:1px solid #bbf7d0;color:var(--sf-ac-dark);font-size:11px;font-weight:600;padding:2px 8px;border-radius:12px}
-.sf-variant-chip.more{background:#f3f4f6;border-color:#d1d5db;color:var(--sf-mut)}
-.sf-line-variant{display:inline-block;background:#f0fdf4;color:var(--sf-ac-dark);font-size:11px;font-weight:600;padding:1px 6px;border-radius:8px;margin-left:6px;vertical-align:middle}
-.sf-variant-sku{font-size:12px;color:var(--sf-mut)}
-
-/* ============================================================
-   V2 DESIGN SYSTEM — refresh layer (overrides above)
-   ============================================================ */
-.sf-root{
-  --sf-bg:#f4f6f3; --sf-card:#fff; --sf-ink:#101b10; --sf-mut:#68766b;
-  --sf-ac:#1f9d55; --sf-ac-dark:#157347; --sf-ac-soft:#eaf7ef;
-  --sf-red:#dc2626; --sf-amber:#f59e0b;
-  --sf-line:#e5e9e4; --sf-line-soft:#eef1ec;
-  --sf-r-lg:18px; --sf-r-md:13px; --sf-r-sm:10px;
-  --sf-sh-sm:0 1px 2px rgba(16,27,16,.05),0 2px 8px rgba(16,27,16,.04);
-  --sf-sh-md:0 6px 20px rgba(16,27,16,.08);
-  --sf-sh-lg:0 18px 50px rgba(16,27,16,.16);
-  font-family:system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;
-  -webkit-font-smoothing:antialiased;
-  background:var(--sf-bg); color:var(--sf-ink); min-height:100vh;
-  display:flex; flex-direction:column;
+function GiftCardsPanel({ onBack }) {
+  const [code, setCode] = useState("");
+  return (
+    <div className="sf-auth-wrap">
+      <div className="sf-page-title">
+        <button className="sf-link" onClick={onBack}><FiChevronLeft /> Back to shop</button>
+        <h2>E-Gift Cards</h2>
+      </div>
+      <div className="sf-auth">
+        <div className="sf-field">
+          <label>Redeem a gift card</label>
+          <input
+            className="sf-input"
+            value={code}
+            onChange={(e) => setCode(e.target.value)}
+            placeholder="Enter gift card code"
+          />
+        </div>
+        <button
+          className="sf-btn green"
+          style={{ width: "100%", marginTop: 12, padding: 12 }}
+          disabled={!code.trim()}
+        >
+          Redeem
+        </button>
+        <div className="sf-empty" style={{ padding: "24px 0 0" }}>
+          <FiGift size={30} />
+          <p>You have no gift cards yet.</p>
+        </div>
+      </div>
+    </div>
+  );
 }
-
-/* Announcement */
-.sf-announce{background:#0d1f12;color:#cfe8d6;text-align:center;font-size:12.5px;padding:8px 14px;letter-spacing:.2px}
-.sf-announce-in{display:inline-flex;align-items:center;gap:14px;flex-wrap:wrap;justify-content:center}
-.sf-announce-item{display:inline-flex;align-items:center;gap:6px}
-.sf-announce-item svg{color:#4ade80}
-.sf-announce-dot{width:4px;height:4px;border-radius:50%;background:#3a5c44;display:inline-block}
-
-/* Header */
-.sf-top{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.88);backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);border-bottom:1px solid var(--sf-line)}
-.sf-top-in{max-width:1180px;margin:0 auto;display:flex;align-items:center;gap:16px;padding:10px 20px}
-.sf-brand{display:flex;align-items:center;gap:9px;background:none;border:0;cursor:pointer;font-size:19px;font-weight:800;color:var(--sf-ink);letter-spacing:-.2px}
-.sf-logo{width:36px;height:36px;border-radius:11px;background:linear-gradient(135deg,var(--sf-ac),var(--sf-ac-dark));color:#fff;display:flex;align-items:center;justify-content:center;box-shadow:var(--sf-sh-sm)}
-.sf-brand em{font-style:normal;color:var(--sf-ac)}
-.sf-nav{display:flex;gap:4px;margin-left:6px}
-.sf-nav button{display:flex;align-items:center;gap:6px;background:none;border:0;cursor:pointer;font-size:13.5px;font-weight:600;color:var(--sf-mut);padding:8px 13px;border-radius:var(--sf-r-sm);transition:background .15s,color .15s}
-.sf-nav button:hover{background:var(--sf-ac-soft);color:var(--sf-ac-dark)}
-.sf-nav button.on{background:var(--sf-ac-soft);color:var(--sf-ac-dark)}
-.sf-spacer{flex:1}
-.sf-cart-btn{display:flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--sf-line);border-radius:var(--sf-r-sm);padding:8px 14px;cursor:pointer;font-size:13.5px;font-weight:600;position:relative;transition:border-color .15s,background .15s}
-.sf-cart-btn:hover{border-color:var(--sf-ac);background:var(--sf-ac-soft)}
-.sf-cart-btn b{position:absolute;top:-7px;right:-7px;background:var(--sf-red);color:#fff;border-radius:50%;min-width:19px;height:19px;font-size:11px;display:flex;align-items:center;justify-content:center;padding:0 4px;border:2px solid #fff}
-
-/* Store selector */
-.sf-branch-wrap{position:relative}
-.sf-branch-btn{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--sf-line);border-radius:var(--sf-r-sm);padding:6px 12px;cursor:pointer;color:var(--sf-ink);transition:border-color .15s,background .15s}
-.sf-branch-btn:hover{border-color:var(--sf-ac);background:var(--sf-ac-soft)}
-.sf-branch-btn > svg:last-child{color:var(--sf-mut)}
-.sf-branch-btn > svg:first-child{color:var(--sf-ac)}
-.sf-branch-txt{display:flex;flex-direction:column;align-items:flex-start;line-height:1.15}
-.sf-branch-txt small{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--sf-mut);font-weight:600}
-.sf-branch-txt strong{font-size:13px;font-weight:700;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sf-branch-dropdown{position:absolute;top:calc(100% + 8px);right:0;background:#fff;border:1px solid var(--sf-line);border-radius:var(--sf-r-md);box-shadow:var(--sf-sh-lg);min-width:260px;z-index:60;overflow:hidden;animation:sfDrop .16s ease}
-@keyframes sfDrop{from{opacity:0;transform:translateY(-5px)}}
-.sf-branch-head{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--sf-mut);padding:11px 16px 7px}
-.sf-branch-option{display:block;width:100%;text-align:left;background:none;border:0;padding:10px 16px;cursor:pointer;border-bottom:1px solid var(--sf-line-soft)}
-.sf-branch-option:last-of-type{border-bottom:0}
-.sf-branch-option:hover{background:var(--sf-ac-soft)}
-.sf-branch-option.on{background:var(--sf-ac-soft)}
-.sf-branch-option strong{display:flex;align-items:center;gap:7px;font-size:13.5px;color:var(--sf-ink)}
-.sf-branch-option span{display:block;font-size:11.5px;color:var(--sf-mut);margin-top:1px}
-.sf-branch-option.on strong{color:var(--sf-ac-dark)}
-.sf-branch-code{font-style:normal;font-size:10px;font-weight:700;background:var(--sf-ac-soft);color:var(--sf-ac-dark);padding:1px 6px;border-radius:6px;letter-spacing:.4px}
-.sf-branch-none{padding:16px;text-align:center;font-size:12.5px;color:var(--sf-mut)}
-
-/* Hero */
-.sf-hero{position:relative;border-radius:22px;overflow:hidden;margin-bottom:22px;isolation:isolate}
-.sf-hero-bg{position:absolute;inset:0;z-index:-1;background:linear-gradient(115deg,#0d3b1e 0%,#14532d 45%,#1f7a3f 100%)}
-.sf-hero-bg::before{content:"";position:absolute;inset:0;background:radial-gradient(720px 340px at 88% 8%,rgba(74,222,128,.28),transparent 60%),radial-gradient(520px 300px at 8% 100%,rgba(255,255,255,.10),transparent 55%)}
-.sf-hero-in{padding:52px 48px 48px;color:#fff}
-.sf-hero-kicker{display:inline-flex;align-items:center;gap:7px;background:rgba(255,255,255,.13);border:1px solid rgba(255,255,255,.22);padding:6px 13px;border-radius:99px;font-size:12.5px;font-weight:600;color:#d8f5e0}
-.sf-hero-in h1{font-size:36px;line-height:1.16;letter-spacing:-.6px;margin:16px 0 8px;font-weight:800}
-.sf-hero-in > p{font-size:15px;color:#c8e6d1;max-width:540px;margin:0 0 24px;line-height:1.55}
-.sf-hero-search{display:flex;align-items:center;gap:10px;background:#fff;border-radius:14px;padding:6px 6px 6px 16px;max-width:560px;box-shadow:var(--sf-sh-lg)}
-.sf-hero-search > svg{color:var(--sf-mut);flex-shrink:0}
-.sf-hero-search input{border:0;outline:0;flex:1;min-width:0;padding:11px 0;font-size:14.5px;background:transparent;color:var(--sf-ink)}
-.sf-hero-go{border-radius:10px;padding:11px 22px}
-.sf-hero-tags{display:flex;gap:8px;margin-top:14px;flex-wrap:wrap}
-.sf-hero-tags button{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.22);color:#e4f6ea;border-radius:99px;padding:6px 14px;font-size:12.5px;font-weight:600;cursor:pointer;transition:background .15s}
-.sf-hero-tags button:hover{background:rgba(255,255,255,.22)}
-
-/* Trust strip */
-.sf-trust{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:22px}
-.sf-trust span{display:flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--sf-line);border-radius:var(--sf-r-md);padding:12px 14px;font-size:13px;font-weight:600;color:var(--sf-ink);box-shadow:var(--sf-sh-sm)}
-.sf-trust svg{color:var(--sf-ac);flex-shrink:0}
-
-/* Category chips */
-.sf-cats{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px}
-.sf-cats button{background:#fff;border:1px solid var(--sf-line);border-radius:99px;padding:7px 16px;font-size:13px;cursor:pointer;font-weight:600;color:var(--sf-mut);transition:all .15s}
-.sf-cats button:hover{border-color:var(--sf-ac);color:var(--sf-ac-dark);background:var(--sf-ac-soft)}
-.sf-cats button.on{background:var(--sf-ink);border-color:var(--sf-ink);color:#fff}
-
-/* Section head */
-.sf-section-head{display:flex;align-items:flex-end;justify-content:space-between;gap:14px;margin:6px 0 14px}
-.sf-section-head h2{margin:0;font-size:20px;font-weight:800;letter-spacing:-.3px}
-.sf-section-head p{margin:3px 0 0;font-size:12.5px;color:var(--sf-mut)}
-.sf-section-page{font-size:12px;color:var(--sf-mut);background:#fff;border:1px solid var(--sf-line);padding:5px 12px;border-radius:99px;white-space:nowrap}
-
-/* Buttons / inputs */
-.sf-btn{border:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;gap:7px;font-size:14px;font-weight:600;padding:10px 16px;border-radius:var(--sf-r-sm);color:var(--sf-ink);background:#eef1ec;transition:filter .15s,background .15s}
-.sf-btn:hover{filter:brightness(.97)}
-.sf-btn.primary,.sf-btn.green{background:var(--sf-ac);color:#fff}
-.sf-btn.primary:hover,.sf-btn.green:hover{background:var(--sf-ac-dark);filter:none}
-.sf-btn.ghost{background:#fff;border:1px solid var(--sf-line)}
-.sf-btn:disabled{opacity:.45;cursor:not-allowed}
-.sf-input{border:1px solid var(--sf-line);border-radius:var(--sf-r-sm);padding:10px 12px;font-size:14px;background:#fff;color:var(--sf-ink);width:100%;transition:border-color .15s,box-shadow .15s}
-.sf-input:focus{outline:none;border-color:var(--sf-ac);box-shadow:0 0 0 3px rgba(31,157,85,.14)}
-.sf-field label{display:block;font-size:12.5px;font-weight:700;margin-bottom:5px}
-
-/* Cards */
-.sf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(236px,1fr));gap:16px}
-.sf-card{background:var(--sf-card);border-radius:var(--sf-r-lg);border:1px solid var(--sf-line-soft);overflow:hidden;display:flex;flex-direction:column;cursor:pointer;transition:transform .18s,box-shadow .18s,border-color .18s;box-shadow:var(--sf-sh-sm)}
-.sf-card:hover{transform:translateY(-3px);box-shadow:var(--sf-sh-md);border-color:var(--sf-line)}
-.sf-card-img{position:relative;overflow:hidden;background:#f4f6f3}
-.sf-card-img img{width:100%;aspect-ratio:1/1;object-fit:cover;display:block;transition:transform .35s}
-.sf-card:hover .sf-card-img img{transform:scale(1.05)}
-.sf-badge-off{position:absolute;top:10px;left:10px;background:var(--sf-red);color:#fff;font-size:11px;font-weight:800;padding:4px 9px;border-radius:8px;letter-spacing:.3px}
-.sf-badge-feat{position:absolute;top:10px;right:10px;background:var(--sf-amber);color:#fff;font-size:11px;font-weight:700;padding:4px 9px;border-radius:8px}
-.sf-cover{position:absolute;inset:0;background:rgba(255,255,255,.78);backdrop-filter:blur(1px);display:flex;align-items:center;justify-content:center;color:var(--sf-red);font-weight:800;font-size:14px}
-.sf-card-body{padding:13px 14px 14px;display:flex;flex-direction:column;gap:5px;flex:1}
-.sf-cat{font-size:10.5px;color:var(--sf-mut);text-transform:uppercase;letter-spacing:.6px;font-weight:700}
-.sf-name{font-weight:700;font-size:14px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:38px}
-.sf-card-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:4px}
-.sf-add-btn{width:34px;height:34px;border-radius:10px;border:0;background:var(--sf-ac);color:#fff;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0;transition:background .15s,transform .12s}
-.sf-add-btn:hover{background:var(--sf-ac-dark);transform:scale(1.06)}
-.sf-add-btn:disabled{opacity:.4;cursor:not-allowed;transform:none}
-
-/* Skeleton / pager / toast / empty */
-.sf-skeleton{pointer-events:none}
-.sk-img{aspect-ratio:1/1;background:linear-gradient(100deg,#eef2f0 40%,#f7faf8 50%,#eef2f0 60%)}
-.sf-skeleton .sk{display:block;border-radius:6px;background:linear-gradient(100deg,#eef2f0 40%,#f7faf8 50%,#eef2f0 60%)}
-.sf-page{min-width:36px;height:36px;border-radius:var(--sf-r-sm);border:1px solid var(--sf-line);background:#fff;cursor:pointer;font-weight:600}
-.sf-page.active{background:var(--sf-ac);color:#fff;border-color:var(--sf-ac)}
-.sf-toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#132a18;color:#fff;padding:12px 18px;border-radius:12px;font-size:14px;z-index:100;box-shadow:var(--sf-sh-lg);animation:sfPop .2s ease;display:flex;align-items:center;gap:9px}
-.sf-toast::before{content:"";width:8px;height:8px;border-radius:50%;background:#4ade80}
-
-/* Sections */
-.sf-section{background:var(--sf-card);border:1px solid var(--sf-line);border-radius:var(--sf-r-lg);padding:20px;box-shadow:var(--sf-sh-sm)}
-.sf-line,.sf-totals,.sf-track-card,.sf-auth,.sf-track-form{border-radius:var(--sf-r-lg);box-shadow:var(--sf-sh-sm)}
-.sf-section h3 svg,.sf-radio.on,.sf-offers svg{color:var(--sf-ac)}
-
-/* Footer */
-.sf-footer{margin-top:34px;background:#0d1f12;color:#b9cdbf;padding:0 20px}
-.sf-footer-grid{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:2fr 1fr 1fr;gap:34px;padding:42px 0 30px}
-.sf-footer b{display:block;color:#fff;margin-bottom:10px}
-.sf-footer-brand{font-size:19px;color:#4ade80}
-.sf-footer-brand em{font-style:normal;color:#fff}
-.sf-footer p{font-size:13px;line-height:1.6;max-width:330px;margin:0 0 12px}
-.sf-footer-usp{display:grid;gap:5px}
-.sf-footer-usp span{display:flex;align-items:center;gap:7px;font-size:12.5px;color:#9fb8a7}
-.sf-footer-usp svg{color:#4ade80}
-.sf-footer-col button,.sf-footer-col span{display:flex;align-items:center;gap:8px;background:none;border:0;color:#b9cdbf;font-size:13px;padding:4px 0;cursor:pointer;text-align:left}
-.sf-footer-col button:hover{color:#fff}
-.sf-footer-col svg{color:#3f5c48}
-.sf-footer-b{max-width:1180px;margin:0 auto;border-top:1px solid rgba(255,255,255,.08);padding:16px 0 20px;font-size:12.5px;color:#7d9585}
-
-/* Responsive */
-@media (max-width:960px){
-  .sf-hero-in{padding:38px 30px 36px}
-  .sf-hero-in h1{font-size:28px}
-  .sf-trust{grid-template-columns:repeat(2,1fr)}
-}
-@media (max-width:820px){
-  .sf-detail{grid-template-columns:1fr}
-  .sf-cart-cols,.sf-checkout-cols{grid-template-columns:1fr}
-  .sf-totals.sticky{position:static}
-  .sf-track-meta{grid-template-columns:1fr}
-  .sf-footer-grid{grid-template-columns:1fr;gap:24px;padding:34px 0 22px}
-}
-@media (max-width:560px){
-  .sf-top-in{flex-wrap:wrap;gap:8px;padding:10px 14px}
-  .sf-nav{margin-left:0;order:3}
-  .sf-branch-txt small{display:none}
-  .sf-branch-txt strong{max-width:100px}
-  .sf-hero-in{padding:30px 20px 28px}
-  .sf-hero-in h1{font-size:23px}
-  .sf-hero-search{flex-wrap:nowrap}
-  .sf-hero-go{padding:10px 14px}
-  .sf-trust{grid-template-columns:1fr 1fr}
-  .sf-section-head{flex-direction:column;align-items:flex-start;gap:6px}
-  .sf-grid{grid-template-columns:repeat(auto-fill,minmax(160px,1fr));gap:12px}
-  .sf-announce-dot{display:none}
-}
-`;

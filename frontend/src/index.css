@@ -3178,6 +3178,33 @@ body {
   color: var(--text-faint);
 }
 
+/* Green circle badge inside the input while the number is valid. */
+.phone-input-controls {
+  position: relative;
+}
+.phone-input-controls > input {
+  padding-right: 36px;
+}
+.phone-valid-badge {
+  position: absolute;
+  right: 9px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #16a34a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+}
+.phone-valid-badge svg {
+  width: 13px;
+  height: 13px;
+  fill: #fff;
+}
+
 /* =========================
    Form Actions
 ========================= */

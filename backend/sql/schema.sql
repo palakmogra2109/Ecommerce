@@ -59,6 +59,22 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS parent_id  BIGINT REFERENCES users(id
 ALTER TABLE users ADD COLUMN IF NOT EXISTS countrycode TEXT;
 CREATE UNIQUE INDEX IF NOT EXISTS users_uuid_key ON users(uuid);
 
+-- One-time passcodes for storefront mobile login. Codes are short-lived and
+-- stored hashed; verification consumes the row. See
+-- sql/migrations/003-otp-codes.sql on existing databases.
+CREATE TABLE IF NOT EXISTS otp_codes (
+  id           BIGSERIAL PRIMARY KEY,
+  uuid         UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  identifier   TEXT NOT NULL,
+  code_hash    TEXT NOT NULL,
+  purpose      TEXT NOT NULL DEFAULT 'login',
+  attempts     INTEGER NOT NULL DEFAULT 0,
+  expires_at   TIMESTAMPTZ NOT NULL,
+  consumed_at  TIMESTAMPTZ,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS otp_codes_identifier_idx ON otp_codes(identifier);
+
 -- `users.status` carries no CHECK constraint in the live database - every other
 -- status column here does - so none is declared above. Adding one would make a
 -- fresh install reject writes the running system accepts.
@@ -344,6 +360,7 @@ CREATE TABLE IF NOT EXISTS customers (
   email          TEXT NOT NULL UNIQUE,
   mobile         TEXT,
   address        JSONB NOT NULL DEFAULT '{}',
+  addresses      JSONB NOT NULL DEFAULT '[]',
   status         TEXT NOT NULL DEFAULT 'ACTIVE'
                  CHECK (status IN ('ACTIVE', 'INACTIVE', 'SUSPENDED')),
   created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -357,6 +374,7 @@ CREATE TABLE IF NOT EXISTS customers (
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS mobile TEXT;
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS address JSONB NOT NULL DEFAULT '{}';
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS addresses JSONB NOT NULL DEFAULT '[]';
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'ACTIVE';
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now();
 ALTER TABLE customers ADD COLUMN IF NOT EXISTS order_count INTEGER NOT NULL DEFAULT 0;

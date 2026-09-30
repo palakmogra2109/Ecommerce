@@ -74,7 +74,7 @@ export async function POST(request) {
     const productResult = await pool.query(
       branch
         ? `
-      SELECT p.uuid, p.name, p.sku, p.price, p.discount_price, p.status,
+      SELECT p.id AS product_id, p.uuid, p.name, p.sku, p.price, p.discount_price, p.status,
              p.inventory_mode,
              bp.sellingPrice       AS branch_price,
              bp.compareAtPrice     AS branch_compare_price,
@@ -87,7 +87,7 @@ export async function POST(request) {
       WHERE p.uuid = ANY($1::uuid[])
       `
         : `
-      SELECT uuid, name, sku, price, discount_price, stock,
+      SELECT id AS product_id, uuid, name, sku, price, discount_price, stock,
              status, inventory_mode
       FROM products
       WHERE uuid = ANY($1::uuid[])
@@ -100,6 +100,7 @@ export async function POST(request) {
         p.uuid,
         {
           ...p,
+          productId: p.product_id != null ? Number(p.product_id) : null,
           price: Number(p.price) || 0,
           stock: Number(p.stock) || 0,
           branch_price: p.branch_price != null ? Number(p.branch_price) : null,
@@ -111,6 +112,29 @@ export async function POST(request) {
 
     client = await pool.connect();
     await client.query("BEGIN");
+
+    let customerId = body.customer_id || null;
+    if (!customerId && customerEmail) {
+      const found = await client.query(`SELECT id FROM customers WHERE email = $1`, [customerEmail]);
+      if (found.rows.length > 0) {
+        customerId = found.rows[0].id;
+      } else {
+        try {
+          const created = await client.query(
+            `INSERT INTO customers (name, email, mobile, address, status)
+             VALUES ($1, $2, $3, $4, 'ACTIVE')
+             RETURNING id`,
+            [customerName, customerEmail, customerMobile || null, JSON.stringify(shippingAddress)]
+          );
+          customerId = created.rows[0].id;
+        } catch (error) {
+          // Two checkouts racing first-order creation: reuse the winner.
+          if (error?.code !== "23505") throw error;
+          const retry = await client.query(`SELECT id FROM customers WHERE email = $1`, [customerEmail]);
+          customerId = retry.rows[0]?.id || null;
+        }
+      }
+    }
 
     const insertedItems = [];
     let subtotal = 0;
@@ -172,6 +196,7 @@ export async function POST(request) {
         subtotal += lineSubtotal;
 
         insertedItems.push({
+          product_id: product.productId,
           product_uuid: product.uuid,
           product_name: product.name,
           sku: product.sku,
@@ -203,6 +228,7 @@ export async function POST(request) {
         subtotal += lineSubtotal;
 
         insertedItems.push({
+          product_id: product.productId,
           product_uuid: product.uuid,
           product_name: product.name,
           sku: product.sku,
@@ -255,7 +281,7 @@ export async function POST(request) {
     // PENDING too — a real gateway would webhook it to PAID).
     const order = await Order.create(
       {
-        customerId: body.customer_id || null,
+        customerId,
         customerName,
         customerEmail,
         customerMobile,
@@ -277,11 +303,12 @@ export async function POST(request) {
       await client.query(
         `
         INSERT INTO order_items
-          (order_id, product_uuid, product_name, sku, variant, price, quantity, subtotal, branchId)
-        VALUES ((SELECT id FROM orders WHERE uuid = $1), $2, $3, $4, $5, $6, $7, $8, $9)
+          (order_id, product_id, product_uuid, product_name, sku, variant, price, quantity, subtotal, branchId)
+        VALUES ((SELECT id FROM orders WHERE uuid = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10)
         `,
         [
           order.uuid,
+          line.product_id,
           line.product_uuid,
           line.product_name,
           line.sku,

@@ -115,3 +115,26 @@ test("the builder never emits a bare SELECT * and uses folded column spellings",
   assert.match(all, /postalcode/);
   assert.match(all, /deliveryenabled/);
 });
+
+test("location predicates can target a standalone branches query", async () => {
+  const { buildLocationPredicates } = await import("../storeCatalogScope.js");
+  const params = [];
+  const conditions = buildLocationPredicates({
+    pincode: "411001",
+    lat: 18.5204,
+    lng: 73.8567,
+    params,
+    branchIdColumn: "b.id",
+  });
+  assert.equal(conditions.length, 2);
+  assert.match(conditions.join(" "), /nb\.id = b\.id/);
+  assert.deepEqual(params.slice(0, 2), ["411001%", "411001"]);
+});
+
+test("location predicates omit coordinates when only one axis is supplied", async () => {
+  const { buildLocationPredicates } = await import("../storeCatalogScope.js");
+  const params = [];
+  const conditions = buildLocationPredicates({ pincode: "", lat: 18.5204, lng: 0, params, branchIdColumn: "b.id" });
+  assert.deepEqual(conditions, []);
+  assert.deepEqual(params, []);
+});

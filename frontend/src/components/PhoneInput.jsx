@@ -11,6 +11,12 @@ import { listCountries } from "../services/countries";
 //   error        string   validation error to display
 //   placeholder  string
 //   disabled     bool
+//   defaultDialCode string country code preselected when the value carries
+//     none (defaults to "+60" so existing admin usages are unchanged)
+// National-number length that counts as valid (country code extra).
+const MIN_NATIONAL_DIGITS = 10;
+const MAX_NATIONAL_DIGITS = 12;
+
 export default function PhoneInput({
   name = "mobile",
   value = "",
@@ -18,9 +24,10 @@ export default function PhoneInput({
   error = "",
   placeholder = "12345678",
   disabled = false,
+  defaultDialCode = "+60",
 }) {
   const [countries, setCountries] = useState([]);
-  const [dialCode, setDialCode] = useState("+60");
+  const [dialCode, setDialCode] = useState(defaultDialCode);
   const [number, setNumber] = useState("");
 
   // Combobox state
@@ -76,7 +83,7 @@ export default function PhoneInput({
     const matched = matchDialCode(digits);
 
     if (!matched) {
-      return { dialCode: "+60", number: digits };
+      return { dialCode: defaultDialCode, number: digits };
     }
 
     return {
@@ -147,10 +154,14 @@ export default function PhoneInput({
   }
 
   function handleNumberChange(next) {
-    const digits = next.replace(/\D/g, "").slice(0, 10);
+    const digits = next.replace(/\D/g, "").slice(0, MAX_NATIONAL_DIGITS);
     setNumber(digits);
     emit(dialCode, digits);
   }
+
+  // Green tick while the typed national number satisfies the length rule.
+  const isValidLength =
+    number.length >= MIN_NATIONAL_DIGITS && number.length <= MAX_NATIONAL_DIGITS;
 
   return (
     <div className="phone-input" ref={rootRef}>
@@ -229,14 +240,21 @@ export default function PhoneInput({
           onChange={(e) => handleNumberChange(e.target.value)}
           disabled={disabled}
           autoComplete="off"
-          maxLength={10}
+          maxLength={MAX_NATIONAL_DIGITS}
         />
+        {isValidLength && (
+          <span className="phone-valid-badge" aria-label="Valid phone number" role="img">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z" />
+            </svg>
+          </span>
+        )}
       </div>
 
       {error && <p className="input-error">{error}</p>}
 
       <p className="phone-input-hint">
-        Enter an 8 to 10 digit mobile number without the country code.
+        Enter a 10 to 12 digit mobile number without the country code.
       </p>
     </div>
   );

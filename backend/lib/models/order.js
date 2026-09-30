@@ -71,7 +71,7 @@ export const Order = {
          coupon_id, coupon_code, payment_method, payment_status, branchid,
          estimated_delivery_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
-      RETURNING uuid
+      RETURNING uuid, order_number
       `,
       [
         orderNumber,
@@ -96,7 +96,11 @@ export const Order = {
       ]
     );
 
-    return this.findByUuid(result.rows[0].uuid);
+    // Return the inserted identifiers directly. Re-reading through
+    // findByUuid uses the shared pool, which cannot see this row until the
+    // caller's transaction commits — so it always came back null here and
+    // every checkout crashed on order.uuid.
+    return result.rows[0];
   },
 
   async findByUuid(uuid) {

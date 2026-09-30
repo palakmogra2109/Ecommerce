@@ -118,6 +118,7 @@ export async function GET(request) {
     // catalog (no branch condition and no bp.id IS NOT NULL), which is what the
     // shopper would have seen with no location at all.
     let catalog;
+    let locationFallback = false;
     try {
       catalog = await runCatalog(scoped ? ` AND ${branchConditions.join(" AND ")}` : "", scoped);
     } catch (error) {
@@ -125,11 +126,30 @@ export async function GET(request) {
       console.error("Store products location filter failed, serving the unfiltered catalog:", error);
       catalog = await runCatalog("", false);
     }
+    // Location-only scoping (no explicit store choice) must never trap the
+    // shopper on an empty grid: branch rows without postalcode/coordinates
+    // match no pincode, so the scoped page can be legitimately empty through
+    // missing data rather than missing products. Fall back to the unfiltered
+    // catalog and say so, exactly like the error path above. An explicit
+    // branchId keeps exact semantics: choosing a store that stocks nothing
+    // shows nothing (the empty state offers to clear it).
+    const locationScoped =
+      scoped &&
+      !branchId &&
+      (pincode.trim() !== "" || ((Number(lat) || 0) !== 0 && (Number(lng) || 0) !== 0));
+    if (locationScoped && catalog.total === 0) {
+      console.warn(
+        `Store products location matched nothing (pincode="${pincode}", lat=${lat}, lng=${lng}), serving the unfiltered catalog`
+      );
+      catalog = await runCatalog("", false);
+      locationFallback = true;
+    }
     const total = catalog.total;
 
     return Response.json(
       {
         success: true,
+        locationFallback,
         products: catalog.rows.map((p) => {
           const variants = Array.isArray(p.variants)
             ? p.variants.map((v) => ({

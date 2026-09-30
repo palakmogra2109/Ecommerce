@@ -1,5 +1,6 @@
 import pool from "../db";
 import { paginate } from "../pagination";
+import { normalizeAddressBook } from "../addressBook";
 
 const TABLE = "customers";
 
@@ -56,6 +57,74 @@ export const Customer = {
     );
 
     return result.rows[0] || null;
+  },
+
+  async getAddressBookByEmail(email) {
+    const normalizedEmail = (email ?? "").toLowerCase().trim();
+    if (!normalizedEmail) return [];
+    const result = await pool.query(
+      `SELECT addresses FROM ${TABLE} WHERE email = $1`,
+      [normalizedEmail]
+    );
+    return normalizeAddressBook(result.rows[0]?.addresses);
+  },
+
+  async mutateAddressBookByEmail(email, mutate, identity = {}) {
+    const normalizedEmail = (email ?? "").toLowerCase().trim();
+    if (!normalizedEmail) throw new Error("A customer email is required");
+    if (typeof mutate !== "function") throw new Error("An address-book mutation is required");
+    const name = (identity.name ?? "").trim() || normalizedEmail;
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      let row = (
+        await client.query(
+          `SELECT id, mobile, addresses FROM ${TABLE} WHERE email = $1 FOR UPDATE`,
+          [normalizedEmail]
+        )
+      ).rows[0];
+      if (!row) {
+        try {
+          row = (
+            await client.query(
+              `INSERT INTO ${TABLE} (name, email, mobile, address, addresses, status)
+               VALUES ($1, $2, NULL, '{}', '[]', 'ACTIVE')
+               RETURNING id, mobile, addresses`,
+              [name, normalizedEmail]
+            )
+          ).rows[0];
+        } catch (error) {
+          if (error?.code !== "23505") throw error;
+          row = (
+            await client.query(
+              `SELECT id, mobile, addresses FROM ${TABLE} WHERE email = $1 FOR UPDATE`,
+              [normalizedEmail]
+            )
+          ).rows[0];
+        }
+      }
+      const mutation = await mutate(normalizeAddressBook(row?.addresses), { mobile: row?.mobile ?? null });
+      if (!mutation || mutation.error || !Array.isArray(mutation.addresses)) {
+        await client.query("ROLLBACK");
+        return mutation && mutation.error ? mutation : { error: "Could not save this address." };
+      }
+      const saved = (
+        await client.query(
+          `UPDATE ${TABLE}
+           SET addresses = $1::jsonb, updated_at = now()
+           WHERE id = $2
+           RETURNING addresses`,
+          [JSON.stringify(normalizeAddressBook(mutation.addresses)), row.id]
+        )
+      ).rows[0];
+      await client.query("COMMIT");
+      return { ...mutation, addresses: normalizeAddressBook(saved?.addresses) };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   },
 
   async list({ search = "", status = "", page = 1, limit = 20 } = {}) {
