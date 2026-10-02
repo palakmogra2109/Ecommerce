@@ -410,36 +410,207 @@ CREATE TABLE IF NOT EXISTS coupons (
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Gift card denomination catalogue: the products a shopper can buy. Defined
+-- before gift_cards because gift_cards.denomination_uuid references it.
+CREATE TABLE IF NOT EXISTS gift_denominations (
+  id             BIGSERIAL PRIMARY KEY,
+  uuid           UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  label          TEXT NOT NULL,
+  face_value     NUMERIC(12,2) NOT NULL CHECK (face_value > 0),
+  selling_price  NUMERIC(12,2) CHECK (selling_price > 0),
+  valid_for_days INTEGER CHECK (valid_for_days > 0),
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+  sort_order     INTEGER NOT NULL DEFAULT 0,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- A price above the face value would silently overcharge.
+  CONSTRAINT gift_denominations_price_check CHECK (selling_price IS NULL OR selling_price <= face_value)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_denominations_uuid_key ON gift_denominations(uuid);
+CREATE INDEX IF NOT EXISTS gift_denominations_active_idx ON gift_denominations(is_active, sort_order);
+
 -- Gift cards: admin-issued stored value redeemed at checkout. Balances live
 -- on gift_cards; every movement is audited in gift_card_transactions.
 CREATE TABLE IF NOT EXISTS gift_cards (
   id               BIGSERIAL PRIMARY KEY,
   uuid             UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  code             TEXT NOT NULL UNIQUE,
+  -- Legacy plaintext column. New cards store NULL and are matched by
+  -- code_hash instead; rows issued before hashing keep their code.
+  code             TEXT,
+  code_hash        TEXT,
+  code_last4       TEXT,
   initial_amount   NUMERIC(12,2) NOT NULL DEFAULT 0,
   balance          NUMERIC(12,2) NOT NULL DEFAULT 0,
+  currency         TEXT NOT NULL DEFAULT 'INR',
+  source           TEXT NOT NULL DEFAULT 'FIXED',
+  customer_id      BIGINT REFERENCES customers(id) ON DELETE SET NULL,
   recipient_email  TEXT,
-  status           TEXT NOT NULL DEFAULT 'ACTIVE'
-                   CHECK (status IN ('ACTIVE', 'INACTIVE', 'REDEEMED')),
+  image_url      TEXT,
+  label          TEXT NOT NULL DEFAULT 'Gift Card',
+  status           TEXT NOT NULL DEFAULT 'DRAFT'
+                   -- Widened by 017, which adds ARCHIVED alongside every value
+                   -- accepted before it. Widening, never narrowing: the
+                   -- migration retires the issued cards to ARCHIVED without
+                   -- deleting them, so a vocabulary that rejected the values
+                   -- those rows already hold would make this table un-updatable
+                   -- rather than cleaner. The issued-only states stay for the
+                   -- same reason — the rows carrying them are still here.
+                   CHECK (status IN ('DRAFT', 'ACTIVE', 'SUSPENDED', 'CANCELLED', 'REDEEMED', 'ARCHIVED')),
+  usage_limit      INTEGER,
+  min_order_amount NUMERIC(12,2) NOT NULL DEFAULT 0,
+  max_redemption_amount NUMERIC(12,2),
+  selling_price  NUMERIC(12,2),
+  denomination_uuid UUID REFERENCES gift_denominations(uuid) ON DELETE SET NULL,
+  applicable_branches  JSONB NOT NULL DEFAULT '[]',
+  applicable_brands  JSONB NOT NULL DEFAULT '[]',
+  applicable_products  JSONB NOT NULL DEFAULT '[]',
+  applicable_categories JSONB NOT NULL DEFAULT '[]',
+  activated_at     TIMESTAMPTZ,
   expires_at       TIMESTAMPTZ,
+  created_by       BIGINT REFERENCES users(id) ON DELETE SET NULL,
   created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX IF NOT EXISTS gift_cards_uuid_key ON gift_cards(uuid);
 CREATE UNIQUE INDEX IF NOT EXISTS gift_cards_code_key ON gift_cards(code);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_cards_code_hash_key ON gift_cards(code_hash);
 CREATE INDEX IF NOT EXISTS gift_cards_recipient_idx ON gift_cards(recipient_email);
+CREATE INDEX IF NOT EXISTS gift_cards_customer_idx ON gift_cards(customer_id);
+CREATE INDEX IF NOT EXISTS gift_cards_status_idx ON gift_cards(status);
 
-CREATE TABLE IF NOT EXISTS gift_card_transactions (
+-- gift_cards is the TEMPLATE: the admin-managed thing a shopper buys, rather
+-- than the issued card itself. The issued-card columns above are still correct
+-- for the cards already issued and stay until the data migration has moved
+-- those rows into gift_card_codes, which keeps a rollback possible.
+--
+-- Added by ALTER rather than declared inline, for the same reason the orders
+-- branch columns are added lower down: the table is already created above and
+-- these belong to a later migration, and IF NOT EXISTS keeps this file
+-- re-runnable. Mirrors 016-gift-card-template-columns.sql.
+ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
+-- The sell gate, separate from `status`, so a card can be paused without losing
+-- the DRAFT/ACTIVE/ARCHIVED history that `status` records.
+ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE;
+-- Copied onto the issued code at issue time: a template's validity changing
+-- later must not silently rewrite the expiry of a gift already in someone's
+-- hands. NULL means it never expires.
+ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS validity_days INTEGER;
+-- The window the template may be *sold* in, as opposed to how long an issued
+-- code lasts. Half-open windows stay legal.
+ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS starts_at TIMESTAMPTZ;
+ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS ends_at TIMESTAMPTZ;
+-- NULL means no cap, which is why these are nullable: "unlimited" and "nothing
+-- allowed" must not read the same.
+ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS per_order_limit NUMERIC(12,2);
+ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS max_quantity_per_order INTEGER;
+ALTER TABLE gift_cards ADD COLUMN IF NOT EXISTS face_value NUMERIC(12,2);
+
+DO $$
+BEGIN
+  -- 0 or negative days would issue codes that are already expired on arrival.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'gift_cards'::regclass
+       AND conname = 'gift_cards_validity_days_check'
+  ) THEN
+    ALTER TABLE gift_cards
+      ADD CONSTRAINT gift_cards_validity_days_check CHECK (validity_days > 0);
+  END IF;
+  -- A cap of zero cards per order is a sellable card nobody can buy.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'gift_cards'::regclass
+       AND conname = 'gift_cards_max_quantity_per_order_check'
+  ) THEN
+    ALTER TABLE gift_cards
+      ADD CONSTRAINT gift_cards_max_quantity_per_order_check CHECK (max_quantity_per_order > 0);
+  END IF;
+  -- A window that ends before it starts can never be sold.
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+     WHERE conrelid = 'gift_cards'::regclass
+       AND conname = 'gift_cards_sell_window_check'
+  ) THEN
+    ALTER TABLE gift_cards
+      ADD CONSTRAINT gift_cards_sell_window_check
+      CHECK (ends_at IS NULL OR starts_at IS NULL OR ends_at > starts_at);
+  END IF;
+END $$;
+
+-- Storefront listings filter on the sell gate; the sweep that finds templates
+-- whose window has closed reads ends_at directly.
+CREATE INDEX IF NOT EXISTS gift_cards_is_active_idx ON gift_cards(is_active);
+CREATE INDEX IF NOT EXISTS gift_cards_ends_at_idx ON gift_cards(ends_at);
+
+-- The template status constraint widens ('DRAFT' / 'ACTIVE' / 'ARCHIVED' plus
+-- the legacy issued states) — see the CHECK on the column above.
+--
+-- 016 deliberately did NOT touch the status CHECK, and deferred it to the data
+-- migration: narrowing it to the three template states would have rejected the
+-- issued cards that are still stored as rows, since CANCELLED and REDEEMED
+-- describe cards that exist rather than templates. 017 is that data migration,
+-- and it widens the vocabulary rather than narrowing it, because the rows it
+-- retires are the very rows the constraint has to keep accepting.
+--
+-- Only the structural half of 017 is mirrored here. The CHECK is the shape; the
+-- INSERT and UPDATE that move live rows from gift_cards into gift_card_codes are
+-- not, because a fresh install has no legacy rows to move, and a migration whose
+-- data statements are also in the bootstrap would run them on an empty table and
+-- look like it had done something.
+
+-- gift_card_transactions is defined after orders, below, because it references
+-- orders(id) and a fresh install must build in dependency order.
+
+-- Scheduled gift card deliveries. A scheduled card is not created at purchase
+-- time: only the intent is stored, and the card plus its code come into
+-- existence when the send time arrives.
+CREATE TABLE IF NOT EXISTS gift_card_scheduled (
   id              BIGSERIAL PRIMARY KEY,
   uuid            UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
-  gift_card_id    BIGINT NOT NULL REFERENCES gift_cards(id) ON DELETE CASCADE,
-  order_id        BIGINT REFERENCES orders(id) ON DELETE SET NULL,
-  type            TEXT NOT NULL CHECK (type IN ('ISSUE', 'REDEEM')),
-  amount          NUMERIC(12,2) NOT NULL DEFAULT 0,
-  balance_after   NUMERIC(12,2) NOT NULL DEFAULT 0,
-  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+  amount          NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+  currency        TEXT NOT NULL DEFAULT 'INR',
+  recipient_email TEXT NOT NULL,
+  recipient_name  TEXT,
+  gift_message    TEXT,
+  scheduled_for   TIMESTAMPTZ NOT NULL,
+  status          TEXT NOT NULL DEFAULT 'PENDING'
+                  CHECK (status IN ('PENDING', 'SENT', 'FAILED', 'CANCELLED')),
+  card_uuid       UUID,
+  selling_price   NUMERIC(12,2),
+  denomination_uuid UUID REFERENCES gift_denominations(uuid) ON DELETE SET NULL,
+  valid_for_days  INTEGER CHECK (valid_for_days > 0),
+  failure_reason  TEXT,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  sent_at         TIMESTAMPTZ
 );
-CREATE INDEX IF NOT EXISTS gift_card_transactions_card_idx ON gift_card_transactions(gift_card_id);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_card_scheduled_uuid_key ON gift_card_scheduled(uuid);
+CREATE INDEX IF NOT EXISTS gift_card_scheduled_due_idx
+  ON gift_card_scheduled(scheduled_for) WHERE status = 'PENDING';
+
+-- Gift card reservations: value held on a card while the order's payment is in
+-- flight, so two shoppers cannot both spend the same balance. Kept forever so
+-- the trail survives a refund.
+CREATE TABLE IF NOT EXISTS gift_card_reservations (
+  id             BIGSERIAL PRIMARY KEY,
+  uuid           UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  gift_card_id   BIGINT NOT NULL REFERENCES gift_cards(id) ON DELETE CASCADE,
+  order_uuid     UUID,
+  amount         NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+  status         TEXT NOT NULL DEFAULT 'RESERVED'
+                 CHECK (status IN ('RESERVED', 'CONSUMED', 'RELEASED', 'EXPIRED')),
+  expires_at     TIMESTAMPTZ NOT NULL DEFAULT (now() + INTERVAL '15 minutes'),
+  metadata       JSONB NOT NULL DEFAULT '{}',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_card_reservations_uuid_key ON gift_card_reservations(uuid);
+CREATE INDEX IF NOT EXISTS gift_card_reservations_card_idx ON gift_card_reservations(gift_card_id, status);
+CREATE INDEX IF NOT EXISTS gift_card_reservations_order_idx ON gift_card_reservations(order_uuid);
+CREATE INDEX IF NOT EXISTS gift_card_reservations_expiry_idx ON gift_card_reservations(status, expires_at);
+-- One live reservation per order, so a checkout retry reuses the hold.
+CREATE UNIQUE INDEX IF NOT EXISTS gift_card_reservations_active_order_key
+  ON gift_card_reservations(order_uuid)
+  WHERE status = 'RESERVED' AND order_uuid IS NOT NULL;
 
 ALTER TABLE coupons ADD COLUMN IF NOT EXISTS uuid UUID NOT NULL DEFAULT gen_random_uuid();
 ALTER TABLE coupons ADD COLUMN IF NOT EXISTS description TEXT NOT NULL DEFAULT '';
@@ -506,6 +677,291 @@ CREATE INDEX IF NOT EXISTS orders_customer_id_created_at_idx ON orders(customer_
 CREATE INDEX IF NOT EXISTS orders_status_created_at_idx ON orders(status, created_at);
 CREATE INDEX IF NOT EXISTS orders_payment_method_created_at_idx ON orders(payment_method, created_at);
 CREATE INDEX IF NOT EXISTS orders_coupon_id_created_at_idx ON orders(coupon_id, created_at);
+
+-- Every gift card movement is audited here. Defined after orders so the
+-- order_id foreign reference resolves on a fresh install.
+CREATE TABLE IF NOT EXISTS gift_card_transactions (
+  id              BIGSERIAL PRIMARY KEY,
+  uuid            UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  gift_card_id    BIGINT NOT NULL REFERENCES gift_cards(id) ON DELETE CASCADE,
+  order_id        BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+  type            TEXT NOT NULL CHECK (type IN ('ISSUE', 'PURCHASED', 'ACTIVATED', 'REDEEM', 'REFUND', 'REVERSAL', 'ADJUSTMENT', 'EXPIRED', 'CANCELLED')),
+  amount          NUMERIC(12,2) NOT NULL DEFAULT 0,
+  balance_before  NUMERIC(12,2) NOT NULL DEFAULT 0,
+  balance_after   NUMERIC(12,2) NOT NULL DEFAULT 0,
+  performed_by    TEXT,
+  reason          TEXT,
+  metadata        JSONB NOT NULL DEFAULT '{}',
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS gift_card_transactions_card_idx ON gift_card_transactions(gift_card_id);
+CREATE INDEX IF NOT EXISTS gift_card_transactions_order_idx ON gift_card_transactions(order_id);
+
+-- =============================================================
+-- gift card v2
+-- gift_cards (above) is the template a shopper buys; everything below is what
+-- happens once money has changed hands: an order for N codes, the issued codes
+-- themselves, how they are delivered and spent, and the wallet they credit.
+-- The legacy tables above are left alone so a rollback stays possible until the
+-- data migration has moved the rows across. Mirrors 015-gift-card-v2-tables.sql.
+--
+-- Defined here, after orders, because gift_card_redemptions references orders.
+-- =============================================================
+
+-- A paid order for one or more codes: the seam between the catalogue and what a
+-- shopper bought. Survives its code rows, so a refund never rewrites history.
+CREATE TABLE IF NOT EXISTS gift_card_purchases (
+  id                 BIGSERIAL PRIMARY KEY,
+  uuid               UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  purchaser_id       BIGINT REFERENCES customers(id) ON DELETE SET NULL,
+  template_id        BIGINT NOT NULL REFERENCES gift_cards(id) ON DELETE RESTRICT,
+  quantity           INTEGER NOT NULL DEFAULT 1 CHECK (quantity > 0),
+  unit_face_value    NUMERIC(12,2) NOT NULL CHECK (unit_face_value > 0),
+  -- NULL means it was not recorded separately; 0 is a valid discounted price.
+  unit_selling_price NUMERIC(12,2) CHECK (unit_selling_price IS NULL OR unit_selling_price >= 0),
+  total_amount       NUMERIC(12,2) NOT NULL CHECK (total_amount > 0),
+  currency           TEXT NOT NULL DEFAULT 'INR',
+  -- Names a provider from the payment registry, so a refund knows which gateway
+  -- to talk to.
+  payment_provider   TEXT NOT NULL DEFAULT 'sandbox',
+  payment_intent_id  TEXT,
+  payment_reference  TEXT,
+  -- Payment and fulfilment fail separately: a captured payment can still be
+  -- waiting on a scheduled send.
+  payment_status     TEXT NOT NULL DEFAULT 'PENDING'
+                      CHECK (payment_status IN ('PENDING', 'PAID', 'FAILED', 'REFUNDED')),
+  status             TEXT NOT NULL DEFAULT 'PENDING_PAYMENT'
+                      CHECK (status IN ('PENDING_PAYMENT', 'ISSUED', 'SCHEDULED', 'CANCELLED', 'REFUNDED')),
+  recipient_email    TEXT,
+  recipient_name     TEXT,
+  gift_message       TEXT,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_card_purchases_uuid_key ON gift_card_purchases(uuid);
+CREATE INDEX IF NOT EXISTS gift_card_purchases_purchaser_idx ON gift_card_purchases(purchaser_id);
+CREATE INDEX IF NOT EXISTS gift_card_purchases_status_idx ON gift_card_purchases(status);
+
+-- An issued code: the heart of the system, matched by hash so a database dump
+-- cannot be replayed at checkout. EXPIRED is deliberately not a status — it is
+-- derived from expires_at at read time, so a clock tick cannot leave a stale
+-- value behind.
+CREATE TABLE IF NOT EXISTS gift_card_codes (
+  id            BIGSERIAL PRIMARY KEY,
+  uuid          UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  template_id   BIGINT NOT NULL REFERENCES gift_cards(id) ON DELETE RESTRICT,
+  purchase_id   BIGINT REFERENCES gift_card_purchases(id) ON DELETE SET NULL,
+  -- Checked by the index, so a race between two issuances loses one of them
+  -- instead of minting a duplicate.
+  code_hash     TEXT NOT NULL UNIQUE,
+  code_last4    TEXT NOT NULL,
+  status        TEXT NOT NULL DEFAULT 'PENDING_PAYMENT'
+                CHECK (status IN ('PENDING_PAYMENT', 'UNUSED', 'REDEEMED', 'REVOKED', 'SCHEDULED')),
+  currency      TEXT NOT NULL DEFAULT 'INR',
+  face_value    NUMERIC(12,2) NOT NULL CHECK (face_value > 0),
+  -- What was actually credited to a wallet. Equal to face_value for a full
+  -- claim; a partial claim credits less.
+  claimed_value NUMERIC(12,2) NOT NULL DEFAULT 0,
+  claimed_by    BIGINT REFERENCES customers(id) ON DELETE SET NULL,
+  claimed_at    TIMESTAMPTZ,
+  expires_at    TIMESTAMPTZ,
+  revoked_at    TIMESTAMPTZ,
+  revoked_reason TEXT,
+  -- The admin who voided it. NULL means it lapsed on its own, or nobody recorded
+  -- an actor; the reason column alone would not answer "who did this".
+  revoked_by    BIGINT REFERENCES users(id) ON DELETE SET NULL,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- No claim may be worth more than the card was sold for.
+  CONSTRAINT gift_card_codes_claimed_value_check
+    CHECK (claimed_value >= 0 AND claimed_value <= face_value),
+  -- Owner and claim time stand or fall together, so a half-claimed row cannot
+  -- exist.
+  CONSTRAINT gift_card_codes_claim_pair_check
+    CHECK ((claimed_by IS NULL) = (claimed_at IS NULL)),
+  -- A revoked card is dead money: it must not leave value in a wallet.
+  CONSTRAINT gift_card_codes_revoked_unclaimed_check
+    CHECK (status <> 'REVOKED' OR claimed_by IS NULL)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_card_codes_uuid_key ON gift_card_codes(uuid);
+CREATE INDEX IF NOT EXISTS gift_card_codes_template_idx ON gift_card_codes(template_id);
+CREATE INDEX IF NOT EXISTS gift_card_codes_claimed_by_idx ON gift_card_codes(claimed_by);
+CREATE INDEX IF NOT EXISTS gift_card_codes_status_idx ON gift_card_codes(status);
+CREATE INDEX IF NOT EXISTS gift_card_codes_revoked_by_idx
+  ON gift_card_codes(revoked_by) WHERE revoked_by IS NOT NULL;
+CREATE INDEX IF NOT EXISTS gift_card_codes_expires_at_idx ON gift_card_codes(expires_at);
+
+-- A template's spend restrictions, one row each instead of a JSON blob, so they
+-- can be indexed and queried ("which templates are restricted to this brand").
+-- An empty set means unrestricted, not restricted-to-nothing: the absence of
+-- rows is the whole signal and must stay a valid, cheap state.
+CREATE TABLE IF NOT EXISTS gift_card_applicability (
+  id          BIGSERIAL PRIMARY KEY,
+  template_id BIGINT NOT NULL REFERENCES gift_cards(id) ON DELETE CASCADE,
+  kind        TEXT NOT NULL CHECK (kind IN ('BRAND', 'CATEGORY', 'PRODUCT')),
+  value       TEXT NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- The admin form re-saves a template's whole scope, so without this a
+  -- double-save would multiply the restriction and apply it twice.
+  CONSTRAINT gift_card_applicability_template_kind_value_key
+    UNIQUE (template_id, kind, value)
+);
+-- The unique index already serves lookups by template_id; this one serves the
+-- reverse question.
+CREATE INDEX IF NOT EXISTS gift_card_applicability_kind_value_idx
+  ON gift_card_applicability(kind, value);
+
+-- Sending a code to its recipient. "Did they get it" is what support is asked,
+-- so the send is a row rather than a side effect. SKIPPED exists because SMS has
+-- no provider configured yet — recording the attempt honestly beats dropping it.
+CREATE TABLE IF NOT EXISTS gift_card_deliveries (
+  id              BIGSERIAL PRIMARY KEY,
+  uuid            UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  code_id         BIGINT NOT NULL REFERENCES gift_card_codes(id) ON DELETE CASCADE,
+  purchase_id     BIGINT REFERENCES gift_card_purchases(id) ON DELETE SET NULL,
+  channel         TEXT NOT NULL CHECK (channel IN ('EMAIL', 'SMS')),
+  -- The destination for both channels: the contact detail the sender gave, so
+  -- the worker has one field to hand the provider.
+  recipient_email TEXT NOT NULL,
+  recipient_name  TEXT,
+  -- NULL means send now; a time in the past is a due row, not an error.
+  scheduled_for   TIMESTAMPTZ,
+  status          TEXT NOT NULL DEFAULT 'PENDING'
+                  CHECK (status IN ('PENDING', 'SENDING', 'SENT', 'FAILED', 'SKIPPED')),
+  attempt_count   INTEGER NOT NULL DEFAULT 0 CHECK (attempt_count >= 0),
+  last_error      TEXT,
+  sent_at         TIMESTAMPTZ,
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_card_deliveries_uuid_key ON gift_card_deliveries(uuid);
+-- One outstanding send per code, so a restarted worker cannot mail the same gift
+-- twice. Filtered to PENDING on purpose: sent and failed rows stay as history,
+-- and a resend after a failure becomes a new PENDING row.
+CREATE UNIQUE INDEX IF NOT EXISTS gift_card_deliveries_one_pending_per_code
+  ON gift_card_deliveries(code_id) WHERE status = 'PENDING';
+-- Due work for the worker. SENDING is included because a worker killed mid-send
+-- strands a row there, and that is exactly the row to pick up again.
+CREATE INDEX IF NOT EXISTS gift_card_deliveries_due_idx
+  ON gift_card_deliveries(scheduled_for) WHERE status IN ('PENDING', 'SENDING');
+
+-- A code spent at checkout. The partial unique index below is the double-spend
+-- guard: two concurrent checkouts both insert ACTIVE and only one can.
+--
+-- A hard UNIQUE (code_id) would be simpler and wrong: refunding an order
+-- reverses the redemption and restores the value, and the customer is then
+-- entitled to spend that same card again. With a hard unique the respend could
+-- never be recorded, so the value would sit in the wallet permanently
+-- unaccounted for at checkout. A reversal therefore marks its row REVERSED
+-- instead of deleting it, and only live rows count towards uniqueness.
+CREATE TABLE IF NOT EXISTS gift_card_redemptions (
+  id        BIGSERIAL PRIMARY KEY,
+  uuid      UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  code_id   BIGINT NOT NULL REFERENCES gift_card_codes(id) ON DELETE CASCADE,
+  -- The order may not exist when the redemption is written, so order_uuid
+  -- carries the identity in the meantime and order_id is filled in on commit.
+  order_id  BIGINT REFERENCES orders(id) ON DELETE SET NULL,
+  order_uuid UUID,
+  amount    NUMERIC(12,2) NOT NULL CHECK (amount > 0),
+  status    TEXT NOT NULL DEFAULT 'ACTIVE'
+            CHECK (status IN ('ACTIVE', 'REVERSED')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_card_redemptions_uuid_key ON gift_card_redemptions(uuid);
+CREATE UNIQUE INDEX IF NOT EXISTS gift_card_redemptions_active_code_key
+  ON gift_card_redemptions(code_id) WHERE status = 'ACTIVE';
+CREATE INDEX IF NOT EXISTS gift_card_redemptions_order_id_idx ON gift_card_redemptions(order_id);
+CREATE INDEX IF NOT EXISTS gift_card_redemptions_order_uuid_idx ON gift_card_redemptions(order_uuid);
+
+-- One wallet per customer, with no balance column on purpose. A stored total is
+-- a second source of truth for a fact the ledger already holds, and it drifts
+-- the first time a transaction and its balance update diverge — with nothing in
+-- the database noticing. The balance is the SUM, and the overdraft guard lives
+-- on the ledger's own balance_after, where Postgres can enforce it.
+CREATE TABLE IF NOT EXISTS customer_wallets (
+  id          BIGSERIAL PRIMARY KEY,
+  uuid        UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  customer_id BIGINT NOT NULL REFERENCES customers(id) ON DELETE CASCADE,
+  currency    TEXT NOT NULL DEFAULT 'INR',
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- Becomes UNIQUE (customer_id, currency) if multi-currency wallets are ever
+  -- needed; until then currency only records what this wallet holds.
+  CONSTRAINT customer_wallets_customer_id_key UNIQUE (customer_id)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS customer_wallets_uuid_key ON customer_wallets(uuid);
+
+-- Wallet buckets: one row per claim, holding the remainder and the
+-- applicability it inherited. A restricted bucket's money can only pay for what
+-- its card allowed, so the balance is a set of buckets, not a single number.
+CREATE TABLE IF NOT EXISTS customer_wallet_buckets (
+  id             BIGSERIAL PRIMARY KEY,
+  uuid           UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  wallet_id      BIGINT NOT NULL REFERENCES customer_wallets(id) ON DELETE CASCADE,
+  -- SET NULL, not CASCADE: revoking a code must not delete value the customer
+  -- already holds. Reversal goes through the ledger.
+  code_id        BIGINT REFERENCES gift_card_codes(id) ON DELETE SET NULL,
+  currency       TEXT NOT NULL DEFAULT 'INR',
+  initial_value  NUMERIC(12,2) NOT NULL CHECK (initial_value >= 0),
+  remaining      NUMERIC(12,2) NOT NULL DEFAULT 0,
+  -- Frozen at claim time, empty array means unrestricted.
+  applicability  JSONB NOT NULL DEFAULT '[]',
+  expires_at     TIMESTAMPTZ,
+  is_active      BOOLEAN NOT NULL DEFAULT TRUE,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- The database-level reason a customer balance is trustworthy.
+  CONSTRAINT customer_wallet_buckets_remaining_check CHECK (remaining >= 0),
+  CONSTRAINT customer_wallet_buckets_remaining_cap CHECK (remaining <= initial_value)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS customer_wallet_buckets_uuid_key ON customer_wallet_buckets(uuid);
+-- A code is claimed once, so it can only open one live bucket.
+CREATE UNIQUE INDEX IF NOT EXISTS customer_wallet_buckets_code_key
+  ON customer_wallet_buckets(code_id) WHERE code_id IS NOT NULL AND is_active;
+CREATE INDEX IF NOT EXISTS customer_wallet_buckets_wallet_idx
+  ON customer_wallet_buckets(wallet_id) WHERE is_active;
+CREATE INDEX IF NOT EXISTS customer_wallet_buckets_expiry_idx
+  ON customer_wallet_buckets(expires_at) WHERE is_active;
+
+-- The wallet ledger: append-only, since corrections are new rows rather than
+-- edits. Every row carries the total *after* it applied, so the ledger audits
+-- itself — a balance can be read off any row and a broken sum shows up as a
+-- discontinuity instead of a plausible wrong number.
+CREATE TABLE IF NOT EXISTS customer_reward_transactions (
+  id            BIGSERIAL PRIMARY KEY,
+  uuid          UUID NOT NULL DEFAULT gen_random_uuid() UNIQUE,
+  wallet_id     BIGINT NOT NULL REFERENCES customer_wallets(id) ON DELETE CASCADE,
+  type          TEXT NOT NULL
+                CHECK (type IN ('CREDIT', 'DEBIT', 'REFUND', 'EXPIRY', 'ADJUSTMENT')),
+  -- A signed delta, not a magnitude: DEBIT is negative, REFUND is positive.
+  -- Magnitudes alone would force the sign to be inferred from `type`, and every
+  -- new type added later would carry its sign by convention.
+  amount        NUMERIC(12,2) NOT NULL,
+  balance_after NUMERIC(12,2) NOT NULL,
+  -- The bucket this moved, so a refund can return value to the same one the
+  -- debit came from. SET NULL keeps the ledger row intact if a bucket goes.
+  bucket_id     BIGINT REFERENCES customer_wallet_buckets(id) ON DELETE SET NULL,
+  code_id       BIGINT REFERENCES gift_card_codes(id) ON DELETE SET NULL,
+  order_uuid    UUID,
+  -- Why the row exists, filterable: 'CLAIM', 'REDEEM', 'ORDER:<uuid>'.
+  reference     TEXT,
+  description   TEXT,
+  metadata      JSONB NOT NULL DEFAULT '{}',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  -- The overdraft guard, in the database. A bug that debits more than the
+  -- customer holds cannot be written at all: it would have to record a negative
+  -- balance_after, and this CHECK refuses the row.
+  CONSTRAINT customer_reward_transactions_balance_after_check
+    CHECK (balance_after >= 0)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS customer_reward_transactions_uuid_key ON customer_reward_transactions(uuid);
+CREATE INDEX IF NOT EXISTS customer_reward_transactions_wallet_idx ON customer_reward_transactions(wallet_id);
+CREATE INDEX IF NOT EXISTS customer_reward_transactions_code_idx ON customer_reward_transactions(code_id);
+-- Statement order and the wallet's history together, which is how a balance is
+-- reconciled.
+CREATE INDEX IF NOT EXISTS customer_reward_transactions_wallet_created_idx
+  ON customer_reward_transactions(wallet_id, created_at);
 
 CREATE TABLE IF NOT EXISTS order_items (
   id            BIGSERIAL PRIMARY KEY,

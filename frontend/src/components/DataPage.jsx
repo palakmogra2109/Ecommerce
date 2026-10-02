@@ -131,6 +131,8 @@ export default function DataPage({
   permissions = {},
   createLabel = "Add",
   onCreate = null,
+  // Extra buttons rendered in the card header, left of the create button.
+  headerExtras = null,
   defaultLimit = 20,
   pageSizeOptions = [10, 20, 50, 100],
   defaultFilters = {},
@@ -491,6 +493,7 @@ export default function DataPage({
             <h1>{title}</h1>
           </div>
           <div className="filament-card-header-right">
+            {headerExtras}
             {onCreate && canCreate && (
               <button
                 type="button"

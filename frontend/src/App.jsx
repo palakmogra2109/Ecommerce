@@ -1,7 +1,6 @@
 import { Navigate, Outlet, Route, Routes, useParams } from "react-router-dom";
 
 import Login from "./pages/Login";
-import Register from "./pages/Register";
 import Storefront from "./pages/Storefront";
 import Dashboard from "./pages/Dashboard";
 import Users from "./pages/Users";
@@ -27,6 +26,8 @@ import AttributeView from "./pages/AttributeView";
 import Coupons from "./pages/Coupons";
 import CouponView from "./pages/CouponView";
 import GiftCards from "./pages/GiftCards";
+import GiftCardBulkIssue from "./pages/GiftCardBulkIssue";
+import GiftDenominations from "./pages/GiftDenominations";
 import GiftCardView from "./pages/GiftCardView";
 import Reviews from "./pages/Reviews";
 import Banners from "./pages/Banners";
@@ -54,7 +55,6 @@ import BranchInventory from "./pages/BranchInventory";
 import BranchDashboard from "./pages/BranchDashboard";
 import BranchOrders from "./pages/BranchOrders";
 import StorePanel from "./pages/StorePanel";
-import StoreRegister from "./pages/StoreRegister";
 import StoreOnboarding from "./pages/StoreOnboarding";
 
 function UserEditRoute() {
@@ -207,16 +207,6 @@ export default function App() {
         }
       />
 
-      {/* /register → Register if logged out */}
-      <Route
-        path="/register"
-        element={
-          <PublicRoute>
-            <Register />
-          </PublicRoute>
-        }
-      />
-
       {/* /forgot-password → ForgotPassword if logged out */}
       <Route
         path="/forgot-password"
@@ -236,15 +226,16 @@ export default function App() {
         }
       />
 
-      {/* /register/store → Store Registration */}
-      <Route
-        path="/register/store"
-        element={
-          <PublicRoute>
-            <StoreRegister />
-          </PublicRoute>
-        }
-      />
+      {/* There is deliberately no /register or /register/store route.
+
+          Admin accounts are created by an existing admin through the Users
+          module, which requires a role to be chosen. Store accounts were the
+          same: create the user with the "store" role in Users, then link the
+          branch via /api/branches/[id]/users. Both public signup endpoints
+          granted privileges to whoever reached them — /auth/register wrote an
+          admin-panel user with no role, and /auth/store/register created a
+          branch plus an account holding store_products.update and
+          store_orders.update. Neither asked who was asking. */}
 
       {/* Everything below requires login */}
       <Route
@@ -488,6 +479,14 @@ export default function App() {
         <Route
           path="/gift-cards/new"
           element={adminGuard("gift_cards.create", "Issue Gift Cards", <GiftCardForm />)}
+        />
+        <Route
+          path="/gift-cards/denominations"
+          element={adminGuard("gift_cards.view", "Gift Card Denominations", <GiftDenominations />)}
+        />
+        <Route
+          path="/gift-cards/bulk"
+          element={adminGuard("gift_cards.create", "Issue Gift Cards", <GiftCardBulkIssue />)}
         />
         <Route
           path="/gift-cards/:id"

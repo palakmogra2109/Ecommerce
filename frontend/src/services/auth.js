@@ -2,20 +2,6 @@ import { authHeaders, getStoredToken } from "./http";
 
 const API_URL = "/api";
 
-export async function registerUser(data) {
-  const response = await fetch(`${API_URL}/auth/register`, {
-    method: "POST",
-
-    headers: authHeaders({
-      "Content-Type": "application/json",
-    }),
-
-    body: JSON.stringify(data),
-  });
-
-  return await response.json();
-}
-
 export async function loginUser(data) {
   const response = await fetch(`${API_URL}/auth/login`, {
     method: "POST",

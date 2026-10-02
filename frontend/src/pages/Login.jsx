@@ -60,20 +60,13 @@ export default function Login() {
 
   return (
     <AuthCard
-      title="Welcome back"
+      title="Welcome To Earth Dhanya"
       subtitle="Log in to manage your account and orders."
       footer={
         <>
           <Link className="auth-forgot" to="/forgot-password">
             Forgot password?
           </Link>
-          <p>
-            Don&apos;t have an account? <Link to="/register">Register</Link>
-          </p>
-          <p>
-            Want to open a store?{" "}
-            <Link to="/register/store">Register your store</Link>
-          </p>
         </>
       }
     >
@@ -92,7 +85,7 @@ export default function Login() {
           value={form.email}
           onChange={handleChange}
           error={errors.email}
-          placeholder="you@email.com"
+          placeholder="Enter your email"
           autoComplete="username"
         />
 
@@ -103,7 +96,7 @@ export default function Login() {
           value={form.password}
           onChange={handleChange}
           error={errors.password}
-          placeholder="Your password"
+          placeholder="Enter your password"
           autoComplete="current-password"
         />
 

@@ -188,7 +188,14 @@ export async function sendEmailFromTemplate({
   });
 }
 
-export function buildGiftCardEmail({ code, amount, expiresAt }) {
+export function buildGiftCardEmail({
+  code,
+  amount,
+  expiresAt,
+  recipientName = "there",
+  giftMessage = "",
+  quantity = 1,
+}) {
   const appName = getAppName();
 
   return buildEmailFromTemplate({
@@ -198,6 +205,10 @@ export function buildGiftCardEmail({ code, amount, expiresAt }) {
       code,
       amount,
       expiresAt,
+      recipientName,
+      giftMessage,
+      // "Gift card code" vs "3 gift card codes", so a batch email reads right.
+      codeLabel: quantity > 1 ? `${quantity} gift card codes` : "Gift card code",
     },
     fallback: {
       subject: `You have received a ${appName} gift card`,
@@ -207,8 +218,11 @@ export function buildGiftCardEmail({ code, amount, expiresAt }) {
   });
 }
 
-export async function sendGiftCardEmail(to, { code, amount, expiresAt }) {
-  const mail = await buildGiftCardEmail({ code, amount, expiresAt });
+export async function sendGiftCardEmail(
+  to,
+  { code, amount, expiresAt, recipientName, giftMessage, quantity = 1 }
+) {
+  const mail = await buildGiftCardEmail({ code, amount, expiresAt, recipientName, giftMessage, quantity });
 
   try {
     const info = await transporter.sendMail({

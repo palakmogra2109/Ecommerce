@@ -596,3 +596,220 @@
 .sf-deliver-to-txt strong{font-size:14px}
 .sf-deliver-to-txt span{font-size:12.5px;color:var(--sf-mut)}
 .sf-deliver-to .sf-btn{flex-shrink:0}
+
+/* ------------------------------------------------------------------
+   Gift balance wallet
+   One headline figure, with the cards behind it listed underneath so
+   the number is always explainable. Spendable cards are full colour;
+   anything the shopper cannot use right now fades back.
+   ------------------------------------------------------------------ */
+.sf-wallet{max-width:720px;margin:0 auto}
+.sf-wallet-hero{position:relative;overflow:hidden;border-radius:18px;padding:24px 26px;color:#fff;background:linear-gradient(135deg,#15803d 0%,#16a34a 55%,#22c55e 100%);box-shadow:0 10px 30px rgba(22,163,74,.22)}
+.sf-wallet-hero::after{content:"";position:absolute;top:-60px;right:-40px;width:220px;height:220px;border-radius:50%;background:rgba(255,255,255,.10)}
+.sf-wallet-hero::before{content:"";position:absolute;bottom:-90px;right:60px;width:160px;height:160px;border-radius:50%;background:rgba(255,255,255,.07)}
+.sf-wallet-hero > *{position:relative;z-index:1}
+.sf-wallet-label{font-size:11.5px;text-transform:uppercase;letter-spacing:.6px;font-weight:700;opacity:.85;display:flex;align-items:center;gap:6px}
+.sf-wallet-amount{font-size:40px;font-weight:800;letter-spacing:-1.2px;line-height:1.1;margin:6px 0 2px}
+.sf-wallet-sub{font-size:13.5px;opacity:.9}
+.sf-wallet-hero.is-empty{background:linear-gradient(135deg,#4b5563 0%,#6b7280 60%,#9ca3af 100%);box-shadow:0 10px 30px rgba(0,0,0,.10)}
+
+.sf-wallet-cta{margin-top:16px;background:var(--sf-card);border:1px solid #e5e7eb;border-radius:14px;padding:16px;display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.sf-wallet-cta-txt{flex:1;min-width:200px}
+.sf-wallet-cta-txt strong{display:block;font-size:15px}
+.sf-wallet-cta-txt span{font-size:12.5px;color:var(--sf-mut)}
+.sf-wallet-cta.is-on{border-color:#86efac;background:#f0fdf4}
+
+.sf-wallet-list{margin-top:20px;display:grid;gap:10px}
+.sf-wallet-list-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin:0 2px 2px}
+.sf-wallet-list-head h3{margin:0;font-size:15px}
+.sf-wallet-list-head span{font-size:12.5px;color:var(--sf-mut)}
+
+.sf-gift-card{background:var(--sf-card);border:1px solid #e5e7eb;border-radius:14px;padding:14px;display:flex;align-items:center;gap:14px;transition:border-color .15s,box-shadow .15s}
+.sf-gift-card:hover{border-color:#bbf7d0;box-shadow:0 4px 14px rgba(0,0,0,.05)}
+.sf-gift-card.is-spent{opacity:.62}
+.sf-gift-icon{flex-shrink:0;width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:#f0fdf4;color:var(--sf-ac);font-size:20px}
+.sf-gift-card.is-spent .sf-gift-icon{background:#f3f4f6;color:#9ca3af}
+.sf-gift-main{flex:1;min-width:0}
+.sf-gift-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.sf-gift-code{font-weight:700;font-size:14.5px;letter-spacing:.4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.sf-gift-amt{font-weight:700;font-size:15px;white-space:nowrap}
+.sf-gift-meta{font-size:12.5px;color:var(--sf-mut);margin-top:3px}
+.sf-gift-bar{height:5px;border-radius:99px;background:#eef2f7;overflow:hidden;margin-top:8px}
+.sf-gift-bar i{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#16a34a,#4ade80);transition:width .3s ease}
+.sf-gift-bar.is-low i{background:linear-gradient(90deg,#f59e0b,#fbbf24)}
+
+.sf-pill{display:inline-flex;align-items:center;gap:5px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:3px 8px;border-radius:99px;background:#f1f5f9;color:#64748b}
+.sf-pill.ok{background:#dcfce7;color:#15803d}
+.sf-pill.warn{background:#fef3c7;color:#b45309}
+.sf-pill.bad{background:#fee2e2;color:#b91c1c}
+
+.sf-note{margin-top:16px;font-size:12.5px;color:var(--sf-mut);text-align:center}
+.sf-link-btn{background:none;border:0;color:var(--sf-ac);font-size:13px;font-weight:600;cursor:pointer;padding:4px 0;text-decoration:underline}
+.sf-link-btn:hover{color:var(--sf-ac-dark)}
+
+/* Redeem box on the wallet panel. The panel rendered .sf-spinner but nothing had
+   ever defined it, so the loading state was a blank box on every visit. */
+.sf-spinner{width:26px;height:26px;margin:0 auto;border:3px solid #e2e8f0;border-top-color:var(--sf-ac);border-radius:50%;animation:sf-spin .8s linear infinite}
+@keyframes sf-spin{to{transform:rotate(360deg)}}
+
+/* One row: the code, then the button. min-width lets it wrap onto its own line
+   on a phone instead of crushing both halves. */
+.sf-redeem-form{display:flex;gap:8px;align-items:center;flex:1;min-width:220px}
+/* A code is read character by character against an email, so it is set the way
+   it is printed: monospaced, spaced out, and uppercased by the onChange above
+   rather than by CSS, so the value sent to the server is the value on screen. */
+.sf-redeem-form .sf-input{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.6px;text-transform:uppercase}
+.sf-redeem-form .sf-btn{flex-shrink:0}
+
+/* ------------------------------------------------------------------
+   Buy a gift card
+   Four numbered steps. Denominations are chips rather than a select so
+   the common case is one tap.
+   ------------------------------------------------------------------ */
+.sf-buy{max-width:900px;margin:0 auto}
+.sf-gstep{background:var(--sf-card);border:1px solid #e5e7eb;border-radius:16px;padding:20px 22px;margin-bottom:14px}
+.sf-gstep-head{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.sf-gstep-num{width:26px;height:26px;border-radius:50%;background:var(--sf-ac);color:#fff;display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:700;flex-shrink:0}
+.sf-gstep-head h3{margin:0;font-size:16px}
+.sf-gstep-head p{margin:2px 0 0;font-size:12.5px;color:var(--sf-mut)}
+
+.sf-chips{display:flex;flex-wrap:wrap;gap:8px}
+.sf-chip{border:1px solid #d1d5db;background:#fff;border-radius:99px;padding:9px 16px;font-size:14px;font-weight:600;cursor:pointer;color:var(--sf-ink);transition:all .15s}
+.sf-chip:hover{border-color:var(--sf-ac);background:#f0fdf4}
+.sf-chip.on{background:var(--sf-ac);border-color:var(--sf-ac);color:#fff}
+.sf-chip.custom{color:var(--sf-mut);border-style:dashed}
+
+.sf-msg-count{text-align:right;font-size:11.5px;color:var(--sf-mut);margin-top:4px}
+.sf-msg-count.is-full{color:var(--sf-amber);font-weight:600}
+
+.sf-when{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.sf-when-opt{border:1px solid #d1d5db;border-radius:12px;padding:12px;text-align:center;cursor:pointer;background:#fff;font-size:14px;font-weight:600;transition:all .15s}
+.sf-when-opt:hover{border-color:var(--sf-ac)}
+.sf-when-opt.on{border-color:var(--sf-ac);background:#f0fdf4;color:var(--sf-ac-dark);box-shadow:inset 0 0 0 1px var(--sf-ac)}
+
+.sf-preview{background:#fff;border:1px solid #e5e7eb;border-radius:16px;padding:16px;color:var(--sf-ink)}
+.sf-preview-to{font-size:12.5px;color:var(--sf-mut)}
+.sf-preview-amt{font-size:26px;font-weight:800;letter-spacing:-.8px;margin:3px 0 6px;color:var(--sf-ink)}
+.sf-preview-msg{font-size:13px;font-style:italic;color:var(--sf-mut);border-top:1px solid #e5e7eb;padding-top:9px;margin-top:10px}
+.sf-preview-when{font-size:12.5px;color:var(--sf-mut);margin-top:8px;display:flex;align-items:center;gap:6px}
+
+.sf-demo-note{background:#fffbeb;border:1px solid #fde68a;border-radius:12px;padding:12px 14px;font-size:12.5px;color:#92400e;display:flex;gap:9px;margin-bottom:14px}
+.sf-demo-note svg{flex-shrink:0;margin-top:1px}
+.sf-demo-note b{color:#78350f}
+
+.sf-buy-summary{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 12px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:14px}
+.sf-buy-summary b{font-size:19px}
+
+@media (max-width:520px){
+  .sf-when{grid-template-columns:1fr}
+  .sf-wallet-amount{font-size:34px}
+}
+
+/* ------------------------------------------------------------------
+   E-Cards shelf (Blinkit-style catalogue)
+   A grid of buyable denominations. Discounted cards carry an MRP
+   strikethrough so the saving is visible at a glance.
+   ------------------------------------------------------------------ */
+.sf-ecards-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:14px}
+.sf-ecards-head h2{margin:0 0 4px;font-size:22px}
+.sf-ecards-head p{margin:0;font-size:13px;color:var(--sf-mut);max-width:560px}
+
+.sf-ecard-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:14px}
+.sf-ecard{position:relative;display:flex;flex-direction:column;background:var(--sf-card);border:1px solid #e5e7eb;border-radius:16px;padding:16px;transition:transform .15s,box-shadow .15s,border-color .15s}
+.sf-ecard:hover{transform:translateY(-2px);box-shadow:0 8px 22px rgba(0,0,0,.07);border-color:#bbf7d0}
+.sf-ecard-flag{position:absolute;top:-9px;left:14px;background:var(--sf-ac);color:#fff;font-size:10px;font-weight:700;letter-spacing:.4px;padding:3px 9px;border-radius:99px}
+.sf-ecard-flag.save{background:var(--sf-amber)}
+.sf-ecard-face{font-size:28px;font-weight:800;letter-spacing:-1px;margin:6px 0 2px}
+.sf-ecard-mrp{font-size:12.5px;color:var(--sf-mut);text-decoration:line-through}
+.sf-ecard-meta{font-size:12px;color:var(--sf-mut);margin-top:8px;display:flex;align-items:center;gap:5px}
+.sf-ecard-buy{margin-top:14px}
+.sf-ecard-buy .sf-btn{width:100%;justify-content:center}
+
+/* Buy page: the recipient and message steps sit side by side on wide screens
+   so the whole gift takes less vertical scrolling. */
+@media (min-width:800px){
+  .sf-buy-cols{display:grid;grid-template-columns:1.2fr .8fr;gap:20px;align-items:start}
+  .sf-buy-side{position:sticky;top:84px}
+}
+
+/* The demo notice reads as an informational strip, not a scolding warning. */
+.sf-demo-note{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af;border-radius:12px;padding:13px 15px;font-size:12.5px;display:flex;gap:10px;align-items:flex-start;margin-bottom:16px;line-height:1.5}
+.sf-demo-note svg{flex-shrink:0;margin-top:1px;color:#2563eb}
+.sf-demo-note b{color:#1e3a8a}
+
+/* Card art as a real image rather than an icon. */
+.sf-gift-art{width:56px;height:36px;border-radius:6px;object-fit:cover;flex-shrink:0;box-shadow:0 2px 6px rgba(0,0,0,.12)}
+.sf-ecard-art{width:100%;height:88px;border-radius:9px;display:block;object-fit:cover;margin-bottom:11px}
+.sf-preview-art{width:260px;max-width:100%;height:132px;border-radius:10px;display:block;object-fit:cover;margin-bottom:12px}
+.sf-preview-mrp{font-size:14px;font-weight:600;text-decoration:line-through;opacity:.65;margin-left:8px}
+
+/* Amount picker: a row of tiles rather than a row of chips, so the face value
+   is the loudest thing and a discount reads as "what you pay", not a second
+   unexplained number. */
+.sf-amount-tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:8px}
+.sf-amount-tile{display:flex;flex-direction:column;gap:3px;align-items:flex-start;text-align:left;
+  border:1px solid #d1d5db;background:#fff;border-radius:11px;padding:10px 12px;cursor:pointer;
+  transition:border-color .15s,background .15s,box-shadow .15s}
+.sf-amount-tile:hover{border-color:var(--sf-ac);background:#f6fdf8}
+.sf-amount-tile.on{border-color:var(--sf-ac);background:#f0fdf4;box-shadow:inset 0 0 0 1px var(--sf-ac)}
+.sf-amount-face{font-size:17px;font-weight:700;letter-spacing:-.3px;color:var(--sf-ink)}
+.sf-amount-tile.on .sf-amount-face{color:var(--sf-ac-dark)}
+.sf-amount-price{font-size:11.5px;color:var(--sf-mut);font-weight:500;line-height:1.3}
+.sf-amount-price em{font-style:normal;color:var(--sf-ac);font-weight:700}
+.sf-custom-amount{margin-top:14px;padding-top:14px;border-top:1px solid #e5e7eb}
+.sf-field-hint{font-size:11.5px;color:var(--sf-mut);margin:4px 0 0}
+
+/* Quantity and value controls. Both are steppers rather than free-typed
+   numbers: the minimum has to be visible and hard to undershoot. */
+.sf-qty{display:flex;align-items:center;gap:0;border:1px solid #d1d5db;border-radius:11px;background:#fff;overflow:hidden;width:max-content}
+.sf-qty button{width:40px;height:42px;border:0;background:#f9fafb;cursor:pointer;font-size:19px;font-weight:600;color:var(--sf-ink);line-height:1}
+.sf-qty button:hover:not(:disabled){background:#eff6f0;color:var(--sf-ac)}
+.sf-qty button:disabled{opacity:.4;cursor:not-allowed}
+.sf-qty output{min-width:54px;text-align:center;font-size:16px;font-weight:700;padding:0 4px}
+
+.sf-value-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.sf-value-input{width:132px;text-align:center;font-size:17px;font-weight:700}
+
+.sf-line-total{display:flex;align-items:baseline;justify-content:space-between;gap:10px;margin-top:12px;padding-top:12px;border-top:1px solid #e5e7eb;font-size:14px}
+.sf-line-total b{font-size:19px}
+
+.sf-codes{list-style:none;margin:10px 0 0;padding:0;display:grid;gap:6px}
+.sf-codes li{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:13px;letter-spacing:.4px;background:#0f2b1c;color:#c8f7dd;padding:7px 10px;border-radius:7px}
+.sf-qty-row{display:flex;align-items:flex-end;gap:16px;flex-wrap:wrap;margin-bottom:14px}
+.sf-qty-row .sf-label{display:block;font-size:12.5px;font-weight:600;color:var(--sf-mut);margin-bottom:6px}
+.sf-qty-chips{display:flex;gap:6px}
+
+/* Shelf vs wallet: the two were being confused for cards the shopper owned.
+   Both are now named on screen and linked to each other. */
+.sf-ecards-balance{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:14px 16px;margin-bottom:16px}
+.sf-ecards-balance .sf-label{display:block;font-size:11.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--sf-mut);font-weight:700}
+.sf-ecards-balance strong{display:block;font-size:24px;font-weight:800;letter-spacing:-.6px;margin:2px 0 1px}
+
+/* ------------------------------------------------------------------
+   Cart
+   The root container did not exist, so the page had no width shell;
+   the summary also never got the `sticky` class that already existed.
+   ------------------------------------------------------------------ */
+.sf-cart{max-width:1000px;margin:0 auto}
+.sf-cart-count{display:inline-flex;align-items:center;justify-content:center;min-width:24px;height:24px;padding:0 7px;margin-left:8px;border-radius:99px;background:var(--sf-ac);color:#fff;font-size:12.5px;font-weight:700;vertical-align:middle}
+
+.sf-line-price{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap;font-size:13px;margin-top:3px}
+.sf-line-price b{font-size:14px}
+.sf-line-price s{color:var(--sf-mut);font-size:12.5px}
+.sf-line-off{background:#dcfce7;color:#15803d;font-size:11px;font-weight:700;padding:1px 6px;border-radius:6px}
+
+.sf-line-actions{display:flex;align-items:center;gap:10px;margin-top:9px;flex-wrap:wrap}
+.sf-line-stock{color:#b45309;background:#fef3c7;font-size:11.5px;font-weight:600;padding:2px 8px;border-radius:99px}
+.sf-line-was{font-size:12px;color:var(--sf-mut);text-decoration:line-through}
+
+.sf-totals-save{color:#15803d;font-weight:600}
+.sf-totals-save-note{margin:8px 0 0;font-size:12.5px;font-weight:600;color:#15803d;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:7px 10px;text-align:center}
+
+/* A disabled stepper button must look disabled, not just be unclickable. */
+.sf-stepper button:disabled{opacity:.4;cursor:not-allowed}
+.sf-stepper button:disabled:hover{background:#f9fafb}
+
+@media (max-width:560px){
+  .sf-line{flex-wrap:wrap}
+  .sf-line-right{width:100%;flex-direction:row;justify-content:space-between;align-items:center;border-top:1px solid #e5e7eb;padding-top:9px}
+}

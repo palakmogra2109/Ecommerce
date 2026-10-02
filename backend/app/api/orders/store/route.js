@@ -3,7 +3,12 @@ import { corsHeaders } from "@/lib/cors";
 import { Order } from "@/lib/models/order";
 import { Branch } from "@/lib/models/branch";
 import { ORDER_STATUS } from "@shared/constants";
-import { round2, validateCoupon } from "@/lib/checkoutDiscounts";
+import { round2, validateCoupon, validateGiftCard } from "@/lib/checkoutDiscounts";
+import { normalizeGiftCode } from "@/lib/giftCardRules";
+import { applyAllocation, lockAndAllocate } from "@/lib/giftCardSpending";
+import { GiftCard } from "@/lib/models/giftCard";
+import { spendGiftCardBalanceInTx } from "@/lib/giftCardSpend";
+import { randomUUID } from "node:crypto";
 
 export const runtime = "nodejs";
 
@@ -71,27 +76,38 @@ export async function POST(request) {
 
     // Fetch fresh product truth for every cart line, joined with the
     // selected store's pricing/stock when a store is chosen.
+    //
+    // brand.name is joined in (not just brand_id) because the v2 wallet's scope
+    // checks compare a bucket's frozen BRAND value against a NAME: a line that
+    // carried only the numeric id would make a brand-restricted card look
+    // ineligible, and that money would silently never be spendable.
     const productUuids = items.map((i) => i.product_uuid);
     const productResult = await pool.query(
       branch
         ? `
       SELECT p.id AS product_id, p.uuid, p.name, p.sku, p.price, p.discount_price, p.status,
-             p.inventory_mode,
+             p.inventory_mode, c.slug AS category_slug, c.id AS category_id, p.brand_id,
+             b.name AS brand_name,
              bp.sellingPrice       AS branch_price,
              bp.compareAtPrice     AS branch_compare_price,
              bp.availableQuantity  AS branch_stock,
              bp.status             AS branch_status,
              bp.isAvailable        AS branch_is_available
       FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN brands b ON b.id = p.brand_id
       LEFT JOIN branch_products bp
         ON bp.productId = p.id AND bp.branchId = $2
       WHERE p.uuid = ANY($1::uuid[])
       `
         : `
-      SELECT id AS product_id, uuid, name, sku, price, discount_price, stock,
-             status, inventory_mode
-      FROM products
-      WHERE uuid = ANY($1::uuid[])
+      SELECT p.id AS product_id, p.uuid, p.name, p.sku, p.price, p.discount_price, p.stock,
+             p.status, p.inventory_mode, c.slug AS category_slug, c.id AS category_id, p.brand_id,
+             b.name AS brand_name
+      FROM products p
+      LEFT JOIN categories c ON c.id = p.category_id
+      LEFT JOIN brands b ON b.id = p.brand_id
+      WHERE p.uuid = ANY($1::uuid[])
       `,
       branch ? [productUuids, branch.id] : [productUuids]
     );
@@ -102,6 +118,12 @@ export async function POST(request) {
         {
           ...p,
           productId: p.product_id != null ? Number(p.product_id) : null,
+          categorySlug: p.category_slug || null,
+          categoryId: p.category_id != null ? Number(p.category_id) : null,
+          brandId: p.brand_id != null ? Number(p.brand_id) : null,
+          // The name a gift-card scope is stored as, falling back to the id so a
+          // product whose brand row has gone is restricted rather than free.
+          brandName: p.brand_name || (p.brand_id != null ? String(p.brand_id) : null),
           price: Number(p.price) || 0,
           stock: Number(p.stock) || 0,
           branch_price: p.branch_price != null ? Number(p.branch_price) : null,
@@ -205,6 +227,10 @@ export async function POST(request) {
           price: unitPrice,
           quantity,
           subtotal: lineSubtotal,
+          category_slug: product.categorySlug,
+          category_id: product.categoryId,
+          brand_id: product.brandId,
+          brand_name: product.brandName,
         });
       } else {
         // Legacy admin-catalogue ordering (no store selected).
@@ -237,6 +263,10 @@ export async function POST(request) {
           price: unitPrice,
           quantity,
           subtotal: lineSubtotal,
+          category_slug: product.categorySlug,
+          category_id: product.categoryId,
+          brand_id: product.brandId,
+          brand_name: product.brandName,
         });
       }
 
@@ -314,60 +344,118 @@ export async function POST(request) {
       discount = checked.discount;
     }
 
-    let giftCardId = null;
-    let giftAmount = 0;
-    let giftNewBalance = null;
-    const giftCode = String(body.giftCardCode || "").trim().replace(/\s+/g, "-").toUpperCase();
+    // Candidate cards: either the one code the shopper typed, or every card in
+    // their wallet when they asked us to spend the balance.
+    const giftCode = normalizeGiftCode(body.giftCardCode);
+    let candidates = [];
     if (giftCode) {
-      const remainder = round2(subtotal - discount);
-      const locked = await client.query(
-        `SELECT id, code, balance, status, expires_at, recipient_email
-         FROM gift_cards WHERE code = $1 FOR UPDATE`,
-        [giftCode]
-      );
-      const card = locked.rows[0];
-      const balance = Number(card?.balance) || 0;
-      if (!card || card.status !== "ACTIVE") {
+      const checked = await validateGiftCard(client, {
+        code: giftCode,
+        remainder: round2(subtotal - discount),
+        customerEmail,
+        customerId,
+      });
+      if (checked.error) {
         await client.query("ROLLBACK");
         return Response.json(
-          { success: false, message: "This gift card is not valid." },
+          { success: false, message: checked.error },
           { status: 400, headers: corsHeaders() }
         );
       }
-      if (card.expires_at && new Date(card.expires_at).getTime() < Date.now()) {
-        await client.query("ROLLBACK");
-        return Response.json(
-          { success: false, message: "This gift card has expired." },
-          { status: 400, headers: corsHeaders() }
-        );
-      }
-      if (balance <= 0 || remainder <= 0) {
-        await client.query("ROLLBACK");
-        return Response.json(
-          { success: false, message: "This gift card cannot be applied to this order." },
-          { status: 400, headers: corsHeaders() }
-        );
-      }
-      giftAmount = round2(Math.min(balance, remainder));
-      giftNewBalance = round2(balance - giftAmount);
-      // The ::numeric casts are load-bearing: $1 is bound from a JS
-      // number (untyped), and without them Postgres deduces conflicting
-      // types between `balance = $1` and `$1 <= 0`.
-      await client.query(
-        `UPDATE gift_cards
-         SET balance = $1::numeric,
-             status = CASE WHEN $1::numeric <= 0 THEN 'REDEEMED' ELSE status END,
-             recipient_email = COALESCE(recipient_email, $2),
-             updated_at = now()
-         WHERE id = $3`,
-        [giftNewBalance, customerEmail, card.id]
-      );
-      giftCardId = card.id;
-      // The ledger row needs the order id, so it lands right after the
-      // order header below, still inside this transaction.
+      candidates = [checked.giftCard];
+    } else if (body.useGiftCard) {
+      candidates = await GiftCard.spendableForCustomer({
+        email: customerEmail,
+        customerId,
+      });
     }
 
-    const total = round2(Math.max(0, subtotal - discount - giftAmount));
+    let giftCardId = null;
+    let giftAmount = 0;
+    let giftLines = [];
+
+    if (candidates.length > 0) {
+      // Locks every candidate in one ascending-id statement, then re-checks
+      // status/expiry/usage under that lock before deciding anything.
+      const locked = await lockAndAllocate(client, {
+        cards: candidates,
+        remaining: round2(subtotal - discount),
+        // Scope rules (brand / category / product) need the real basket.
+        // Every identifier form a line carries is passed, because a card's
+        // scope is stored as slugs/uuids while lines also carry numeric ids.
+        items: insertedItems.map((l) => ({
+          product_uuid: l.product_uuid,
+          product_id: l.product_id,
+          category_slug: l.category_slug,
+          category_id: l.category_id,
+          brand_id: l.brand_id,
+        })),
+      });
+
+      if (!(locked.total > 0)) {
+        await client.query("ROLLBACK");
+        return Response.json(
+          {
+            success: false,
+            message: giftCode
+              ? "This gift card cannot be applied to this order."
+              : "Your gift balance cannot be used for this order.",
+          },
+          { status: 400, headers: corsHeaders() }
+        );
+      }
+
+      await applyAllocation(client, locked.lines, {
+        performedBy: customerEmail,
+        recipientEmail: customerEmail,
+      });
+
+      giftLines = locked.lines;
+      giftAmount = locked.total;
+      // orders.gift_card_id is single-valued by history; it points at the
+      // primary card. The per-card split lives in the ledger rows above.
+      giftCardId = locked.lines[0].cardId;
+    }
+
+    // The v2 wallet: the buckets a redeemed code opened, spent last, after the
+    // coupon and the legacy cards — the same order the quote stacks them in, so
+    // the price quoted and the price charged come out of one plan.
+    //
+    // `orderUuid` is minted HERE, before the money moves, and handed to both the
+    // debit and Order.create. That is what lets every DEBIT row name the order it
+    // paid for, which is the whole record a refund needs to put the value back
+    // into the same buckets — so the ledger and not a new column on `orders` is
+    // where the allocation list lives, with nothing to migrate and nothing that
+    // can drift out of step with the rows it summarises.
+    //
+    // Inside this transaction, and failing here fails the order: a customer who
+    // is charged for an order whose wallet was never debited is the outcome this
+    // whole path exists to make impossible. If any part of it throws, the
+    // rollback above takes the order, the stock and the wallet together.
+    const orderUuid = randomUUID();
+    let walletSpend = null;
+    if (body.useGiftCard && customerId) {
+      walletSpend = await spendGiftCardBalanceInTx(client, {
+        customerId,
+        lineItems: insertedItems.map((line) => ({
+          // Server-side truth: the price actually charged for this line, and the
+          // brand/category/product the card's own scope is checked against. A
+          // missing brand or category here does not error — it makes a restricted
+          // card ineligible, quietly, which is why none of these come from the
+          // request body.
+          unitPrice: line.price,
+          quantity: line.quantity,
+          brand: line.brand_name,
+          category: line.category_slug,
+          productId: line.product_uuid,
+        })),
+        amount: round2(subtotal - discount - giftAmount),
+        orderUuid,
+        reference: `ORDER:${orderUuid}`,
+      });
+    }
+
+    const total = round2(Math.max(0, subtotal - discount - giftAmount - round2(walletSpend?.covered || 0)));
 
     // Estimated delivery: 45-60 minute store delivery window.
     const estimatedDeliveryAt = new Date(Date.now() + 60 * 60 * 1000);
@@ -376,6 +464,7 @@ export async function POST(request) {
     // PENDING too — a real gateway would webhook it to PAID).
     const order = await Order.create(
       {
+        uuid: orderUuid,
         customerId,
         customerName,
         customerEmail,
@@ -397,10 +486,24 @@ export async function POST(request) {
     );
 
     if (giftCardId) {
+      // The balance is now really spent, so any hold on these cards is moot.
+      // Consumed rather than left to expire, otherwise a hold taken before
+      // the order existed would keep shrinking the card's availability.
       await client.query(
-        `INSERT INTO gift_card_transactions (gift_card_id, order_id, type, amount, balance_after)
-         VALUES ($1, (SELECT id FROM orders WHERE uuid = $2), 'REDEEM', $3, $4)`,
-        [giftCardId, order.uuid, giftAmount, giftNewBalance]
+        `UPDATE gift_card_reservations
+         SET status = 'CONSUMED', updated_at = now()
+         WHERE gift_card_id = ANY($1::bigint[]) AND status = 'RESERVED'`,
+        [giftLines.map((l) => l.cardId)]
+      );
+
+      // Link the ledger rows to the order now that it has an id. Matching on
+      // the exact transaction ids matters: matching on card + email would
+      // cross-link when one shopper has two orders in flight at once.
+      await client.query(
+        `UPDATE gift_card_transactions SET order_id = o.id
+         FROM orders o
+         WHERE o.uuid = $1 AND gift_card_transactions.id = ANY($2::bigint[])`,
+        [order.uuid, giftLines.map((l) => l.transactionId)]
       );
     }
 

@@ -146,13 +146,6 @@ export function storeLogin(email, password) {
   });
 }
 
-export function storeRegister(name, email, password) {
-  return storefrontAdminFetch("/auth/register", {
-    method: "POST",
-    body: JSON.stringify({ name, email, password }),
-  });
-}
-
 export function requestOtp(mobile) {
   return storefrontFetch("/otp/request", {
     method: "POST",
@@ -167,15 +160,62 @@ export function verifyOtp(mobile, otp) {
   });
 }
 
-export function quoteCheckout({ subtotal, couponCode = "", giftCardCode = "", customerEmail = "" }) {
+export function quoteCheckout({
+  subtotal,
+  couponCode = "",
+  giftCardCode = "",
+  customerEmail = "",
+  useGiftCard = false,
+  customerId = null,
+}) {
   return storefrontFetch("/checkout/quote", {
     method: "POST",
-    body: JSON.stringify({ subtotal, couponCode, giftCardCode, customerEmail }),
+    body: JSON.stringify({ subtotal, couponCode, giftCardCode, customerEmail, useGiftCard, customerId }),
   });
 }
 
-export function getMyGiftCards() {
-  return storefrontFetch("/gift-cards");
+// The shopper's gift balance as one figure, with the cards behind it.
+export function getWallet() {
+  return storefrontFetch("/wallet");
+}
+
+// What a gift card code is worth, before the shopper commits to it.
+//
+// Read-only on the server: no wallet is opened, no value moves, and the code is
+// never echoed back — so it is safe to call on every keystroke, which is why the
+// wallet panel debounces it rather than waiting for a button.
+export function previewGiftCardCode(code) {
+  return storefrontFetch("/gift-cards/claim/preview", {
+    method: "POST",
+    body: JSON.stringify({ code: String(code || "") }),
+  });
+}
+
+// Turns a code into wallet money.
+//
+// On a refusal the server's `message` is the answer to show, verbatim: it tells
+// "no such code" apart from "already claimed" and from "expired" on purpose, and
+// a friendlier paraphrase thrown over the top would throw that away. A 429 means
+// the guess budget is spent, and the caller must not retry on its own.
+export function claimGiftCardCode(code) {
+  return storefrontFetch("/gift-cards/claim", {
+    method: "POST",
+    body: JSON.stringify({ code: String(code || "") }),
+  });
+}
+
+// The E-Cards shelf. Public, so it renders before login.
+export function getDenominations() {
+  return storefrontFetch("/gift-cards/denominations");
+}
+
+// Buy a gift card for someone else. sendLater + scheduledFor queues the
+// intent instead of issuing immediately.
+export function purchaseGiftCard(payload) {
+  return storefrontFetch("/gift-cards/purchase", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getStoreProfile() {

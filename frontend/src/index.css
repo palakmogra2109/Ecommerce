@@ -5786,3 +5786,91 @@ body {
 .phone-input {
   width: 100%;
 }
+
+/* ------------------------------------------------------------------
+   Gift card scope picker (admin)
+   Three modes, so the admin never has to guess what "no selection" means.
+   ------------------------------------------------------------------ */
+.gc-scope-modes{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:14px}
+.gc-scope-mode{border:1px solid #d1d5db;background:#fff;border-radius:10px;padding:10px 12px;cursor:pointer;text-align:center;font-size:13px;font-weight:600;transition:all .15s}
+.gc-scope-mode:hover{border-color:var(--accent)}
+.gc-scope-mode.on{border-color:var(--accent);background:var(--accent-soft);color:var(--accent)}
+.gc-scope-mode small{display:block;font-weight:400;font-size:11px;color:var(--text-muted);margin-top:2px}
+.gc-scope-mode.on small{color:var(--accent)}
+
+.gc-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:8px}
+.gc-chip{display:inline-flex;align-items:center;gap:6px;background:#f1f5f9;border:1px solid #e2e8f0;border-radius:99px;padding:5px 10px;font-size:12.5px;color:var(--text)}
+.gc-chip button{background:none;border:0;cursor:pointer;color:var(--text-muted);font-size:14px;line-height:1;padding:0}
+.gc-chip button:hover{color:var(--accent)}
+
+/* Compact preview, matching the storefront's card art so an admin sees the
+   same proportion a shopper will. */
+.gc-art-preview{
+  border:1px solid var(--border);border-radius:12px;background:var(--surface-2);
+  padding:12px;display:inline-block;max-width:100%;
+}
+.gc-art-preview img{
+  width:260px;max-width:100%;height:132px;border-radius:9px;display:block;
+  object-fit:cover;box-shadow:0 3px 10px rgba(0,0,0,.10);
+}
+.gc-art-preview .filament-muted{margin-top:8px;display:block;font-size:11.5px}
+
+@media (max-width:640px){
+  .gc-scope-modes{grid-template-columns:1fr}
+}
+
+/* Live shelf preview on the denominations page, using the storefront's own
+   classes so what the admin approves is exactly what a shopper sees. */
+.gc-shelf-preview{margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--border)}
+.gc-shelf-strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:8px}
+.gc-shelf-item{position:relative;border:1px solid var(--border);border-radius:12px;padding:12px;background:var(--surface-2);overflow:visible}
+
+/* Live feedback while a denomination is being typed, so a promotion is visible
+   before it is saved rather than only after a reload. */
+.gc-discount-live{margin:0;font-size:12.5px;font-weight:600;color:var(--accent)}
+.gc-draft-preview{margin-top:20px;padding-top:18px;border-top:1px solid var(--border)}
+.gc-draft-preview .form-label{display:block;margin-bottom:8px}
+
+/* ------------------------------------------------------------------
+   Card content padding and a labelled checkbox.
+   The admin stylesheet had neither, so gift-card pages referenced
+   classes that did not exist and rendered unstyled.
+   ------------------------------------------------------------------ */
+.filament-pad {
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+
+/* Inside a card body the form's own padding would double up. */
+.filament-pad > .admin-form,
+.filament-card > .admin-form {
+  padding: 0;
+  background: none;
+  max-width: none;
+}
+
+.filament-check {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--text-body);
+  cursor: pointer;
+  user-select: none;
+}
+.filament-check input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Expiry is a derived status, so it had no badge variant and fell back to
+   the neutral base colour instead of reading as a warning. */
+.filament-badge-expired {
+  background: #fef3c7;
+  color: #92400e;
+}
+.filament-badge-expired .filament-badge-dot {
+  background: #f59e0b;
+}

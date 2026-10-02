@@ -9,6 +9,8 @@ import {
   PAYMENT_STATUSES,
 } from "@shared/constants";
 import { isValidUuid, invalidUuidResponse } from "@/lib/uuid";
+import pool from "@/lib/db";
+import { reverseGiftRedemption, releaseCouponUsage } from "@/lib/giftCardRefunds";
 
 export const runtime = "nodejs";
 
@@ -141,8 +143,29 @@ export async function PATCH(request, { params }) {
       );
     }
 
+    let refundNote = "";
+    if ([ORDER_STATUS.CANCELLED, ORDER_STATUS.REFUNDED].includes(body.status)) {
+      const reversed = await reverseGiftRedemption(pool, id, {
+        reason: `Order ${body.status.toLowerCase()}`,
+        performedBy: auth.user.email,
+      });
+      await releaseCouponUsage(pool, id);
+      if (reversed.restored > 0) {
+        refundNote = ` Gift card refunded ₹${reversed.restored}.`;
+      }
+      if (reversed.walletRestored > 0) {
+        refundNote += ` Wallet balance refunded ₹${reversed.walletRestored}.`;
+      }
+      // Said out loud rather than swallowed: the order status is already final,
+      // so a balance that could not be returned has to reach whoever pressed the
+      // button instead of quietly staying out of the customer's wallet.
+      if (reversed.walletError) {
+        refundNote += " The wallet balance could NOT be refunded and needs support attention.";
+      }
+    }
+
     return Response.json(
-      { success: true, message: "Order updated successfully", order },
+      { success: true, message: `Order updated successfully.${refundNote}`, order },
       { status: 200, headers: corsHeaders() }
     );
   } catch (error) {
@@ -195,8 +218,28 @@ export async function POST(_request, { params }) {
 
     const order = await Order.update(id, { status: ORDER_STATUS.CANCELLED });
 
+    const reversed = await reverseGiftRedemption(pool, id, {
+      reason: "Order cancelled",
+      performedBy: auth.user.email,
+    });
+    await releaseCouponUsage(pool, id);
+
+    // Same contract as the update path above: the cancel has happened, so a
+    // wallet refund that failed is reported rather than thrown, and its value is
+    // still sitting where the rolled-back transaction left it.
+    const refundNote =
+      (reversed.restored > 0 ? ` Gift card refunded ₹${reversed.restored}.` : "") +
+      (reversed.walletRestored > 0 ? ` Wallet balance refunded ₹${reversed.walletRestored}.` : "") +
+      (reversed.walletError
+        ? " The wallet balance could NOT be refunded and needs support attention."
+        : "");
+
     return Response.json(
-      { success: true, message: "Order cancelled successfully", order },
+      {
+        success: true,
+        message: `Order cancelled successfully.${refundNote}`,
+        order,
+      },
       { status: 200, headers: corsHeaders() }
     );
   } catch (error) {

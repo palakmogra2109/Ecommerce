@@ -4,6 +4,8 @@
 // Coupon type spellings mirror shared/constants.js COUPON_TYPE as literals:
 // this module runs under plain node --test too, where the "@shared" alias
 // does not resolve (same reason lib/models/coupon.js avoids the import).
+import { cardContribution, normalizeGiftCode, unusableReason } from "./giftCardRules.js";
+
 const COUPON_FIXED = "FIXED";
 
 export function round2(n) {
@@ -78,32 +80,62 @@ export async function validateCoupon(db, { code, subtotal, customerEmail }) {
   return { coupon, discount: computeCouponDiscount(coupon, base) };
 }
 
-// Gift cards pay down whatever remains after the coupon. Never exceeds the
-// remainder and never touches locked rows here — the placement route
+// Gift cards pay down whatever remains after the coupon, within the card's
+// own rules (expiry, suspension, usage cap, customer binding, minimum order,
+// maximum redemption, branch/product/category applicability). Never exceeds
+// the remainder and never touches locked rows here — the placement route
 // re-checks under FOR UPDATE before moving money.
-export async function validateGiftCard(db, { code, remainder }) {
-  const normalized = String(code || "").trim().replace(/\s+/g, "-").toUpperCase();
+//
+// Context beyond code/remainder is optional: rules that cannot be judged
+// (unknown branch, unknown buyer) are skipped, never failed. Returns
+// { giftCard, applied, eligible } or { error }.
+// Manual-code path. The wallet's auto-apply does not use this: it allocates
+// across every card at once (allocateAcrossCards) instead of one code.
+//
+// Branch/product/category restrictions were removed, so this now judges only
+// status, expiry, balance, ownership and the minimum order.
+// Returns { giftCard, applied } or { error }.
+export async function validateGiftCard(
+  db,
+  { code, remainder, customerEmail = "", customerId = null } = {}
+) {
+  const normalized = normalizeGiftCode(code);
   if (!normalized) return { error: "Enter a gift card code." };
 
-  const found = await db.query(
-    `SELECT id, uuid, code, balance, status, expires_at FROM gift_cards WHERE code = $1`,
-    [normalized]
-  );
-  const card = found.rows[0];
-  if (!card || card.status !== "ACTIVE") {
-    return { error: "This gift card is not valid." };
-  }
-  if (card.expires_at && new Date(card.expires_at).getTime() < Date.now()) {
-    return { error: "This gift card has expired." };
+  const { GiftCard } = await import("./models/giftCard.js");
+  const card = await GiftCard.findByCode(normalized, { masked: false });
+  if (!card) {
+    // Distinct from a rule failure: a wrong code counts toward the guess budget.
+    return { error: "This gift card is not valid.", notFound: true };
   }
 
-  const balance = Number(card.balance) || 0;
-  if (balance <= 0) {
-    return { error: "This gift card has no balance left." };
+  if (card.customer_id != null && customerId != null && Number(card.customer_id) !== Number(customerId)) {
+    return { error: "This gift card belongs to another account." };
   }
+  if (!card.customer_id && customerEmail) {
+    const mine = await db.query(
+      `SELECT 1 FROM gift_cards WHERE id = $1 AND (recipient_email IS NULL OR LOWER(recipient_email) = $2)`,
+      [card.id, String(customerEmail).toLowerCase().trim()]
+    );
+    if (mine.rows.length === 0) {
+      return { error: "This gift card was issued to someone else." };
+    }
+  }
+
+  const reason = unusableReason(card);
+  if (reason) {
+    // A suspended card still counts toward the guess budget: someone probing
+    // for live balances gets the same answer either way.
+    return { error: reason, suspended: card.status === "SUSPENDED" };
+  }
+
   const rest = Math.max(0, round2(remainder));
   if (rest <= 0) {
     return { error: "There is nothing left for the gift card to cover." };
   }
-  return { giftCard: card, applied: Math.min(balance, rest) };
+  const applied = cardContribution(card, rest);
+  if (applied <= 0) {
+    return { error: "This gift card cannot be applied to this order." };
+  }
+  return { giftCard: card, applied };
 }

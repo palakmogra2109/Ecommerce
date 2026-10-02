@@ -9,7 +9,6 @@ import {
   getCurrentUser,
   loginUser,
   logoutUser,
-  registerUser,
 } from "../services/auth";
 import { clearToken, getStoredToken, storeToken } from "../services/http";
 
@@ -103,14 +102,6 @@ export function AuthProvider({ children }) {
     return data;
   }
 
-  async function register(name, email, password) {
-    return await registerUser({
-      name,
-      email,
-      password,
-    });
-  }
-
   async function logout() {
     // Local logout is authoritative for this app: clear this app's own
     // token even if the network call fails. The other panel keeps its own
@@ -167,7 +158,6 @@ export function AuthProvider({ children }) {
         user,
         loading,
         login,
-        register,
         logout,
         refresh: checkAuth,
         can,

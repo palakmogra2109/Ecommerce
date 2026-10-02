@@ -23,9 +23,12 @@ export default function GiftCards() {
           key: "status",
           label: "All statuses",
           options: [
+            { value: GIFT_CARD_STATUS.DRAFT, label: "Draft" },
             { value: GIFT_CARD_STATUS.ACTIVE, label: "Active" },
-            { value: GIFT_CARD_STATUS.INACTIVE, label: "Inactive" },
-            { value: GIFT_CARD_STATUS.REDEEMED, label: "Redeemed" },
+            { value: GIFT_CARD_STATUS.SUSPENDED, label: "Suspended" },
+            { value: GIFT_CARD_STATUS.CANCELLED, label: "Cancelled" },
+            { value: GIFT_CARD_STATUS.REDEEMED, label: "Fully used" },
+            { value: GIFT_CARD_STATUS.EXPIRED, label: "Expired" },
           ],
         },
       ]}
@@ -57,8 +60,16 @@ export default function GiftCards() {
         {
           label: "Recipient",
           searchKeys: ["recipient_email"],
-          render: (row) => (
+          render: (row) =>
             row.recipient_email || <span className="filament-muted">Anyone</span>
+        },
+        {
+          label: "Source",
+          render: (row) => (
+            <span className="filament-badge">
+              <span className="filament-badge-dot" />
+              {String(row.source || "FIXED").toLowerCase()}
+            </span>
           ),
         },
         {
@@ -76,15 +87,39 @@ export default function GiftCards() {
         },
       ]}
       onStatusToggle={async (row) => {
+        // Terminal states are not toggled: a cancelled card stays cancelled,
+        // and a fully used card only moves again via an admin adjustment.
+        if ([GIFT_CARD_STATUS.CANCELLED, GIFT_CARD_STATUS.REDEEMED].includes(row.status)) {
+          return { success: false, message: "This card cannot be reactivated from the list." };
+        }
+        // A draft is "activated"; anything else suspended is "unsuspended".
         const nextStatus =
-          row.status === GIFT_CARD_STATUS.ACTIVE
-            ? GIFT_CARD_STATUS.INACTIVE
+          row.status === GIFT_CARD_STATUS.SUSPENDED
+            ? GIFT_CARD_STATUS.ACTIVE
             : GIFT_CARD_STATUS.ACTIVE;
 
         return updateGiftCard(row.uuid, { status: nextStatus });
       }}
       onCreate={() => navigate("/gift-cards/new")}
       createLabel="Issue Gift Card"
+      headerExtras={
+        <>
+          <button
+            type="button"
+            className="filament-btn filament-btn-outline"
+            onClick={() => navigate("/gift-cards/denominations")}
+          >
+            Denominations
+          </button>
+          <button
+            type="button"
+            className="filament-btn filament-btn-outline"
+            onClick={() => navigate("/gift-cards/bulk")}
+          >
+            Bulk issue
+          </button>
+        </>
+      }
       permissions={{
         view: "gift_cards.view",
         create: "gift_cards.create",

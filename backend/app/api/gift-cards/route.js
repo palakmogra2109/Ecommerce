@@ -3,9 +3,16 @@ import { parsePagination } from "@/lib/pagination";
 import { GiftCard } from "@/lib/models/giftCard";
 import { sendGiftCardEmail } from "@/lib/mail";
 import { authorize } from "@/lib/authorization";
-import { KEY_PERMISSIONS, GIFT_CARD_STATUSES } from "@shared/constants";
+import {
+  KEY_PERMISSIONS,
+  GIFT_CARD_STATUSES,
+  GIFT_CARD_SOURCES,
+  GIFT_CARD_STATUS,
+} from "@shared/constants";
 
 export const runtime = "nodejs";
+
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function OPTIONS() {
   return new Response(null, { status: 204, headers: corsHeaders() });
@@ -42,15 +49,28 @@ export async function POST(request) {
     if (!auth.ok) return auth.response;
 
     const body = await request.json();
-    const { code, amount, recipientEmail, expiresAt, status } = body;
+    const {
+      code,
+      label,
+      amount,
+      currency,
+      source,
+      recipientEmail,
+      customerId,
+      expiresAt,
+      status,
+      usageLimit,
+      minOrderAmount,
+      maxRedemptionAmount,
+      imageUrl,
+      sendEmail,
+      applicableCategories,
+      applicableBrands,
+      applicableProducts,
+    } = body;
 
-    if (!code || typeof code !== "string" || !code.trim()) {
-      return Response.json(
-        { success: false, message: "A gift card code is required" },
-        { status: 400, headers: corsHeaders() }
-      );
-    }
-
+    // The code is optional: the model generates a secure one when omitted.
+    // A manually supplied code is still accepted and hashed the same way.
     if (!(Number(amount) > 0)) {
       return Response.json(
         { success: false, message: "Amount must be greater than zero" },
@@ -65,7 +85,14 @@ export async function POST(request) {
       );
     }
 
-    if (recipientEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(recipientEmail).trim())) {
+    if (source && !GIFT_CARD_SOURCES.includes(source)) {
+      return Response.json(
+        { success: false, message: "Invalid source" },
+        { status: 400, headers: corsHeaders() }
+      );
+    }
+
+    if (recipientEmail && !EMAIL_RE.test(String(recipientEmail).trim())) {
       return Response.json(
         { success: false, message: "Recipient email is not valid" },
         { status: 400, headers: corsHeaders() }
@@ -74,17 +101,32 @@ export async function POST(request) {
 
     try {
       const giftCard = await GiftCard.create({
-        code,
+        code: code || null,
+        label,
         amount: Number(amount),
+        currency,
+        source,
+        customerId: customerId || null,
         recipientEmail,
         expiresAt: expiresAt || null,
-        status: status || "ACTIVE",
+        status: status || GIFT_CARD_STATUS.ACTIVE,
+        usageLimit,
+        minOrderAmount,
+        maxRedemptionAmount,
+        imageUrl,
+        applicableCategories,
+        applicableBrands,
+        applicableProducts,
+        createdBy: auth.user?.id ?? null,
       });
 
-      // Recipient email, when given: the card details go out by mail.
-      // Best effort — a failed send never fails the issue itself.
+      // Assigning a customer attaches the card to their wallet; it says
+      // nothing about delivery. Emailing the code is a separate, explicit
+      // choice, because an issued card is often printed or handed over
+      // instead of sent.
       let emailSent = false;
-      if (giftCard.recipient_email) {
+      const wantsEmail = body.sendEmail === true && giftCard.recipient_email;
+      if (wantsEmail) {
         const sent = await sendGiftCardEmail(giftCard.recipient_email, {
           code: giftCard.code,
           amount: `₹${Number(giftCard.initial_amount).toLocaleString("en-IN")}`,
@@ -101,7 +143,7 @@ export async function POST(request) {
           message: emailSent
             ? "Gift card issued and emailed successfully"
             : giftCard.recipient_email
-              ? "Gift card issued successfully. Email could not be sent — code logged to server console."
+              ? "Gift card issued. The code is in this response — save it now."
               : "Gift card issued successfully",
           giftCard,
           emailSent,

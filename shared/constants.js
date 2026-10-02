@@ -444,13 +444,47 @@ export const COUPON_LIMITS = Object.freeze({
 // ---------- Gift Cards ----------
 
 // Admin-issued stored value redeemed at storefront checkout.
+// EXPIRED is derived from expires_at and is filterable but never stored;
+// REDEEMED is the stored equivalent of "fully used".
 export const GIFT_CARD_STATUS = Object.freeze({
+  DRAFT: "DRAFT",
   ACTIVE: "ACTIVE",
-  INACTIVE: "INACTIVE",
+  SUSPENDED: "SUSPENDED",
+  EXPIRED: "EXPIRED",
   REDEEMED: "REDEEMED",
+  CANCELLED: "CANCELLED",
 });
 
-export const GIFT_CARD_STATUSES = Object.values(GIFT_CARD_STATUS);
+export const GIFT_CARD_STATUSES = Object.freeze(
+  Object.values(GIFT_CARD_STATUS).filter((s) => s !== GIFT_CARD_STATUS.EXPIRED)
+);
+
+// Where a card came from. PURCHASED is set only by the customer purchase
+// flow once payment settles; everything else is issued by the store.
+export const GIFT_CARD_SOURCE = Object.freeze({
+  FIXED: "FIXED",
+  CUSTOM: "CUSTOM",
+  PROMOTIONAL: "PROMOTIONAL",
+  BULK: "BULK",
+  PURCHASED: "PURCHASED",
+});
+
+export const GIFT_CARD_SOURCES = Object.values(GIFT_CARD_SOURCE);
+
+// Stored-value ledger entry types.
+export const GIFT_CARD_TX_TYPE = Object.freeze({
+  ISSUE: "ISSUE",
+  PURCHASED: "PURCHASED",
+  ACTIVATED: "ACTIVATED",
+  REDEEM: "REDEEM",
+  REFUND: "REFUND",
+  REVERSAL: "REVERSAL",
+  ADJUSTMENT: "ADJUSTMENT",
+  EXPIRED: "EXPIRED",
+  CANCELLED: "CANCELLED",
+});
+
+export const GIFT_CARD_TX_TYPES = Object.values(GIFT_CARD_TX_TYPE);
 
 // ---------- Reviews ----------
 

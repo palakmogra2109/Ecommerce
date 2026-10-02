@@ -21,6 +21,7 @@ const BASE_SELECT = `
   SELECT o.uuid, o.order_number, o.customer_name, o.customer_email,
          o.customer_mobile, o.shipping_address, o.subtotal, o.discount,
          o.total, o.coupon_code, o.payment_method, o.payment_status, o.status,
+         o.gift_card_id, o.gift_amount,
          o.branchid, o.created_at, o.updated_at,
          c.uuid AS customer_uuid,
          b.uuid AS branch_uuid, b.name AS branch_name, b.code AS branch_code
@@ -45,6 +46,12 @@ export const Order = {
 
   async create(data = {}, client = null) {
     const {
+      // Optional. The database mints one by default, and every existing caller
+      // still gets that; the checkout passes its own so that the wallet debit
+      // taken a moment earlier can already name the order it paid for. Minting
+      // it at the call site is the only way that works without inserting the order
+      // twice or writing the uuid after the fact.
+      uuid = null,
       customerId = null,
       customerName = "",
       customerEmail = "",
@@ -72,8 +79,9 @@ export const Order = {
          customer_mobile, shipping_address, subtotal, discount, total,
          coupon_id, coupon_code, gift_card_id, gift_amount,
          payment_method, payment_status, branchid,
-         estimated_delivery_at)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+         estimated_delivery_at, uuid)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+              COALESCE($18::uuid, gen_random_uuid()))
       RETURNING uuid, order_number
       `,
       [
@@ -98,6 +106,7 @@ export const Order = {
         paymentStatus,
         branchId,
         estimatedDeliveryAt,
+        uuid || null,
       ]
     );
 
