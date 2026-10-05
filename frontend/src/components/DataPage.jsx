@@ -17,6 +17,10 @@ import { STATUS } from "@shared/constants";
 //   getKey           fn row => id
 //   columns          array [{ label, render(row), type:'status', sortable?, sortKey?, searchable? }]
 //   onStatusToggle   fn
+//   extraRowActions  array [{ permission, tooltip, icon, onClick(row) }]
+//                    rendered before the built-in row icons. Used where a row needs
+//                    a bespoke control, such as a supplier's bank details, that is
+//                    neither the view link nor the delete confirm.
 //   actions          array
 //   bulkActions      array
 //   permissions      object { view, create, update, delete } — permission slugs
@@ -25,6 +29,9 @@ import { STATUS } from "@shared/constants";
 //                    bulk actions and status toggles default to `update`.
 //   createLabel      string
 //   onCreate         fn
+//   refreshToken     number - bump this from a parent to force a refetch. Used
+//                    after a modal creates or edits a row, so the list does not
+//                    sit there stale until the operator reloads by hand.
 //   defaultLimit     number
 //   pageSizeOptions  array
 function FilterDropdown({ label, options, value, onChange }) {
@@ -127,10 +134,12 @@ export default function DataPage({
   columns = [],
   onStatusToggle = null,
   actions = [],
+  extraRowActions = [],
   bulkActions = [],
   permissions = {},
   createLabel = "Add",
   onCreate = null,
+  refreshToken = 0,
   // Extra buttons rendered in the card header, left of the create button.
   headerExtras = null,
   defaultLimit = 20,
@@ -169,6 +178,9 @@ export default function DataPage({
 
   // Row actions and bulk actions the current user is allowed to see.
   const allowedActions = actions.filter((action) => can(actionPermission(action)));
+  const allowedExtraRowActions = extraRowActions.filter((action) =>
+    can(action.permission || permissions.view)
+  );
   const allowedBulkActions = bulkActions.filter((action) =>
     can(action.permission || permissions.update)
   );
@@ -240,7 +252,7 @@ export default function DataPage({
     return () => {
       active = false;
     };
-  }, [search, filterState, refreshKey, dataKey, page, limit]);
+  }, [search, filterState, refreshKey, refreshToken, dataKey, page, limit]);
 
   // Close column picker on outside click
   useEffect(() => {
@@ -479,7 +491,7 @@ export default function DataPage({
   );
 
   return (
-    <div className="filament-page">
+    <div className="filament-page filament-page--list">
       {breadcrumb && <Breadcrumb items={breadcrumb} />}
 
       {message && (
@@ -644,7 +656,12 @@ export default function DataPage({
         </div>
 
         {/* Table */}
-        <div className="filament-table-wrap">
+        <div
+          className="filament-table-wrap"
+          tabIndex={0}
+          role="region"
+          aria-label={`${title} list`}
+        >
           <table className="filament-table">
             <thead>
               <tr>
@@ -769,9 +786,40 @@ export default function DataPage({
                         </td>
                       ))}
 
-                      {allowedActions.length > 0 && (
+                      {(allowedActions.length > 0 || allowedExtraRowActions.length > 0) && (
                       <td>
                         <div className="filament-actions">
+                          {allowedExtraRowActions.map((action) => {
+                            const isDisabled = action.disabled?.(row) ?? false;
+                            const disabledReason =
+                              typeof action.disabledReason === "function"
+                                ? action.disabledReason(row)
+                                : action.disabledReason;
+                            return (
+                              <button
+                                key={action.icon || action.tooltip}
+                                type="button"
+                                className="filament-action-btn"
+                                title={
+                                  isDisabled && disabledReason
+                                    ? disabledReason
+                                    : (action.tooltip ?? "")
+                                }
+                                disabled={isDisabled}
+                                onClick={() => action.onClick(row)}
+                              >
+                                {action.icon === "bank" ? (
+                                  <svg viewBox="0 0 24 24">
+                                    <path d="M4 10h3v7H4v-7Zm6.5 0h3v7h-3v-7Zm6.5 0h3v7h-3v-7ZM3 19h18v2H3v-2ZM12 2 2 8v2h20V8L12 2Z" />
+                                  </svg>
+                                ) : (
+                                  <svg viewBox="0 0 24 24">
+                                    <path d="M12 4.5C7 4.5 2.7 8.1 1.5 12c1.2 3.9 5.5 7.5 10.5 7.5s9.3-3.6 10.5-7.5C21.3 8.1 17 4.5 12 4.5Zm0 12a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9Z" />
+                                  </svg>
+                                )}
+                              </button>
+                            );
+                          })}
                           {allowedActions.map((action) => {
                             if (action.type === "delete") {
                               const isDisabled =

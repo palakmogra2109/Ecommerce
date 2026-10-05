@@ -44,7 +44,7 @@ export async function GET() {
 
     const result = await pool.query(
       `
-      SELECT id, uuid, name, email, created_at
+      SELECT id, uuid, name, email, status, created_at
       FROM users
       WHERE id = $1
       `,
@@ -65,6 +65,25 @@ export async function GET() {
     }
 
     const user = result.rows[0];
+
+    // A token that was valid when it was issued is not a licence that outlives
+    // the account. This is the endpoint the panel calls to RESTORE a session on
+    // every page load, so without this check a user deactivated mid-session
+    // simply reloads and stays signed in until the token's own 7 days run out.
+    // Every other protected route already refuses via authenticate(); this one
+    // verified the token itself and had forgotten the status.
+    if (user.status !== "ACTIVE") {
+      return Response.json(
+        {
+          success: false,
+          message: "Account is inactive",
+        },
+        {
+          status: 401,
+          headers: corsHeaders(),
+        }
+      );
+    }
 
     const [access, branches] = await Promise.all([
       getUserAccess(user.id),

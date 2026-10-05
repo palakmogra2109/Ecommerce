@@ -50,8 +50,16 @@ export async function POST(request) {
     // the count, so someone who fumbles their own password twice is not punished
     // for it afterwards.
     const key = clientKey(request);
-    const allowed = checkGuessAllowed(failedLogins, key);
-    if (!allowed.ok) {
+    // A client we cannot identify shares one global bucket, because every such
+    // request resolves to the literal key "unknown". Throttling that bucket
+    // means one attacker behind a misconfigured proxy can lock every other
+    // visitor out of logging in — a denial of service on the login page itself,
+    // which is a worse failure than the missing throttle it prevents. So an
+    // unidentifiable client is not throttled here. Deploy behind a proxy that
+    // sets x-forwarded-for and this never applies.
+    const identifiable = key !== "unknown";
+    const allowed = identifiable ? checkGuessAllowed(failedLogins, key) : { ok: true };
+    if (allowed.ok === false) {
       return Response.json(
         {
           success: false,
@@ -88,7 +96,7 @@ export async function POST(request) {
 
     const result = await pool.query(
       `
-      SELECT id, uuid, name, email, password, created_at
+      SELECT id, uuid, name, email, password, status, created_at
       FROM users
       WHERE email = $1
       `,
@@ -99,7 +107,7 @@ export async function POST(request) {
       // Counted as a failed attempt like any other, and answered with the exact
       // same message as a wrong password so this cannot be used to discover
       // which email addresses exist.
-      recordFailedGuess(failedLogins, key);
+      if (identifiable) recordFailedGuess(failedLogins, key);
       return Response.json(
         {
           success: false,
@@ -120,7 +128,7 @@ export async function POST(request) {
     );
 
     if (!passwordMatch) {
-      recordFailedGuess(failedLogins, key);
+      if (identifiable) recordFailedGuess(failedLogins, key);
       return Response.json(
         {
           success: false,
@@ -133,8 +141,32 @@ export async function POST(request) {
       );
     }
 
+    // Only an ACTIVE account may hold a session. Checked here, after the
+    // password has already matched, for two reasons:
+    //
+    //  - Ordering. Answering "this account is deactivated" before verifying the
+    //    password would confirm the address exists to anyone who guessed it.
+    //    Reaching this line means the credentials were already correct, so the
+    //    message tells the owner something useful and reveals nothing to an
+    //    attacker.
+    //  - It is not a failed guess. Someone deactivated by mistake or by an
+    //    over-eager admin should not burn their own attempt budget, and the
+    //    correct password clears it below.
+    if (user.status !== "ACTIVE") {
+      return Response.json(
+        {
+          success: false,
+          message: "This account is not active. Please contact support.",
+        },
+        {
+          status: 403,
+          headers: corsHeaders(),
+        }
+      );
+    }
+
     // A correct password is not a guess, so the budget is returned.
-    clearFailedGuesses(failedLogins, key);
+    if (identifiable) clearFailedGuesses(failedLogins, key);
 
     const token = await createToken(user);
 

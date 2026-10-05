@@ -156,6 +156,26 @@ export const KEY_PERMISSIONS = Object.freeze({
   STORE_ORDERS_VIEW: "store_orders.view",
   STORE_ORDERS_UPDATE: "store_orders.update",
   DASHBOARD_VIEW: "dashboard.view",
+  // Purchases. Dotted slugs, matching the rows seeded in sql/migrations/023.
+  // The key names are underscored but the slug values are dotted, exactly as
+  // for the families above.
+  SUPPLIERS_VIEW: "suppliers.view",
+  SUPPLIERS_CREATE: "suppliers.create",
+  SUPPLIERS_UPDATE: "suppliers.update",
+  SUPPLIERS_DELETE: "suppliers.delete",
+  // Bank details have their own grants: account numbers are a secret, and
+  // reading one is not the same permission as editing a supplier name.
+  SUPPLIERS_BANK_VIEW: "suppliers.bank.view",
+  SUPPLIERS_BANK_MANAGE: "suppliers.bank.manage",
+  PURCHASE_INVOICES_VIEW: "purchase_invoices.view",
+  PURCHASE_INVOICES_CREATE: "purchase_invoices.create",
+  PURCHASE_INVOICES_UPDATE: "purchase_invoices.update",
+  PURCHASE_INVOICES_CANCEL: "purchase_invoices.cancel",
+  // Receiving stock and paying a supplier are separate from authoring the
+  // invoice: the person who books what was ordered is often not the person
+  // who counts what arrived, and the bill payer is neither.
+  PURCHASE_INVOICES_RECEIVE: "purchase_invoices.receive",
+  PURCHASE_INVOICES_PAY: "purchase_invoices.pay",
 });
 
 // ---------- Modules ----------

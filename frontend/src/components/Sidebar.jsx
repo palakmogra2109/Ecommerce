@@ -39,6 +39,8 @@ const MODULE_VIEW_PERMISSIONS = {
   customers: "customers.view",
   coupons: "coupons.view",
   gift_cards: "gift_cards.view",
+  purchase_invoices: "purchase_invoices.view",
+  suppliers: "suppliers.view",
   reviews: "reviews.view",
   banners: "banners.view",
   settings: "settings.view",
@@ -135,6 +137,25 @@ const MODULES = [
     path: "/coupons",
     label: "Coupons",
     icon: FiPercent,
+  },
+  {
+    slug: "purchase_management",
+    label: "Purchases",
+    icon: FiShoppingCart,
+    children: [
+      {
+        slug: "suppliers",
+        path: "/suppliers",
+        label: "Suppliers",
+        icon: FiUsers,
+      },
+      {
+        slug: "purchase_invoices",
+        path: "/purchase-invoices",
+        label: "Purchase Invoices",
+        icon: FiFileText,
+      },
+    ],
   },
   {
     slug: "gift_cards",

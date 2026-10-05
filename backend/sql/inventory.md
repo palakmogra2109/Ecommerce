@@ -152,7 +152,7 @@ createdat  timestamp with time zone
 
 ### orders
 
-20 columns.
+22 columns.
 
 ```
 id  bigint
@@ -175,6 +175,8 @@ created_at  timestamp with time zone
 updated_at  timestamp with time zone
 branchid  bigint
 estimated_delivery_at  timestamp with time zone
+gift_card_id  bigint
+gift_amount  numeric
 ```
 
 ### users

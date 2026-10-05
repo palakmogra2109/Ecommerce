@@ -1,3 +1,4 @@
+import { handleUnauthorizedResponse } from "./http";
 // Public storefront data layer.
 //
 // Every network call the storefront makes lives here, so the components stay
@@ -53,6 +54,7 @@ async function storefrontFetch(path, options = {}) {
       ...(options.headers || {}),
     },
   });
+  handleUnauthorizedResponse(res);
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, data };
 }
@@ -67,6 +69,7 @@ async function storefrontAdminFetch(path, options = {}) {
       ...(options.headers || {}),
     },
   });
+  handleUnauthorizedResponse(res);
   const data = await res.json().catch(() => ({}));
   return { ok: res.ok, data };
 }

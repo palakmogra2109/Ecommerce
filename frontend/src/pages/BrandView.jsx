@@ -271,6 +271,12 @@ export default function BrandView() {
                           This product has no variants.
                         </p>
                       ) : (
+                        <div
+                          className="filament-card-scroll variant-table-scroll"
+                          tabIndex={0}
+                          role="region"
+                          aria-label="Product variants"
+                        >
                         <table className="variant-table">
                           <thead>
                             <tr>
@@ -299,6 +305,7 @@ export default function BrandView() {
                             ))}
                           </tbody>
                         </table>
+                        </div>
                       )}
                     </details>
                   );

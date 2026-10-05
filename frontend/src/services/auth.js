@@ -1,4 +1,4 @@
-import { authHeaders, getStoredToken } from "./http";
+import { authHeaders, getStoredToken, handleUnauthorizedResponse } from "./http";
 
 const API_URL = "/api";
 
@@ -13,6 +13,7 @@ export async function loginUser(data) {
     body: JSON.stringify(data),
   });
 
+  handleUnauthorizedResponse(response);
   return await response.json();
 }
 
@@ -81,6 +82,7 @@ export async function getCurrentUser(timeoutMs = 5000) {
       }
     );
 
+    handleUnauthorizedResponse(response);
     const data = await response.json();
 
     return {

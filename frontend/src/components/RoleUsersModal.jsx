@@ -147,7 +147,12 @@ export default function RoleUsersModal({ role, onClose }) {
           <div className="filament-empty">{message}</div>
         ) : (
           <div className="filament-modal-body">
-            <div className="filament-table-wrap">
+            <div
+              className="filament-table-wrap"
+              tabIndex={0}
+              role="region"
+              aria-label="Users with this role"
+            >
               <table className="filament-table">
                 <thead>
                   <tr>

@@ -10,7 +10,7 @@ import {
   loginUser,
   logoutUser,
 } from "../services/auth";
-import { clearToken, getStoredToken, storeToken } from "../services/http";
+import { clearToken, getStoredToken, onUnauthorized, storeToken } from "../services/http";
 
 const AuthContext = createContext();
 const CACHE_KEY = "auth_user";
@@ -85,6 +85,21 @@ export function AuthProvider({ children }) {
 
   useEffect(() => {
     checkAuth();
+  }, []);
+
+  // Any 401 from any request ends the session, wherever it came from.
+  //
+  // Without this, a user deactivated while signed in kept working: their token
+  // was still cryptographically valid for its full 7 days, and nothing on the
+  // client reacted to the server refusing. The token is cleared by
+  // handleUnauthorizedResponse; this drops the cached user so the UI falls back
+  // to the login page instead of rendering an empty shell.
+  useEffect(() => {
+    return onUnauthorized(() => {
+      setCachedUser(null);
+      setUser(null);
+      setLoading(false);
+    });
   }, []);
 
   async function login(email, password) {

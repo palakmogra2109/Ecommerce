@@ -1001,6 +1001,32 @@ body {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
+  /* Same treatment as the data tables: a permission matrix can be taller than
+     the window, and a sticky header is what makes it readable. */
+  overflow-y: auto;
+  max-height: calc(100dvh - 320px);
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.perm-matrix-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.perm-matrix-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.perm-matrix thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
 }
 
 /* Table */
@@ -5874,3 +5900,647 @@ body {
 .filament-badge-expired .filament-badge-dot {
   background: #f59e0b;
 }
+
+/* ==========================================================================
+   Scrollable lists
+   --------------------------------------------------------------------------
+   A long list used to grow the page until the footer, so the header row
+   scrolled away and finding your place in 200 rows meant scrolling back up.
+   The table area now scrolls on its own and the header stays put.
+
+   Scoped to .filament-page--list rather than applied globally, because most
+   admin screens are forms and detail pages that SHOULD scroll as a document —
+   a sticky table only makes sense where the table is the page.
+
+   The height chain is what makes it "fill the viewport" at any window size
+   instead of a magic pixel count that is wrong on every screen but one:
+     admin-main (100vh, column)  >  filament-page--list (flex:1)
+       >  filament-card (flex:1)  >  filament-table-wrap (flex:1, overflow)
+   min-height:0 on each link is required, or a flex child refuses to shrink
+   below its content and the inner scroll never engages.
+   ========================================================================== */
+
+/* Only a page that actually holds a list takes over the main column's
+   scrolling. :has() keeps AdminLayout untouched. */
+.admin-main:has(.filament-page--list) {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.filament-page--list {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  /* Without this the page refuses to shrink and the table scrolls the window
+     instead of itself. */
+  min-height: 0;
+}
+
+.filament-page--list .filament-card {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+/* The card header and filters are fixed; the table gets whatever is left. */
+.filament-page--list .filament-card-header,
+.filament-page--list .filament-card-filters {
+  flex-shrink: 0;
+}
+
+.filament-table-wrap {
+  overflow-x: auto;
+}
+
+/* The scroll region itself, for both DataPage lists and the standalone tables
+   (BrandView, PermissionPicker) that use the same markup. */
+.filament-table-wrap,
+.filament-card-scroll {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  /* Anchored to the bottom so the most recently added row stays visible. */
+  overflow-anchor: auto;
+}
+
+.filament-page--list .filament-table-wrap {
+  flex: 1;
+  min-height: 0;
+}
+
+/* A sticky header, so column meaning survives a long scroll. `top: 0` is
+   relative to the scroll container, which is why the wrapper has to be the
+   scroller rather than the window.
+
+   The background MUST be set on the th, not just on the thead. `thead` carries
+   its own background, but a sticky cell is painted as its own element, so
+   without a background of its own it is transparent and the rows scroll
+   straight through the header text — which is exactly what the first version of
+   this did: the column labels sat on top of the first row's avatar and name.
+
+   Opaque rather than semi-transparent, and a hairline plus a soft shadow, so a
+   row passing underneath reads as being *under* the header rather than mixed
+   into it. Both themes are covered because the colour comes from the token. */
+.filament-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-2);
+  box-shadow:
+    inset 0 -1px 0 var(--border),
+    0 4px 8px -4px rgba(15, 23, 42, 0.18);
+}
+
+/* The checkbox column is sticky too, so it needs the same treatment or the
+   select-all box goes transparent on scroll. */
+.filament-table thead th.filament-th-check {
+  z-index: 3;
+}
+
+/* Sticky cells stack horizontally as well as vertically when the table is
+   wider than the wrapper. A pinned left column must paint above the scrolling
+   ones, and must stay opaque for the same reason. */
+.filament-table .filament-td-check,
+.filament-table .filament-th-check {
+  position: sticky;
+  left: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+
+/* A pinned cell with its own background does NOT inherit the row's hover
+   colour, because the hover rule paints the tr and this cell is opaque on top
+   of it. Without this the checkbox cell stays white while the rest of the row
+   turns grey, which reads as a rendering fault. */
+.filament-table tbody tr:hover .filament-td-check {
+  background: var(--surface-2);
+}
+
+.filament-table thead .filament-th-check {
+  background: var(--surface-2);
+  z-index: 3;
+}
+
+/* A focused scroll region needs a visible ring: it is now a tab stop, and a
+   tab stop you cannot see is worse than not being one. */
+.filament-table-wrap:focus-visible,
+.filament-card-scroll:focus-visible {
+  outline: 2px solid var(--primary, #3b82f6);
+  outline-offset: -2px;
+}
+
+/* A visible scrollbar. The default overlay scrollbar on macOS and Windows hides
+   itself until you scroll, which is the reason "there is no scrollbar here" is
+   the complaint this whole change answers. */
+.filament-table-wrap,
+.filament-card-scroll,
+.list-toolbar,
+.filament-filters {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5e1 transparent;
+}
+
+.filament-table-wrap::-webkit-scrollbar,
+.filament-card-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.filament-table-wrap::-webkit-scrollbar-track,
+.filament-card-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.filament-table-wrap::-webkit-scrollbar-thumb,
+.filament-card-scroll::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border: 2px solid transparent;
+  background-clip: content-box;
+  border-radius: 999px;
+}
+
+.filament-table-wrap::-webkit-scrollbar-thumb:hover,
+.filament-card-scroll::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+  background-clip: content-box;
+}
+
+.filament-table-wrap::-webkit-scrollbar-corner,
+.filament-card-scroll::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* A short list should not get a tall empty area with a scrollbar that has
+   nothing to scroll. min-height:0 on the wrapper already lets it shrink, but a
+   table with three rows still needs to not stretch its wrapper, so the card
+   keeps its natural height when the content is short. */
+.filament-page--list .filament-table-wrap:has(.filament-table tbody:empty) {
+  overflow: hidden;
+}
+
+/* BrandView's variant table had no scroll container at all. Capped well below
+   the viewport because it sits inside a detail page that also scrolls. */
+.variant-table-scroll {
+  max-height: 420px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.variant-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-2);
+}
+
+/* ── Shared modal form primitives ────────────────────────────────────────────
+   .frm-grid / .frm-field / .frm-section are used by every create-or-edit modal
+   so supplier and purchase forms look like one product. The pp-* rules below are
+   specific to purchase-line editing: a grid of numeric columns plus the picker. */
+
+.pp-modal { max-height: 92vh; }
+.pp-modal .filament-modal-body { overflow-y: auto; }
+
+.frm-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.frm-field { display: flex; flex-direction: column; gap: 5px; }
+.frm-field > span { font-size: 12px; font-weight: 600; color: #6b7280; }
+.frm-field input, .frm-field select {
+  padding: 8px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font: inherit;
+  width: 100%;
+}
+.frm-field input:focus, .frm-field select:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.frm-section {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+.sp-body h4.frm-section { margin-top: 0; }
+
+.pp-lines { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+
+.pp-line {
+  display: grid;
+  grid-template-columns: minmax(200px, 2.2fr) repeat(4, minmax(74px, 0.7fr)) minmax(96px, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 10px;
+  border-top: 1px solid #f3f4f6;
+}
+.pp-line:first-child { border-top: none; }
+.pp-line-head {
+  background: #f9fafb;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #6b7280;
+}
+.pp-line input[type="number"] {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font: inherit;
+}
+.pp-line input[type="number"]:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.pp-money { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.pp-right { text-align: right; }
+.pp-remove { min-width: 30px; }
+
+.pp-picker { position: relative; }
+.pp-picker > input {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font: inherit;
+}
+.pp-picker > input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.pp-picker-chip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  background: #f9fafb;
+}
+.pp-picker-chip span { display: flex; flex-direction: column; min-width: 0; }
+.pp-picker-chip strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-picker-chip small { color: #6b7280; font-size: 11px; }
+.pp-picker-chip button {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 17px;
+  line-height: 1;
+  color: #6b7280;
+  padding: 2px 4px;
+}
+.pp-picker-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  max-height: 240px;
+  overflow-y: auto;
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.14);
+}
+.pp-picker-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  padding: 7px 9px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+}
+.pp-picker-option.active, .pp-picker-option:hover { background: #eef2ff; }
+.pp-picker-option span { display: flex; flex-direction: column; min-width: 0; }
+.pp-picker-option strong {
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pp-picker-option small { color: #6b7280; font-size: 11px; }
+.pp-picker-option em { color: #6b7280; font-size: 11px; font-style: normal; white-space: nowrap; }
+.pp-picker-empty { padding: 10px; color: #6b7280; font-size: 12px; text-align: center; }
+
+.pp-totals {
+  margin: 14px 0 4px auto;
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-variant-numeric: tabular-nums;
+}
+.pp-totals > div { display: flex; justify-content: space-between; gap: 16px; }
+.pp-totals dt { color: #6b7280; margin: 0; }
+.pp-totals dd { margin: 0; font-weight: 600; }
+.pp-totals-grand {
+  margin-top: 5px;
+  padding-top: 7px;
+  border-top: 1px solid #e5e7eb;
+  font-size: 15px;
+}
+.pp-totals-grand dt { color: #111827; font-weight: 700; }
+
+.pp-problems {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  color: #b91c1c;
+  font-size: 12px;
+}
+
+/* Field-level validation message, shared by both forms. */
+.frm-error {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #b91c1c;
+}
+
+.frm-hint { display: block; margin-top: 4px; font-size: 11px; color: #6b7280; }
+.frm-hint-ok { color: #15803d; }
+
+/* A validity tick that turns green once an identifier parses. */
+.frm-ok { border-color: #15803d !important; }
+
+/* Section rule used inside longer forms. */
+.frm-rule { border: 0; border-top: 1px solid #e5e7eb; margin: 18px 0 0; }
+
+/* ── Supplier form ────────────────────────────────────────────────────────
+   The address block gets one wide first row so a street address has room,
+   then three even columns for city / state / PIN. */
+
+.sp-modal { max-height: 92vh; }
+.sp-modal .filament-modal-body { overflow-y: auto; }
+
+.sp-body h4.frm-section { margin: 0 0 10px; }
+
+.sp-grid-wide { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); }
+.sp-grid-wide > :first-child { grid-column: 1 / -1; }
+
+.frm-field input.frm-bad {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 3px rgba(220, 38, 38, 0.12);
+}
+
+/* ── Supplier bank details popup ─────────────────────────────────────────
+   Account numbers are rendered in a tabular/monospace face so the masked
+   digits line up and two accounts can be told apart at a glance. */
+
+.sp-bank {
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 12px;
+  margin-bottom: 10px;
+}
+.sp-bank-primary { border-color: #a5b4fc; background: #f5f7ff; }
+
+.sp-bank-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.sp-bank-badges { display: flex; gap: 6px; flex-wrap: wrap; }
+
+.sp-bank-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px 14px;
+  margin: 0;
+}
+.sp-bank-grid > div { display: flex; flex-direction: column; }
+.sp-bank-grid dt { font-size: 11px; color: #6b7280; text-transform: uppercase;
+  letter-spacing: 0.03em; margin: 0; }
+.sp-bank-grid dd { margin: 0; font-weight: 600; }
+.sp-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; letter-spacing: 0.02em; }
+
+.sp-bank-actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+
+/* A saved-but-unusual value: informational, never blocking. */
+.frm-warn { color: #92400e; }
+
+/* ── SearchSelect ────────────────────────────────────────────────────────
+   A native <select> was unusable at these volumes (250 countries, thousands of
+   cities in one state), so the trigger is a button and the panel is a listbox.
+   The panel is absolutely positioned so opening it never reflows the form, and
+   it flips above the trigger when the viewport has no room below. */
+
+.ss { position: relative; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
+.ss-disabled { opacity: 0.55; }
+
+.ss-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: #6b7280;
+}
+
+.ss-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  background: #fff;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.ss-trigger:hover:not(:disabled) { border-color: #9ca3af; }
+.ss-trigger:focus-visible,
+.ss-trigger.ss-open {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+.ss-trigger:disabled { cursor: not-allowed; background: #f9fafb; }
+
+.ss-value {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ss-has-value .ss-value { color: #111827; font-weight: 500; }
+.ss-placeholder { color: #9ca3af; font-weight: 400; }
+
+.ss-caret {
+  flex: none;
+  display: inline-flex;
+  width: 18px;
+  height: 18px;
+  color: #6b7280;
+  transition: transform 0.12s ease;
+}
+.ss-caret svg { width: 100%; height: 100%; fill: currentColor; }
+.ss-open .ss-caret { transform: rotate(180deg); }
+
+.ss-panel {
+  position: absolute;
+  z-index: 40;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.14);
+  overflow: hidden;
+}
+.ss-panel-up { top: auto; bottom: calc(100% + 4px); }
+
+.ss-search { position: relative; padding: 8px; border-bottom: 1px solid #f3f4f6; }
+.ss-search-icon {
+  position: absolute;
+  left: 16px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 15px;
+  height: 15px;
+  fill: #9ca3af;
+  pointer-events: none;
+}
+.ss-search input {
+  width: 100%;
+  padding: 7px 9px 7px 30px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+  font: inherit;
+}
+.ss-search input:focus {
+  outline: none;
+  border-color: #6366f1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.ss-list {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.ss-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.ss-active { background: #eef2ff; }
+.ss-selected { font-weight: 600; }
+
+.ss-option-main { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.ss-option-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ss-option-meta { flex: none; font-size: 11px; color: #6b7280; font-variant-numeric: tabular-nums; }
+
+.ss-flag { font-size: 15px; line-height: 1; flex: none; }
+.ss-with-flag { display: inline-flex; align-items: center; gap: 7px; min-width: 0; }
+.ss-code {
+  flex: none;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: #f3f4f6;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #6b7280;
+}
+
+.ss-check { flex: none; width: 15px; height: 15px; fill: #6366f1; }
+
+.ss-empty { padding: 12px; text-align: center; color: #6b7280; font-size: 12px; }
+
+.ss-foot {
+  padding: 7px 10px;
+  border-top: 1px solid #f3f4f6;
+  background: #f9fafb;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.csc { align-items: start; }
+
+/* ── Read-only supplier view ─────────────────────────────────────────────
+   A definition list rather than a grid of inputs: nothing here should look
+   editable, so a viewer cannot click a field and think it will save. */
+
+.sp-ro {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px 20px;
+  margin: 0 0 4px;
+}
+.sp-ro-row { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.sp-ro dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: #6b7280; }
+.sp-ro dd { margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+
+.sp-ro-notes {
+  margin: 0;
+  padding: 10px 12px;
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  color: #374151;
+}
+
+/* ── Supplier Active / Inactive control ──────────────────────────────────
+   The pill states the current value so the button beside it always reads as
+   "what happens if I press this", never as an ambiguous state. */
+
+.sp-status { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.sp-status-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; color: #6b7280; }
+.sp-status small { flex-basis: 100%; }
+
+.sp-status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.sp-status-pill.is-active { background: #dcfce7; color: #166534; }
+.sp-status-pill.is-inactive { background: #f3f4f6; color: #4b5563; }
+
+.sp-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }

@@ -26,6 +26,11 @@ import AttributeView from "./pages/AttributeView";
 import Coupons from "./pages/Coupons";
 import CouponView from "./pages/CouponView";
 import GiftCards from "./pages/GiftCards";
+import PurchaseInvoices from "./pages/PurchaseInvoices";
+import Suppliers from "./pages/Suppliers";
+import SupplierView from "./pages/SupplierView";
+import SupplierEdit from "./pages/SupplierEdit";
+import PurchaseInvoiceView from "./pages/PurchaseInvoiceView";
 import GiftCardBulkIssue from "./pages/GiftCardBulkIssue";
 import GiftDenominations from "./pages/GiftDenominations";
 import GiftCardView from "./pages/GiftCardView";
@@ -469,6 +474,33 @@ export default function App() {
           element={
             adminGuard("coupons.update", "Update Coupons", <CouponEditRoute />)
           }
+        />
+
+        {/* Suppliers */}
+        <Route
+          path="/suppliers"
+          element={adminGuard("suppliers.view", "Suppliers", <Suppliers />)}
+        />
+        <Route
+          path="/suppliers/:id"
+          element={adminGuard("suppliers.view", "Suppliers", <SupplierView />)}
+        />
+        {/* Editing is its own route, gated on update rather than view, so opening
+            a supplier read-only can never change a record. */}
+        <Route
+          path="/suppliers/:id/edit"
+          element={adminGuard("suppliers.update", "Update Suppliers", <SupplierEdit />)}
+        />
+
+        {/* Purchase Invoices. Viewing, receiving and paying are separate
+            permissions, so each screen is gated on the one it actually needs. */}
+        <Route
+          path="/purchase-invoices"
+          element={adminGuard("purchase_invoices.view", "Purchase Invoices", <PurchaseInvoices />)}
+        />
+        <Route
+          path="/purchase-invoices/:id"
+          element={adminGuard("purchase_invoices.view", "Purchase Invoices", <PurchaseInvoiceView />)}
         />
 
         {/* Gift Cards */}
