@@ -226,6 +226,14 @@ body {
   color: #fff;
   display: flex;
   flex-direction: column;
+  /* Pinned to the viewport and exactly one screen tall, so .sidebar-nav can
+     scroll inside it. Without a bounded height the nav just grew with the page
+     and pushed the user/logout block off the bottom. Sticky rather than a fixed
+     height on .admin-shell, because the main pane keeps its normal page scroll
+     and long pages are never clipped. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
 }
 
 .sidebar-brand {
@@ -241,7 +249,29 @@ body {
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* min-height:0 is the part that makes this work. A flex child defaults to
+     min-height:auto, so it refuses to shrink below its content and the internal
+     scroll never engages. */
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.25) transparent;
 }
+
+/* Shown only when the module list is actually taller than the pane. */
+.sidebar-nav::-webkit-scrollbar { width: 8px; }
+.sidebar-nav::-webkit-scrollbar-track { background: transparent; }
+.sidebar-nav::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+.sidebar-nav::-webkit-scrollbar-thumb:hover { background: rgba(255, 255, 255, 0.32); background-clip: content-box; }
+
+/* Keyboard users need to reach the scroller, so give it a visible focus ring. */
+.sidebar-nav:focus-visible { outline: 2px solid #6366f1; outline-offset: -2px; }
 
 .sidebar-empty {
   margin: 16px 20px;
@@ -519,7 +549,7 @@ body {
 .admin-form {
   background: var(--surface);
   padding: 1.5rem;
-  max-width: 42rem;
+  max-width: none;
   border: none;
 }
 
@@ -1745,10 +1775,11 @@ body {
 }
 
 .filament-card {
+  max-width: 100%;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: 0.75rem;
-  overflow: hidden;
+  overflow: visible;
 }
 
 .filament-card-header {
@@ -2711,17 +2742,18 @@ body {
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  padding: 1.25rem;
+  padding: 2rem 1.25rem;
+  overflow-y: auto;
   z-index: 100;
 }
 
 .filament-modal {
   width: 28rem;
   max-width: 100%;
-  max-height: 90vh;
-  overflow-y: auto;
+  max-height: none;
+  overflow: visible;
   background: var(--surface);
   border-radius: 0.75rem;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
@@ -2847,13 +2879,15 @@ body {
 .form-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 20px 24px;
+  gap: 24px 32px;
+  align-items: start;
 }
 
 .form-row {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
+  min-width: 0;
 }
 
 .form-row-full {
@@ -6135,11 +6169,17 @@ body {
 }
 .sp-body h4.frm-section { margin-top: 0; }
 
-.pp-lines { border: 1px solid #e5e7eb; border-radius: 8px; overflow: hidden; margin-bottom: 10px; }
+/* `overflow: visible` is required: the product picker dropdown is absolutely
+   positioned inside .pp-line, and `overflow: hidden` clipped it to the row's
+   height so only a sliver of the product list was ever visible. The border
+   radius is kept by clipping the first/last row backgrounds instead. */
+.pp-lines { border: 1px solid #e5e7eb; border-radius: 8px; margin-bottom: 10px; overflow: visible; }
+.pp-lines > .pp-line:first-child { border-radius: 7px 7px 0 0; }
+.pp-lines > .pp-line:last-child { border-radius: 0 0 7px 7px; }
 
 .pp-line {
   display: grid;
-  grid-template-columns: minmax(200px, 2.2fr) repeat(4, minmax(74px, 0.7fr)) minmax(96px, 1fr) 34px;
+  grid-template-columns: minmax(200px, 2fr) minmax(160px, 1.4fr) repeat(4, minmax(68px, 0.7fr)) minmax(108px, 1.1fr) minmax(90px, 1fr) 34px;
   gap: 8px;
   align-items: center;
   padding: 8px 10px;
@@ -6544,3 +6584,68 @@ body {
 .sp-status-pill.is-inactive { background: #f3f4f6; color: #4b5563; }
 
 .sp-status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+/* Selling price cell: the input plus its margin readout, so a mistake here is
+   visible before it becomes the product's price. */
+.pp-sell { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pp-margin { font-size: 10px; color: #15803d; }
+.pp-margin-bad { font-size: 10px; color: #b91c1c; font-weight: 600; }
+
+/* Attribute actions in the product form: pick an existing one, or make a new
+   one without navigating away from a half-filled product. */
+.pf-attr-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* ---- Stock & Price: add-variant controls ---- */
+.inventory-add-variant {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.filament-btn-xs {
+  padding: 3px 8px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  border-radius: 5px;
+}
+
+.filament-btn-xs[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.pp-picker-error {
+  color: #b91c1c;
+  font-weight: 500;
+  white-space: normal;
+  line-height: 1.4;
+}
+
+/* Product + Variant grouping inside one invoice-line cell */
+.pp-product-cell { display: flex; flex-direction: column; gap: 6px; }
+.pp-variant-field { display: flex; flex-direction: column; gap: 3px; }
+.pp-variant-field span { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; color: #6b7280; }
+.pp-variant-select {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font: inherit;
+  background: #fff;
+}
+.pp-variant-select:focus { outline: 2px solid #93c5fd; outline-offset: 1px; }
+
+/* Full-page New Purchase Invoice */
+.filament-page { padding: 24px; }
+.pp-new-page { max-width: 1100px; margin: 0 auto; }
+.pp-new-page .filament-modal-header { border-bottom: 1px solid #e5e7eb; padding: 18px 20px; }
+.pp-new-page .filament-modal-body { padding: 20px; }
+.pp-new-page .filament-modal-footer { padding: 16px 20px; border-top: 1px solid #e5e7eb; }
+
+/* Variant select column alignment */
+.pp-line select.pp-variant-select { width: 100%; }
+.pp-line .text-muted { color: #9ca3af; padding: 8px 0; }
+
+.pp-no-variants { white-space: nowrap; }

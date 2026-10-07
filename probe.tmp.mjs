@@ -1,0 +1,13 @@
+import { chromium } from "playwright";
+const b = await chromium.launch();
+const page = await (await b.newContext({ viewport: { width: 1440, height: 950 } })).newPage();
+await page.goto("http://localhost:5173/login", { waitUntil: "networkidle" });
+await page.fill('input[name="email"]', process.argv[2]);
+await page.fill('input[name="password"]', "Password@123");
+await page.click('button[type="submit"]');
+await page.waitForURL(/dashboard/, { timeout: 15000 }).catch(()=>{});
+await page.goto("http://localhost:5173/purchase-invoices/new", { waitUntil: "networkidle" });
+await page.waitForTimeout(2500);
+await page.screenshot({ path: "/tmp/opencode/newinvoice.png", fullPage: true });
+console.log("saved /tmp/opencode/newinvoice.png");
+await b.close();

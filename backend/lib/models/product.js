@@ -1,5 +1,5 @@
-import pool from "../db";
-import { paginate } from "../pagination";
+import pool from "../db.js";
+import { paginate } from "../pagination.js";
 
 const TABLE = "products";
 
@@ -47,9 +47,11 @@ export const Product = {
       sku = "",
       shortDescription = "",
       description = "",
-      price = 0,
+      // price and stock are deliberately NOT taken from the request. Both are
+      // owned by the purchasing flow: receiving a purchase invoice increments
+      // stock and sets price. Ignoring them here means a crafted request cannot
+      // set them behind the product form's back.
       discountPrice = null,
-      stock = 0,
       lowStockThreshold = 5,
       brandUuid = null,
       categoryUuid = null,
@@ -85,9 +87,11 @@ export const Product = {
         (sku ?? "").trim(),
         shortDescription ?? "",
         description ?? "",
-        Number(price) || 0,
+        // A new product starts with nothing to sell and nothing in stock. Both
+        // are set by receiving a purchase invoice.
+        0,
         discountPrice == null || discountPrice === "" ? null : Number(discountPrice),
-        Math.max(0, parseInt(stock, 10) || 0),
+        0,
         Math.max(0, parseInt(lowStockThreshold, 10) || 0),
         brandId,
         categoryId,
@@ -259,9 +263,9 @@ export const Product = {
       set("description", updates.description ?? "");
     }
 
-    if (updates.price !== undefined) {
-      set("price", Number(updates.price) || 0);
-    }
+    // price and stock are ignored here on purpose. They belong to the purchasing
+    // flow: receiving a purchase invoice line is what sets them. Kept as an
+    // explicit skip rather than a silent one, so it is obvious this was decided.
 
     if (updates.discountPrice !== undefined) {
       set(
@@ -272,9 +276,7 @@ export const Product = {
       );
     }
 
-    if (updates.stock !== undefined) {
-      set("stock", Math.max(0, parseInt(updates.stock, 10) || 0));
-    }
+    // stock, like price, is owned by the purchase receipt path.
 
     if (updates.lowStockThreshold !== undefined) {
       set(
@@ -382,6 +384,7 @@ export const Product = {
       }
 
       if (item.stock !== undefined) {
+        // Variant stock also comes from purchasing, not from this update path.
         updates.stock = item.stock;
       }
 

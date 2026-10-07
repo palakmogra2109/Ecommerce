@@ -1,4 +1,5 @@
 import pool from "../db.js";
+import { notifyBackInStock } from "../notifications/backInStock.js";
 import { round2, toPaise } from "../giftCardApplicability.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,7 +30,7 @@ const MONEY = Object.freeze([
   "quantity_accepted", "quantity_damaged", "quantity_missing",
   "quantity_ordered", "quantity_received", "quantity_damaged", "quantity_rejected",
   "previous_stock", "new_stock", "stock", "quantity",
-  "discount_percent", "tax_percent",
+  "discount_percent", "tax_percent", "selling_price",
 ]);
 
 /** Copies a row, turning every numeric field into a number. */
@@ -165,13 +166,22 @@ function validateItems(raw) {
           : `Line ${index + 1} does not say which product it is.`
       );
     }
-    if (seen.has(productId)) {
+    // One supplier invoice may carry many variants of the SAME product (one
+    // line per variant), so uniqueness is product+variant -- not product alone.
+    // Two genuinely identical lines are still rejected, because merging them
+    // would silently change what was invoiced.
+    const variantKey = item.variantUuid ? String(item.variantUuid) : "";
+    const lineKey = `${productId}::${variantKey}`;
+
+    if (seen.has(lineKey)) {
       throw new PurchaseError(
         REASON.DUPLICATE_PRODUCT,
-        `Product ${productId} appears on more than one line. Combine the lines instead.`
+        variantKey
+          ? `The same product and variant appear twice (line ${index + 1}). Combine them into one line.`
+          : `Product ${productId} appears twice without a variant (line ${index + 1}). Combine the lines instead.`
       );
     }
-    seen.add(productId);
+    seen.add(lineKey);
 
     const qty = Number(item.quantityOrdered);
     if (!(qty > 0)) {
@@ -206,6 +216,8 @@ function validateItems(raw) {
       sku: item.sku ? String(item.sku) : "",
       name: item.name ? String(item.name) : "",
       barcode: item.barcode ? String(item.barcode) : null,
+      batchNumber: item.batchNumber ? String(item.batchNumber).trim() : null,
+      expiryDate: item.expiryDate || null,
       quantityOrdered: qty,
       unitCost: cost,
       sellingPrice,
@@ -434,13 +446,14 @@ export const PurchaseInvoice = {
           `INSERT INTO purchase_invoice_items
              (purchase_invoice_id, line_no, product_id, variant_uuid, sku, name, barcode,
               quantity_ordered, unit_cost, selling_price, discount_percent, discount_amount,
-              tax_percent, tax_amount, line_total)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+              tax_percent, tax_amount, line_total, batch_number, expiry_date)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
           [invoice.rows[0].id, line.lineNo, line.productId, line.variantUuid,
            line.sku || product.sku || "", line.name || product.name || "",
            line.barcode, line.quantityOrdered, line.unitCost, line.sellingPrice,
            line.discountPercent, line.discountAmount,
-           line.taxPercent, line.taxAmount, line.lineTotal]
+           line.taxPercent, line.taxAmount, line.lineTotal,
+           line.batchNumber, line.expiryDate]
         );
       }
 
@@ -625,6 +638,23 @@ export const PurchaseInvoice = {
              Number(item.unit_cost), previous, next, receipt.rows[0].id,
              notes, performedBy]
           );
+          // Batch per received variant line (§12). A batch is the unit of
+          // cost/expiry/warehouse, so it must be created per accepted line.
+          // batch_number falls back to the receipt number when the user did
+          // not key one on the invoice line.
+          await runner.query(
+            `INSERT INTO product_batches
+               (batch_number, product_id, variant_uuid, supplier_id,
+                purchase_invoice_id, stock_receipt_id, warehouse_id,
+                received_at, expiry_date, quantity_received, quantity_remaining,
+                cost_price, status, notes, created_by)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$9,$9,$10,'AVAILABLE',$11,$12)`,
+            [item.batch_number || receipt.rows[0].receipt_number,
+             item.product_id, item.variant_uuid, invoice.supplier_id,
+             invoiceId, receipt.rows[0].id, invoice.warehouse_id,
+             item.expiry_date || null, accepted, Number(item.unit_cost),
+             notes, performedBy]
+          );
           stockById.set(Number(item.product_id), next);
         }
       }
@@ -640,6 +670,19 @@ export const PurchaseInvoice = {
       );
 
       if (owned) await runner.query("COMMIT");
+
+      // After the commit, deliberately. The receiving module only declares that
+      // stock moved; it does not know that notifications exist or how they work.
+      // notifyBackInStock decides for itself whether anyone is waiting and never
+      // throws, so a delivery problem cannot undo the receipt.
+      for (const productId of new Set(plan.map((step) => Number(step.item.product_id)))) {
+        const uuid = await runner
+          .query("SELECT uuid FROM products WHERE id = $1", [productId])
+          .then((r) => r.rows[0]?.uuid)
+          .catch(() => null);
+        if (uuid) await notifyBackInStock({ productUuid: uuid });
+      }
+
       return { receipt: numeric(receipt.rows[0]), status,
                invoice: await this.findById(invoiceId, { client: runner }) };
     } catch (error) {

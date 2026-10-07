@@ -279,7 +279,14 @@ export default function Sidebar() {
     <aside className="sidebar">
       <div className="sidebar-brand">Earth धान्य</div>
 
-      <nav className="sidebar-nav">
+      {/* tabIndex: the nav is now a scroll container, and a scroll container that
+          cannot be focused cannot be scrolled with the keyboard. The label gives
+          it an accessible name. */}
+      <nav
+        className="sidebar-nav"
+        tabIndex={0}
+        aria-label="Modules"
+      >
         {visibleModules.length === 0 ? (
           <p className="sidebar-empty">
             No modules are assigned to your account.

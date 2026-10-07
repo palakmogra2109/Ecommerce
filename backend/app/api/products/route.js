@@ -112,7 +112,6 @@ export async function POST(request) {
       sku,
       shortDescription,
       description,
-      price,
       discountPrice,
       stock,
       lowStockThreshold,
@@ -134,13 +133,6 @@ export async function POST(request) {
     if (!name || typeof name !== "string" || !name.trim()) {
       return Response.json(
         { success: false, message: "Name is required" },
-        { status: 400, headers: corsHeaders() }
-      );
-    }
-
-    if (price === undefined || price === null || price === "") {
-      return Response.json(
-        { success: false, message: "Price is required" },
         { status: 400, headers: corsHeaders() }
       );
     }
@@ -179,9 +171,9 @@ export async function POST(request) {
       sku,
       shortDescription,
       description,
-      price,
+      // price and stock are intentionally not passed on: they belong to
+      // purchasing, and Product.create ignores them regardless.
       discountPrice,
-      stock,
       lowStockThreshold,
       brandUuid,
       categoryUuid,

@@ -13,6 +13,7 @@ export default function ProductPicker({ value, onChange, excludeUuids = [], labe
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [highlight, setHighlight] = useState(0);
+  const [error, setError] = useState("");
   const boxRef = useRef(null);
   const requestRef = useRef(0);
 
@@ -28,10 +29,17 @@ export default function ProductPicker({ value, onChange, excludeUuids = [], labe
       try {
         const found = await searchProductsForPurchase(term);
         if (id !== requestRef.current) return;
+        setError("");
         setOptions(found.filter((p) => !excluded.includes(p.uuid)));
         setHighlight(0);
-      } catch {
-        if (id === requestRef.current) setOptions([]);
+      } catch (err) {
+        if (id !== requestRef.current) return;
+        setOptions([]);
+        setError(
+          err?.status === 403
+            ? "You do not have permission to view products."
+            : err?.message || "Could not load products."
+        );
       } finally {
         if (id === requestRef.current) setLoading(false);
       }
@@ -100,8 +108,15 @@ export default function ProductPicker({ value, onChange, excludeUuids = [], labe
           {open && (
             <ul className="pp-picker-menu" role="listbox">
               {loading && <li className="pp-picker-empty">Searching…</li>}
-              {!loading && options.length === 0 && (
-                <li className="pp-picker-empty">No matching products</li>
+              {!loading && error && (
+                <li className="pp-picker-empty pp-picker-error">{error}</li>
+              )}
+              {!loading && !error && options.length === 0 && (
+                <li className="pp-picker-empty">
+                  {query.trim()
+                    ? `No products match "${query.trim()}"`
+                    : "No active products to choose from"}
+                </li>
               )}
               {!loading &&
                 options.map((product, index) => (

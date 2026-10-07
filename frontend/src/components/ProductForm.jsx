@@ -7,7 +7,7 @@ import {
 } from "../services/products";
 import { listCategories } from "../services/categories";
 import { listBrands } from "../services/brands";
-import { listAttributes } from "../services/attributes";
+import { listAttributes, createAttribute } from "../services/attributes";
 import Breadcrumb from "./Breadcrumb";
 import MediaPicker from "./MediaPicker";
 import {
@@ -175,6 +175,7 @@ export default function ProductForm({ productId = null }) {
   const [categories, setCategories] = useState([]);
   const [brands, setBrands] = useState([]);
   const [attributes, setAttributes] = useState([]);
+  const [creatingAttribute, setCreatingAttribute] = useState(false);
   const [loading, setLoading] = useState(isEdit);
   const [errors, setErrors] = useState({});
   const [message, setMessage] = useState("");
@@ -634,26 +635,17 @@ export default function ProductForm({ productId = null }) {
       newErrors.name = "Product name is required";
     }
 
-    const isVariable = form.inventoryMode !== INVENTORY_MODE.SINGLE;
-    const hasVariants = isVariable && form.variants.length > 0;
-
-    if (!hasVariants && (form.price === "" || form.price == null)) {
-      newErrors.price = "Price is required";
-    } else if (
-      !hasVariants &&
-      form.price !== "" &&
-      Number(form.price) < 0
-    ) {
-      newErrors.price = "Price cannot be negative";
-    }
-
     if (form.discountPrice !== "" && Number(form.discountPrice) < 0) {
       newErrors.discountPrice = "Discount price cannot be negative";
     }
 
+    // Only checkable when the product already has a price, which it gets from a
+    // received purchase invoice rather than from this form. On a brand new
+    // product the price is 0 and any discount would look wrong, so the rule is
+    // skipped until a price actually exists.
     if (
-      form.price !== "" &&
       form.discountPrice !== "" &&
+      Number(form.price) > 0 &&
       Number(form.discountPrice) >= Number(form.price)
     ) {
       newErrors.discountPrice = "Discount price must be lower than the price";
@@ -746,9 +738,10 @@ export default function ProductForm({ productId = null }) {
         sku: form.sku,
         shortDescription: form.shortDescription,
         description: form.description,
-        price: hasVariants ? derivedPrice : form.price,
+        // price and stock are deliberately absent. They belong to purchasing:
+        // receiving a purchase invoice is what sets them. Sending them would be
+        // ignored by the API and would suggest they were being saved.
         discountPrice: form.discountPrice === "" ? null : form.discountPrice,
-        stock: hasVariants ? variantStockTotal : parseInt(form.stock, 10) || 0,
         lowStockThreshold: parseInt(form.lowStockThreshold, 10) || 0,
         brandUuid: form.brandUuid || null,
         categoryUuid: form.categoryUuid || null,
@@ -818,23 +811,7 @@ export default function ProductForm({ productId = null }) {
     1
   );
 
-  const hasVariants =
-    form.inventoryMode !== INVENTORY_MODE.SINGLE && form.variants.length > 0;
-
   const activePricingGroup = pricingGroup(form);
-
-  const variantPrices = form.variants
-    .map((variant) => variant.price)
-    .filter((price) => price !== "" && price != null)
-    .map(Number)
-    .filter((price) => Number.isFinite(price));
-
-  const variantStockTotal = form.variants.reduce(
-    (total, variant) => total + (parseInt(variant.stock, 10) || 0),
-    0
-  );
-
-  const derivedPrice = variantPrices.length > 0 ? Math.min(...variantPrices) : "";
 
   return (
     <div className="filament-page">
@@ -957,27 +934,13 @@ export default function ProductForm({ productId = null }) {
               {form.inventoryMode === INVENTORY_MODE.SINGLE && (
               <>
               <div className="form-row">
-                <label className="form-label">
-                  Price {!hasVariants && <span className="required">*</span>}
-                </label>
-                 <input
-                   type="number"
-                   name="price"
-                   step="0.01"
-                   min="0"
-                   value={hasVariants ? derivedPrice : form.price}
-                   onChange={handleChange}
-                   readOnly={hasVariants || isEdit}
-                   className={hasVariants ? "input-readonly" : ""}
-                 />
-                {hasVariants ? (
-                  <p className="input-hint">
-                    Lowest variant price. Edit individual prices in Variants
-                    below.
-                  </p>
-                ) : (
-                  errors.price && <p className="input-error">{errors.price}</p>
-                )}
+                <p className="input-hint">
+                  Price and stock are not set here. They come from purchasing:
+                  add the goods on a
+                  {" "}
+                  <a href="/purchase-invoices">purchase invoice</a>, and receiving it
+                  sets the stock and the selling price for this product.
+                </p>
               </div>
 
               <div className="form-row">
@@ -999,24 +962,6 @@ export default function ProductForm({ productId = null }) {
                 )}
               </div>
 
-              <div className="form-row">
-                <label className="form-label">Stock</label>
-                 <input
-                   type="number"
-                   name="stock"
-                   min="0"
-                   value={hasVariants ? variantStockTotal : form.stock}
-                   onChange={handleChange}
-                   readOnly={hasVariants || isEdit}
-                   className={hasVariants ? "input-readonly" : ""}
-                 />
-                {hasVariants && (
-                  <p className="input-hint">
-                    Total of all variant stock. Edit stock in Variants below.
-                  </p>
-                )}
-              </div>
-
                <div className="form-row">
                  <label className="form-label">Low Stock Threshold</label>
                  <input
@@ -1034,10 +979,12 @@ export default function ProductForm({ productId = null }) {
               {form.inventoryMode !== INVENTORY_MODE.SINGLE && (
                 <div className="form-row">
                   <p className="input-hint">
-                    Price, stock, and discount are managed per variant below.
+                    Price and stock are not set here either — they come from
+                    receiving a purchase invoice. Discount price is managed per
+                    variant below.
                     {form.inventoryMode === INVENTORY_MODE.PER_SKU
-                      ? ` Each of ${form.variants.length} variant(s) has its own price, stock, and discount price.`
-                      : " Prices and stock are shared across attribute values in the table below."}
+                      ? ` Each of ${form.variants.length} variant(s) has its own discount price.`
+                      : " Discount prices are shared across attribute values in the table below."}
                   </p>
                 </div>
               )}
@@ -1222,13 +1169,37 @@ export default function ProductForm({ productId = null }) {
               </div>
             ))}
 
-            <button
-              type="button"
-              className="filament-btn filament-btn-outline"
-              onClick={addAttribute}
-            >
-              + Add Attribute
-            </button>
+            <div className="pf-attr-actions">
+              <button
+                type="button"
+                className="filament-btn filament-btn-outline"
+                onClick={addAttribute}
+              >
+                + Add Attribute
+              </button>
+              {/* Creating an attribute used to mean leaving this form for the
+                  Attributes page and coming back, losing the half-filled product.
+                  This does it in place and adds the new attribute straight to the
+                  picker. */}
+              <button
+                type="button"
+                className="filament-btn filament-btn-secondary"
+                onClick={() => setCreatingAttribute(true)}
+              >
+                + New Attribute
+              </button>
+            </div>
+
+            {creatingAttribute && (
+              <NewAttributeModal
+                onClose={() => setCreatingAttribute(false)}
+                onCreated={async (created) => {
+                  setAttributes((current) => [...current, created]);
+                  setCreatingAttribute(false);
+                  setMessage(`Attribute "${created.name}" created. Add it below.`);
+                }}
+              />
+            )}
 
             {/* ===== Variants ===== */}
             <h2 className="form-section-title">
@@ -1301,16 +1272,10 @@ export default function ProductForm({ productId = null }) {
                                     min="0"
                                     step="0.01"
                                     placeholder="Price"
-                                    value={
-                                      form.optionInventory[value]?.price ?? ""
-                                    }
+                                    value={form.optionInventory[value]?.price ?? ""}
                                     readOnly={isEdit}
                                     onChange={(e) =>
-                                      updateOptionInventory(
-                                        value,
-                                        "price",
-                                        e.target.value
-                                      )
+                                      updateOptionInventory(value, "price", e.target.value)
                                     }
                                   />
                                 </td>
@@ -1338,16 +1303,10 @@ export default function ProductForm({ productId = null }) {
                                     type="number"
                                     min="0"
                                     placeholder="Stock"
-                                    value={
-                                      form.optionInventory[value]?.stock ?? ""
-                                    }
+                                    value={form.optionInventory[value]?.stock ?? ""}
                                     readOnly={isEdit}
                                     onChange={(e) =>
-                                      updateOptionInventory(
-                                        value,
-                                        "stock",
-                                        e.target.value
-                                      )
+                                      updateOptionInventory(value, "stock", e.target.value)
                                     }
                                   />
                                 </td>
@@ -1512,24 +1471,15 @@ export default function ProductForm({ productId = null }) {
                               />
                             </td>
                             <td>
-                              {form.inventoryMode ===
-                                INVENTORY_MODE.BY_ATTRIBUTE ? (
-                                <span className="variant-readonly">
-                                  {variant.price === "" ? "—" : variant.price}
-                                </span>
-                               ) : (
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  placeholder="Price"
-                                  value={variant.price}
-                                  readOnly={isEdit}
-                                  onChange={(e) =>
-                                    updateVariant(index, "price", e.target.value)
-                                  }
-                                />
-                              )}
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.01"
+                                placeholder="Price"
+                                value={variant.price ?? ""}
+                                readOnly={isEdit}
+                                onChange={(e) => updateVariant(index, "price", e.target.value)}
+                              />
                             </td>
                             <td>
                               {form.inventoryMode ===
@@ -1552,16 +1502,14 @@ export default function ProductForm({ productId = null }) {
                               )}
                             </td>
                             <td>
-                               <input
-                                 type="number"
-                                 min="0"
-                                 placeholder="Stock"
-                                 value={variant.stock}
-                                 readOnly={isEdit}
-                                 onChange={(e) =>
-                                   updateVariant(index, "stock", e.target.value)
-                                 }
-                               />
+                              <input
+                                type="number"
+                                min="0"
+                                placeholder="Stock"
+                                value={variant.stock ?? ""}
+                                readOnly={isEdit}
+                                onChange={(e) => updateVariant(index, "stock", e.target.value)}
+                              />
                             </td>
                             <td>
                               <button
@@ -1649,6 +1597,109 @@ export default function ProductForm({ productId = null }) {
             </div>
           </form>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Create attribute without leaving the product form ─────────────────────
+//
+// The Attributes page already has its own Create button. This is the one that
+// saves you navigating away from a half-filled product: it posts through the same
+// attributes API and hands the result back so the picker can use it immediately.
+
+function NewAttributeModal({ onClose, onCreated }) {
+  const [name, setName] = useState("");
+  const [values, setValues] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  // Comma separated, matching how the Attributes page lists values.
+  const parsedValues = values
+    .split(",")
+    .map((v) => v.trim())
+    .filter(Boolean);
+
+  const submit = async (event) => {
+    event.preventDefault();
+    if (busy || !name.trim()) return;
+    setBusy(true);
+    setError("");
+    try {
+      const created = await createAttribute({
+        name: name.trim(),
+        values: parsedValues,
+      });
+      onCreated(created);
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="filament-modal-overlay" onClick={onClose}>
+      <div
+        className="filament-modal"
+        onClick={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="New attribute"
+      >
+        <div className="filament-modal-header">
+          <div>
+            <h2>New attribute</h2>
+            <p className="filament-modal-sub">
+              Created straight into your attribute list — no need to leave this product.
+            </p>
+          </div>
+          <button type="button" className="filament-modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        <form onSubmit={submit}>
+          <div className="filament-modal-body">
+            {error && <div className="filament-alert filament-alert-info">{error}</div>}
+
+            <label className="frm-field">
+              <span>Attribute name *</span>
+              <input
+                type="text"
+                value={name}
+                onChange={(e) => { setName(e.target.value); setError(""); }}
+                placeholder="e.g. Pack Size"
+                autoFocus
+                required
+              />
+            </label>
+
+            <label className="frm-field">
+              <span>Values</span>
+              <input
+                type="text"
+                value={values}
+                onChange={(e) => setValues(e.target.value)}
+                placeholder="e.g. 5 Kg, 25 Kg, 50 Kg"
+              />
+              <small className="frm-hint">
+                Separate values with commas. You can add or change values later.
+              </small>
+            </label>
+          </div>
+
+          <div className="filament-modal-footer">
+            <button type="button" className="filament-btn filament-btn-outline" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="filament-btn filament-btn-primary"
+              disabled={busy || !name.trim()}
+            >
+              {busy ? "Creating…" : "Create attribute"}
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );

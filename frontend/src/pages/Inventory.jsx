@@ -26,8 +26,67 @@ function stockClass(stock, threshold) {
   return "stock-badge-ok";
 }
 
+function cartesian(groups) {
+  return groups.reduce(
+    (acc, group) =>
+      acc.flatMap((combo) =>
+        group.values.map((value) => [...combo, { name: group.name, value }])
+      ),
+    [[]]
+  );
+}
+
+function combinationKey(combo) {
+  return combo.map((item) => `${item.name}:${item.value}`).join("|");
+}
+
+function buildSku(base, combo) {
+  const suffix = combo.map((item) => item.value).join("-");
+  const clean = String(base || "SKU").replace(/\s+/g, "-");
+  return `${clean}-${suffix}`.toUpperCase();
+}
+
+function combinationCountFor(product) {
+  return attributeGroups(product).reduce(
+    (acc, group) => acc * Math.max(group.values.length, 1),
+    1
+  );
+}
+
+function attributeGroups(product) {
+  const attrs = Array.isArray(product.attributes) ? product.attributes : [];
+  const byName = new Map();
+
+  for (const attr of attrs) {
+    const name = attr.name || "Option";
+
+    // Stored attributes use { name, value }; the product form uses
+    // { name, values: [...] }. Accept both so generation works either way.
+    const values = Array.isArray(attr.values)
+      ? attr.values
+      : attr.value != null && attr.value !== ""
+        ? [attr.value]
+        : [];
+
+    if (values.length === 0) {
+      continue;
+    }
+
+    const merged = byName.get(name) || [];
+    for (const value of values) {
+      if (!merged.includes(value)) {
+        merged.push(value);
+      }
+    }
+    byName.set(name, merged);
+  }
+
+  return [...byName.entries()].map(([name, values]) => ({ name, values }));
+}
+
 function baseDraft(product) {
   return {
+    attributes: Array.isArray(product.attributes) ? product.attributes : [],
     price: product.price == null ? "" : String(product.price),
     discountPrice:
       (product.discount_price ?? product.discountPrice) == null ? "" : String((product.discount_price ?? product.discountPrice)),
@@ -212,6 +271,89 @@ export default function Inventory() {
 
       return { ...prev, [uuid]: { ...base, ...patch } };
     });
+  }
+
+  function addVariant(uuid) {
+    setDrafts((prev) => {
+      const product = products.find((item) => item.uuid === uuid);
+
+      if (!product) {
+        return prev;
+      }
+
+      const base = prev[uuid] || baseDraft(product);
+      const variants = [
+        ...base.variants,
+        {
+          name: "",
+          sku: "",
+          price: "",
+          stock: "0",
+          discountPrice: "",
+          discount_price: null,
+          attributes: {},
+        },
+      ];
+
+      return {
+        ...prev,
+        [uuid]: { ...base, variants },
+      };
+    });
+
+    setExpanded((prev) => (prev.includes(uuid) ? prev : [...prev, uuid]));
+  }
+
+  function generateVariants(uuid) {
+    const product = products.find((item) => item.uuid === uuid);
+
+    if (!product) {
+      return;
+    }
+
+    const groups = attributeGroups(product);
+
+    if (groups.length === 0) {
+      setMessage(
+        "This product has no attribute values yet. Add values such as 5kg or 25kg on the product page first, then generate variants here."
+      );
+      return;
+    }
+
+    const combos = cartesian(groups);
+    const baseSku = product.sku || product.name || "SKU";
+
+    setDrafts((prev) => {
+      const base = prev[uuid] || baseDraft(product);
+      const existing = new Map();
+
+      for (const variant of base.variants) {
+        const entries = Object.entries(variant.attributes || {});
+
+        if (entries.length > 0) {
+          existing.set(combinationKey(entries.map(([name, value]) => ({ name, value }))), variant);
+        }
+      }
+
+      const variants = combos.map((combo) => {
+        const match = existing.get(combinationKey(combo));
+
+        return {
+          name: combo.map((item) => item.value).join(" / "),
+          sku: match?.sku || buildSku(baseSku, combo),
+          price: match?.price ?? base.price ?? "",
+          stock: match?.stock ?? "0",
+          discountPrice: match?.discountPrice ?? "",
+          discount_price: match?.discount_price ?? null,
+          attributes: Object.fromEntries(combo.map((item) => [item.name, item.value])),
+        };
+      });
+
+      return { ...prev, [uuid]: { ...base, variants } };
+    });
+
+    setExpanded((prev) => (prev.includes(uuid) ? prev : [...prev, uuid]));
+    setMessage(`Generated ${combos.length} variant(s). Set price and stock below, then Save.`);
   }
 
   function updateVariant(uuid, index, field, value) {
@@ -802,7 +944,35 @@ export default function Inventory() {
                         </td>
                         <td>
                           {variants.length === 0 ? (
-                            <span className="text-muted">—</span>
+                            canEditInventory ? (
+                              <div className="inventory-add-variant">
+                                <button
+                                  type="button"
+                                  className="filament-btn filament-btn-outline filament-btn-xs"
+                                  onClick={() => generateVariants(product.uuid)}
+                                  disabled={attributeGroups(product).length === 0}
+                                  title={
+                                    attributeGroups(product).length === 0
+                                      ? "Add attribute values (for example 5kg, 25kg) on the product page first"
+                                      : "Create one variant per attribute combination"
+                                  }
+                                >
+                                  Generate from attributes
+                                  {combinationCountFor(product) > 0
+                                    ? ` (${combinationCountFor(product)})`
+                                    : ""}
+                                </button>
+                                <button
+                                  type="button"
+                                  className="filament-btn filament-btn-outline filament-btn-xs"
+                                  onClick={() => addVariant(product.uuid)}
+                                >
+                                  + Add manually
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-muted">—</span>
+                            )
                           ) : (
                             <button
                               type="button"

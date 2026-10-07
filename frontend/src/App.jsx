@@ -26,7 +26,7 @@ import AttributeView from "./pages/AttributeView";
 import Coupons from "./pages/Coupons";
 import CouponView from "./pages/CouponView";
 import GiftCards from "./pages/GiftCards";
-import PurchaseInvoices from "./pages/PurchaseInvoices";
+import PurchaseInvoices, { PurchaseInvoiceNew } from "./pages/PurchaseInvoices";
 import Suppliers from "./pages/Suppliers";
 import SupplierView from "./pages/SupplierView";
 import SupplierEdit from "./pages/SupplierEdit";
@@ -497,6 +497,10 @@ export default function App() {
         <Route
           path="/purchase-invoices"
           element={adminGuard("purchase_invoices.view", "Purchase Invoices", <PurchaseInvoices />)}
+        />
+        <Route
+          path="/purchase-invoices/new"
+          element={adminGuard("purchase_invoices.create", "New Purchase Invoice", <PurchaseInvoiceNew />)}
         />
         <Route
           path="/purchase-invoices/:id"

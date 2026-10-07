@@ -1,0 +1,18 @@
+import { chromium } from "playwright";
+const b = await chromium.launch();
+const page = await (await b.newContext({ viewport: { width: 1440, height: 950 } })).newPage();
+await page.goto("http://localhost:5173/login", { waitUntil: "networkidle" });
+await page.fill('input[name="email"]', process.argv[2]);
+await page.fill('input[name="password"]', "Password@123");
+await page.click('button[type="submit"]');
+await page.waitForURL(/dashboard/, { timeout: 15000 }).catch(()=>{});
+await page.goto("http://localhost:5173/purchase-invoices/new", { waitUntil: "networkidle" });
+await page.waitForTimeout(2200);
+const picker = page.locator('input[placeholder="Search products…"]').first();
+await picker.click();
+await page.waitForTimeout(1500);
+await page.locator('.pp-picker-option').first().click();
+await page.waitForTimeout(1500);
+await page.screenshot({ path: "/tmp/opencode/variantcol.png", fullPage: true });
+console.log("saved");
+await b.close();

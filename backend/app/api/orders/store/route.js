@@ -1,4 +1,5 @@
 import pool from "@/lib/db";
+import { getMinimumOrderValue, evaluateMinimumOrderValue, formatMoney } from "@/lib/orderSettings";
 import { corsHeaders } from "@/lib/cors";
 import { Order } from "@/lib/models/order";
 import { Branch } from "@/lib/models/branch";
@@ -290,6 +291,26 @@ export async function POST(request) {
         );
         stockUpdates += dec.rowCount;
       }
+    }
+
+    // Minimum Order Value is enforced here, not in the UI. By this point the
+    // server has recomputed every line price and chosen the branch, so `subtotal`
+    // is trustworthy -- it is not the figure the browser sent. Placed before the
+    // stock decrements are committed and before the order row is written, so a
+    // rejected checkout leaves nothing behind.
+    const movRule = await getMinimumOrderValue();
+    const mov = evaluateMinimumOrderValue(subtotal, movRule);
+    if (!mov.satisfied) {
+      await client.query("ROLLBACK");
+      return Response.json(
+        {
+          success: false,
+          code: "MINIMUM_ORDER_VALUE",
+          message: mov.message,
+          minimumOrderValue: mov,
+        },
+        { status: 422, headers: corsHeaders() }
+      );
     }
 
     if (branch && stockUpdates !== items.length) {

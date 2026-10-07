@@ -111,8 +111,11 @@ export async function retireSupplierBankAccount(supplierId, uuid) {
  * not already carry (id, name, sku, stock), so a second product query would just
  * be a second thing to keep in step with the catalogue.
  */
+// Purchase invoices may be raised against any active product, so ask for the
+// API maximum in one go rather than the default page of 20. The backend caps
+// `limit` at MAX_LIMIT (100); typing in the box still narrows server-side.
 export async function searchProductsForPurchase(search) {
-  const data = await listProducts({ search, status: "ACTIVE", limit: 20 });
+  const data = await listProducts({ search, status: "ACTIVE", limit: 100 });
   return data.products || [];
 }
 

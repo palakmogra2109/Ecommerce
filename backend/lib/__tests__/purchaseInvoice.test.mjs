@@ -317,3 +317,87 @@ test("a payment never touches stock", async () => {
   const led = await pool.query("SELECT count(*)::int n FROM stock_ledger WHERE product_id=$1", [product]);
   assert.equal(led.rows[0].n, 0, "payments are separate from stock movements");
 });
+
+// ── selling price is owned by the purchase invoice ──────────────────────────
+
+test("receiving a PO sets stock AND the selling price on the product", async () => {
+  const { product, supplier } = await seed();
+  const before = (await pool.query("SELECT price, stock FROM products WHERE id=$1", [product])).rows[0];
+  assert.equal(Number(before.price), 100, "seed price before any purchase");
+
+  const inv = await PurchaseInvoice.create({
+    supplierId: supplier, supplierInvoiceNumber: "SP-1",
+    items: [{ productId: product, quantityOrdered: 10, unitCost: 80, sellingPrice: 120 }],
+  });
+  assert.equal(inv.items[0].selling_price, 120, "the line records the selling price");
+
+  await PurchaseInvoice.receiveStock({
+    invoiceId: inv.id,
+    lines: [{ purchaseInvoiceItemId: inv.items[0].id, accepted: 10 }],
+  });
+
+  const after = (await pool.query("SELECT price, stock FROM products WHERE id=$1", [product])).rows[0];
+  assert.equal(Number(after.stock), 10);
+  assert.equal(Number(after.price), 120, "the retail price came from the purchase, not the cost");
+});
+
+test("unit_cost is the cost and never becomes the selling price", async () => {
+  const { product, supplier } = await seed();
+  const inv = await PurchaseInvoice.create({
+    supplierId: supplier, supplierInvoiceNumber: "SP-2",
+    items: [{ productId: product, quantityOrdered: 5, unitCost: 200, sellingPrice: 350 }],
+  });
+  const item = inv.items[0];
+  assert.equal(Number(item.unit_cost), 200, "cost preserved");
+  assert.equal(Number(item.selling_price), 350, "price set separately, so margin survives");
+});
+
+test("a purchase with no selling price leaves the existing price alone", async () => {
+  const { product, supplier } = await seed();
+  await pool.query("UPDATE products SET price = 99 WHERE id = $1", [product]);
+
+  const inv = await PurchaseInvoice.create({
+    supplierId: supplier, supplierInvoiceNumber: "SP-3",
+    items: [{ productId: product, quantityOrdered: 5, unitCost: 10 }],
+  });
+  assert.equal(inv.items[0].selling_price, null, "absent means 'did not reprice'");
+
+  await PurchaseInvoice.receiveStock({
+    invoiceId: inv.id,
+    lines: [{ purchaseInvoiceItemId: inv.items[0].id, accepted: 5 }],
+  });
+  const after = (await pool.query("SELECT price FROM products WHERE id=$1", [product])).rows[0];
+  assert.equal(Number(after.price), 99, "price untouched, stock still moved");
+});
+
+test("a negative selling price is refused", async () => {
+  const { product, supplier } = await seed();
+  await assert.rejects(
+    () => PurchaseInvoice.create({
+      supplierId: supplier, supplierInvoiceNumber: "SP-4",
+      items: [{ productId: product, quantityOrdered: 1, unitCost: 5, sellingPrice: -1 }],
+    }),
+    (e) => e.code === "BAD_COST"
+  );
+});
+
+test("the product API ignores a price or stock sent in the request", async () => {
+  const { supplier } = await seed();
+  const created = await PurchaseInvoice.create({
+    supplierId: supplier, supplierInvoiceNumber: "SP-5",
+    items: [{ productId: (await seed()).product, quantityOrdered: 1, unitCost: 5 }],
+  });
+  assert.ok(created.id);
+
+  // Defence in depth behind the form: even a crafted body cannot set them.
+  const p = (await pool.query("SELECT id FROM products ORDER BY id DESC LIMIT 1")).rows[0].id;
+  await pool.query("UPDATE products SET price = 500, stock = 777 WHERE id = $1", [p]);
+  await pool.query("SELECT 1"); // no-op, keeps the pool warm
+  const { Product } = await import("../models/product.js");
+  const updated = await Product.update((await pool.query("SELECT uuid FROM products WHERE id=$1", [p])).rows[0].uuid,
+    { price: 1, stock: 2, name: "Renamed" });
+  const row = (await pool.query("SELECT price, stock, name FROM products WHERE id=$1", [p])).rows[0];
+  assert.equal(row.name, "Renamed", "the legitimate edit still applied");
+  assert.equal(Number(row.price), 500, "price ignored");
+  assert.equal(Number(row.stock), 777, "stock ignored");
+});

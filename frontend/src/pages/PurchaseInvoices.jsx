@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import DataPage from "../components/DataPage";
+import Breadcrumb from "../components/Breadcrumb";
+import { useNavigate } from "react-router-dom";
 import { listPurchaseInvoices, createPurchaseInvoice, listSuppliers } from "../services/purchases";
 import ProductPicker from "./ProductPicker";
 
@@ -12,6 +14,15 @@ export function Notice({ children }) {
   if (!children) return null;
   return <div className="filament-alert filament-alert-info">{children}</div>;
 }
+
+// Margin on a line, shown so a typo in the selling price is obvious before it
+// is written to the product. Null while either side is missing.
+const marginOf = (line) => {
+  const sell = Number(line.sellingPrice);
+  const cost = Number(line.unitCost);
+  if (!(sell > 0) || !(cost >= 0) || !line.product) return null;
+  return { amount: sell - cost, percent: cost > 0 ? ((sell - cost) / sell) * 100 : null };
+};
 
 const lineTotal = (line) => {
   const gross = (Number(line.unitCost) || 0) * (Number(line.quantityOrdered) || 0);
@@ -42,6 +53,7 @@ const PAYMENT_OPTIONS = [
 // The list. A row links to /purchase-invoices/:uuid for the detail, matching the
 // gift-card pages, because receiving and paying need a full page of their own.
 export default function PurchaseInvoices() {
+  const navigate = useNavigate();
   const [creating, setCreating] = useState(false);
   const [refreshToken, setRefreshToken] = useState(0);
 
@@ -71,7 +83,7 @@ export default function PurchaseInvoices() {
         delete: "purchase_invoices.cancel",
       }}
       createLabel="New Purchase Invoice"
-      onCreate={() => setCreating(true)}
+      onCreate={() => navigate("/purchase-invoices/new")}
       columns={[
         {
           label: "Invoice",
@@ -191,7 +203,9 @@ export function ReceiveModal({ invoice, onClose, onSubmit }) {
               recorded against the invoice but do not enter the warehouse.
             </p>
           </div>
-          <button type="button" className="filament-modal-close" onClick={onClose} aria-label="Close">×</button>
+          {!fullPage && (
+            <button type="button" className="filament-modal-close" onClick={onClose} aria-label="Close">×</button>
+          )}
         </div>
 
         <form onSubmit={submit}>
@@ -334,7 +348,7 @@ export function PayModal({ invoice, onClose, onSubmit }) {
 
 // ── create ─────────────────────────────────────────────────────────────────
 
-function NewInvoiceModal({ onClose, onSaved }) {
+function NewInvoiceModal({ onClose, onSaved, fullPage = false }) {
   const [suppliers, setSuppliers] = useState([]);
   const [lines, setLines] = useState([blankLine()]);
   const [supplierId, setSupplierId] = useState("");
@@ -359,7 +373,7 @@ function NewInvoiceModal({ onClose, onSaved }) {
 
   // Ids already on another line, so the picker can exclude them. A duplicate
   // product on two lines is refused by the server.
-  const usedUuids = lines.map((line) => line.product?.uuid).filter(Boolean);
+  const usedUuids = [];
 
   const totals = useMemo(() => {
     const rows = lines.map(lineTotal);
@@ -377,8 +391,13 @@ function NewInvoiceModal({ onClose, onSaved }) {
   if (!supplierInvoiceNumber.trim()) problems.push("Enter the supplier's invoice number");
   lines.forEach((line, index) => {
     if (!line.product) problems.push(`Line ${index + 1} needs a product`);
+    else if (Array.isArray(line.product.variants) && line.product.variants.length > 0 && !line.variantUuid)
+      problems.push(`Line ${index + 1} needs a variant`);
     else if (!(Number(line.quantityOrdered) > 0)) problems.push(`Line ${index + 1} needs a quantity above zero`);
     else if (Number(line.unitCost) < 0) problems.push(`Line ${index + 1} has a negative unit cost`);
+    else if (line.sellingPrice !== "" && Number(line.sellingPrice) < 0) {
+      problems.push(`Line ${index + 1} has a negative selling price`);
+    }
   });
   const complete = problems.length === 0;
 
@@ -390,7 +409,7 @@ function NewInvoiceModal({ onClose, onSaved }) {
     try {
       // No totals are posted. The server derives every figure from these lines,
       // so anything sent here would be ignored at best and misleading at worst.
-      await createPurchaseInvoice({
+      const created = await createPurchaseInvoice({
         supplierId: Number(supplierId),
         supplierInvoiceNumber: supplierInvoiceNumber.trim(),
         invoiceDate,
@@ -398,13 +417,15 @@ function NewInvoiceModal({ onClose, onSaved }) {
         notes: notes || null,
         items: lines.map((line) => ({
           productUuid: line.product.uuid,
+          variantUuid: line.variantUuid || null,
           quantityOrdered: Number(line.quantityOrdered),
           unitCost: Number(line.unitCost),
+          sellingPrice: line.sellingPrice === "" ? null : Number(line.sellingPrice),
           discountPercent: Number(line.discountPercent) || 0,
           taxPercent: Number(line.taxPercent) || 0,
         })),
       });
-      onSaved?.();
+      onSaved?.(created);
       onClose?.();
     } catch (e) {
       setError(e.message);
@@ -416,8 +437,17 @@ function NewInvoiceModal({ onClose, onSaved }) {
   const money = (value) => `\u20b9${Number(value || 0).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   return (
-    <div className="filament-modal-overlay" onClick={onClose}>
-      <div className="filament-modal filament-modal-lg pp-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+    <>
+      {fullPage && (
+        <Breadcrumb
+          items={[
+            { label: "Purchase Invoices", to: "/purchase-invoices" },
+            { label: "New Purchase Invoice" },
+          ]}
+        />
+      )}
+      <div className={fullPage ? "filament-page" : "filament-modal-overlay"} onClick={fullPage ? undefined : onClose}>
+      <div className={fullPage ? "filament-card pp-new-page" : "filament-modal filament-modal-lg pp-modal"} onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
         <div className="filament-modal-header">
           <div>
             <h2>New purchase invoice</h2>
@@ -476,8 +506,10 @@ function NewInvoiceModal({ onClose, onSaved }) {
             <div className="pp-lines">
               <div className="pp-line pp-line-head">
                 <span>Product</span>
+                <span>Variant</span>
                 <span>Qty</span>
                 <span>Unit cost</span>
+                <span>Selling price</span>
                 <span>Disc %</span>
                 <span>Tax %</span>
                 <span className="pp-right">Line total</span>
@@ -487,11 +519,32 @@ function NewInvoiceModal({ onClose, onSaved }) {
               {lines.map((line, index) => (
                 <div className="pp-line" key={index}>
                   <ProductPicker
-                    value={line.product}
-                    excludeUuids={usedUuids}
-                    label="Search products…"
-                    onChange={(product) => setLine(index, { product })}
+                      value={line.product}
+                      excludeUuids={usedUuids}
+                      label="Search products…"
+                      onChange={(product) => setLine(index, { product, variantUuid: "" })}
                   />
+                  {line.product && Array.isArray(line.product.variants) && line.product.variants.length > 0 ? (
+                    <select
+                      className="pp-variant-select"
+                      value={line.variantUuid}
+                      onChange={(e) => setLine(index, { variantUuid: e.target.value })}
+                      required
+                    >
+                      <option value="">Select variant…</option>
+                      {line.product.variants.map((v) => (
+                        <option key={v.uuid || v.sku} value={v.uuid || v.sku}>
+                          {v.name || (v.attributes ? Object.values(v.attributes).join(" / ") : v.sku || "Variant")}
+                          {v.sku && v.name !== v.sku ? ` · ${v.sku}` : ""}
+                          {` · stock ${Number(v.stock) || 0}`}
+                        </option>
+                      ))}
+                    </select>
+                  ) : line.product ? (
+                    <span className="text-muted pp-no-variants">No variants</span>
+                  ) : (
+                    <span className="text-muted">—</span>
+                  )}
                   <input
                     type="number" min="0" step="0.01" className="pp-num"
                     value={line.quantityOrdered}
@@ -506,6 +559,25 @@ function NewInvoiceModal({ onClose, onSaved }) {
                     placeholder="0.00"
                     aria-label={`Unit cost for line ${index + 1}`}
                   />
+                  <span className="pp-sell">
+                    <input
+                      type="number" min="0" step="0.01" className="pp-num"
+                      value={line.sellingPrice}
+                      onChange={(e) => setLine(index, { sellingPrice: e.target.value })}
+                      placeholder="sets price"
+                      aria-label={`Selling price for line ${index + 1}`}
+                    />
+                    {(() => {
+                      const m = marginOf(line);
+                      if (!m) return null;
+                      const bad = m.amount <= 0;
+                      return (
+                        <small className={bad ? "pp-margin-bad" : "pp-margin"}>
+                          {bad ? "no margin" : `${Math.round(m.percent)}% margin`}
+                        </small>
+                      );
+                    })()}
+                  </span>
                   <input
                     type="number" min="0" max="100" className="pp-num"
                     value={line.discountPercent}
@@ -573,10 +645,25 @@ function NewInvoiceModal({ onClose, onSaved }) {
           </div>
         </form>
       </div>
-    </div>
+      </div>
+    </>
   );
 }
 
+// sellingPrice is what this purchase sets as the product's retail price.
+// unitCost stays the supplier's cost, so margin stays visible.
 const blankLine = () => ({
-  product: null, quantityOrdered: "", unitCost: "", discountPercent: "", taxPercent: "",
+  product: null, variantUuid: "", quantityOrdered: "", unitCost: "", sellingPrice: "",
+  discountPercent: "", taxPercent: "",
 });
+
+export function PurchaseInvoiceNew() {
+  const navigate = useNavigate();
+  return (
+    <NewInvoiceModal
+      fullPage
+      onClose={() => navigate("/purchase-invoices")}
+      onSaved={(created) => navigate(`/purchase-invoices/${created?.invoice?.id ?? created?.invoiceId ?? created?.id ?? ""}`)}
+    />
+  );
+}

@@ -1,4 +1,5 @@
 import { corsHeaders } from "@/lib/cors";
+import { productUsage, ProductInUseError } from "@/lib/productUsage";
 import { Product } from "@/lib/models/product";
 import { authorize } from "@/lib/authorization";
 import { KEY_PERMISSIONS, PRODUCT_STATUSES, INVENTORY_MODES, slugify } from "@shared/constants";
@@ -77,6 +78,15 @@ export async function PATCH(request, { params }) {
 
     const body = await request.json();
 
+    // A product that has been ordered, stocked in a store or received against a
+    // purchase invoice is history. Editing its details or flipping it between
+    // ACTIVE and DRAFT would rewrite what those records appear to mean, so both
+    // are refused with the reason.
+    const usage = await productUsage(id);
+    if (usage.isUsed) {
+      throw new ProductInUseError(usage);
+    }
+
     if (
       body.inventoryMode !== undefined &&
       !INVENTORY_MODES.includes(body.inventoryMode)
@@ -137,6 +147,13 @@ export async function PATCH(request, { params }) {
   } catch (error) {
     console.error("Update product error:", error);
 
+    if (error instanceof ProductInUseError) {
+      return Response.json(
+        { success: false, message: error.message, code: error.code, usage: error.usage },
+        { status: 409, headers: corsHeaders() }
+      );
+    }
+
     if (String(error?.code) === "23505") {
       return Response.json(
         { success: false, message: "A product with this slug already exists" },
@@ -177,6 +194,13 @@ export async function DELETE(_request, { params }) {
       );
     }
 
+    // Refuse before removing anything. A product that other tables already point
+    // at is history, and deleting it would silently rewrite those records.
+    const usage = await productUsage(id);
+    if (usage.isUsed) {
+      throw new ProductInUseError(usage);
+    }
+
     await Product.remove(id);
 
     return Response.json(
@@ -185,6 +209,13 @@ export async function DELETE(_request, { params }) {
     );
   } catch (error) {
     console.error("Delete product error:", error);
+
+    if (error instanceof ProductInUseError) {
+      return Response.json(
+        { success: false, message: error.message, code: error.code, usage: error.usage },
+        { status: 409, headers: corsHeaders() }
+      );
+    }
 
     return Response.json(
       {
