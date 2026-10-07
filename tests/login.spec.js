@@ -767,6 +767,24 @@ test.describe('sub-admin with no usable permissions', () => {
     await expect(page.locator('.forbidden-code')).toHaveText('403');
     await expect(page.locator('.forbidden')).toBeVisible();
   });
+
+  test('wrong password returns 401', async ({ request }) => {
+    const res = await request.post(`${API}/api/auth/login`, {
+      headers: asClient(),
+      data: {
+        email: EMAIL,
+        password: 'WrongPassword@123'
+      }
+    });
+
+    expect(res.status()).toBe(401);
+
+    const body = await res.json();
+
+    expect(body.success).toBe(false);
+    expect(body.message).toBe('Invalid email or password');
+    expect(body.token).toBeUndefined();
+  });
 });
 
 // ─────────────────────── shared negatives ───────────────────────
@@ -832,3 +850,4 @@ test.describe('shared login rules for every admin role', () => {
     expect(res.status).toBeLessThan(400);
   });
 });
+
