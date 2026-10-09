@@ -16,6 +16,7 @@ import {
 import Breadcrumb from "../components/Breadcrumb";
 import Avatar from "../components/Avatar";
 import PhoneInput from "../components/PhoneInput";
+import ImageEditorModal from "../components/ImageEditorModal";
 import { validateMobile } from "../utils/validation";
 import { isSuperAdmin, isStoreRole } from "@shared/constants";
 import { useAuth } from "../context/AuthContext";
@@ -40,6 +41,7 @@ export default function UserForm({ userId = null }) {
 
   const [loading, setLoading] = useState(isEdit);
   const [uploading, setUploading] = useState(false);
+  const [editorFile, setEditorFile] = useState(null);
   const [saving, setSaving] = useState(false);
 
   const [errors, setErrors] = useState({});
@@ -174,12 +176,30 @@ export default function UserForm({ userId = null }) {
   }
 
   /*
-   * Upload avatar
+   * Open the crop & edit modal for the picked avatar
    */
-  async function handleAvatarChange(e) {
+  function handleAvatarChange(e) {
     const file = e.target.files?.[0];
 
+    /*
+     * Allow selecting the same image again
+     */
+    e.target.value = "";
+
     if (!file) {
+      return;
+    }
+
+    setEditorFile(file);
+  }
+
+  /*
+   * Upload the cropped avatar (null means the modal was dismissed)
+   */
+  async function handleAvatarApply(editedFile) {
+    setEditorFile(null);
+
+    if (!editedFile) {
       return;
     }
 
@@ -187,7 +207,7 @@ export default function UserForm({ userId = null }) {
     setMessage("");
 
     try {
-      const data = await uploadMedia(file);
+      const data = await uploadMedia(editedFile);
 
       if (data.success) {
         setForm((prev) => ({
@@ -195,28 +215,16 @@ export default function UserForm({ userId = null }) {
           avatar: data.url,
         }));
 
-        setPreview(
-          mediaUrl(data.url)
-        );
+        setPreview(mediaUrl(data.url));
       } else {
-        setMessage(
-          data.message ||
-          "Unable to upload image."
-        );
+        setMessage(data.message || "Unable to upload image.");
       }
     } catch (error) {
       console.error(error);
 
-      setMessage(
-        "Unable to upload image. Please try again."
-      );
+      setMessage("Unable to upload image. Please try again.");
     } finally {
       setUploading(false);
-
-      /*
-       * Allow selecting the same image again
-       */
-      e.target.value = "";
     }
   }
 
@@ -483,6 +491,15 @@ export default function UserForm({ userId = null }) {
 
               </div>
             </div>
+
+            <ImageEditorModal
+              file={editorFile}
+              title="Edit profile photo"
+              initialAspect={1}
+              lockAspect
+              onApply={handleAvatarApply}
+              onCancel={() => setEditorFile(null)}
+            />
 
 
             {/* =====================================

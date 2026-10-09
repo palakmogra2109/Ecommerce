@@ -4,22 +4,21 @@ import { createToken } from "@/lib/auth";
 import { corsHeaders } from "@/lib/cors";
 import { getUserAccess, getUserBranches } from "@/lib/authorization";
 import {
-  checkGuessAllowed,
-  clearFailedGuesses,
-  clientKey,
-  recordFailedGuess,
-} from "@/lib/giftCardGuards";
+  checkLoginAllowed,
+  clearLoginFailures,
+  loginKeys,
+  recordLoginFailure,
+} from "@/lib/loginThrottle";
 
 export const runtime = "nodejs";
 
-// Failed sign-in attempts, per client, in this process.
+// Failed sign-in attempts, in this process. Keyed by BOTH the submitted account
+// and the client address, so the policy and the reasoning live in
+// lib/loginThrottle.js.
 //
-// The same limiter the gift-card code lookup uses, reused rather than
-// reimplemented: without it this endpoint accepted unlimited password guesses
-// against a known email address. The Map is per process, so N instances give
-// N x the budget — noted rather than solved, because the honest fix is a shared
-// store (Redis, or a login_attempts table) and that is a larger change than
-// this route should make on its own.
+// The Map is per process, so N instances give N x the budget — noted rather than
+// solved, because the honest fix is a shared store (Redis, or a login_attempts
+// table) and that is a larger change than this route should make on its own.
 const failedLogins = new Map();
 
 // The token cookie is marked Secure whenever the request actually arrived over
@@ -45,20 +44,29 @@ export async function OPTIONS() {
 
 export async function POST(request) {
   try {
-    // Throttled before any credential work, so a locked-out client costs the
-    // attacker time even when every guess is a miss. A successful login clears
-    // the count, so someone who fumbles their own password twice is not punished
+    // Read before throttling, because one of the two buckets is the submitted
+    // account and that cannot be known without the body. This is the only part
+    // of the request that now happens earlier: the throttle check below still
+    // runs before bcrypt and before any database work, so a locked-out client
+    // still costs the attacker nothing.
+    let body = {};
+    try {
+      body = await request.json();
+    } catch {
+      // Malformed JSON. Carried on as an empty body so the IP bucket still
+      // applies; the missing-field check below then answers 400 rather than
+      // letting this fall through to the generic 500.
+    }
+
+    const { email, password } = body;
+    const normalizedEmail = email ? String(email).toLowerCase().trim() : "";
+
+    // Throttled before any credential work. A successful login clears both
+    // budgets, so someone who fumbles their own password twice is not punished
     // for it afterwards.
-    const key = clientKey(request);
-    // A client we cannot identify shares one global bucket, because every such
-    // request resolves to the literal key "unknown". Throttling that bucket
-    // means one attacker behind a misconfigured proxy can lock every other
-    // visitor out of logging in — a denial of service on the login page itself,
-    // which is a worse failure than the missing throttle it prevents. So an
-    // unidentifiable client is not throttled here. Deploy behind a proxy that
-    // sets x-forwarded-for and this never applies.
-    const identifiable = key !== "unknown";
-    const allowed = identifiable ? checkGuessAllowed(failedLogins, key) : { ok: true };
+    const keys = loginKeys(request, normalizedEmail);
+    const allowed = checkLoginAllowed(failedLogins, keys);
+
     if (allowed.ok === false) {
       return Response.json(
         {
@@ -75,10 +83,6 @@ export async function POST(request) {
       );
     }
 
-    const body = await request.json();
-
-    const { email, password } = body;
-
     if (!email || !password) {
       return Response.json(
         {
@@ -91,8 +95,6 @@ export async function POST(request) {
         }
       );
     }
-
-    const normalizedEmail = email.toLowerCase().trim();
 
     const result = await pool.query(
       `
@@ -107,7 +109,7 @@ export async function POST(request) {
       // Counted as a failed attempt like any other, and answered with the exact
       // same message as a wrong password so this cannot be used to discover
       // which email addresses exist.
-      if (identifiable) recordFailedGuess(failedLogins, key);
+      recordLoginFailure(failedLogins, keys);
       return Response.json(
         {
           success: false,
@@ -128,7 +130,7 @@ export async function POST(request) {
     );
 
     if (!passwordMatch) {
-      if (identifiable) recordFailedGuess(failedLogins, key);
+      recordLoginFailure(failedLogins, keys);
       return Response.json(
         {
           success: false,
@@ -165,8 +167,10 @@ export async function POST(request) {
       );
     }
 
-    // A correct password is not a guess, so the budget is returned.
-    if (identifiable) clearFailedGuesses(failedLogins, key);
+    // A correct password is not a guess, so the budgets are returned — both of
+    // them, or a user who recovers would stay locked for the rest of the IP
+    // bucket's life.
+    clearLoginFailures(failedLogins, keys);
 
     const token = await createToken(user);
 

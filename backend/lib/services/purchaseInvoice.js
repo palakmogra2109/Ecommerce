@@ -1,6 +1,7 @@
 import pool from "../db.js";
 import { notifyBackInStock } from "../notifications/backInStock.js";
 import { round2, toPaise } from "../giftCardApplicability.js";
+import { resolveVariant } from "./productVariants.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Purchase invoices
@@ -88,6 +89,7 @@ const REASON = Object.freeze({
   UNKNOWN_ITEM: "UNKNOWN_ITEM",
   DUPLICATE_PRODUCT: "DUPLICATE_PRODUCT",
   NEEDS_PRODUCT: "NEEDS_PRODUCT",
+  BAD_VARIANT: "BAD_VARIANT",
   NO_NUMBER: "NO_NUMBER",
   NO_REASON: "NO_REASON",
   ALREADY_RECEIVED: "ALREADY_RECEIVED",
@@ -415,7 +417,7 @@ export const PurchaseInvoice = {
       if (!wh) throw new PurchaseError(REASON.NOT_FOUND, "No central warehouse is configured.");
 
       const products = await runner.query(
-        "SELECT id, name, sku, price FROM products WHERE id = ANY($1::bigint[])",
+        "SELECT id, name, sku, price, COALESCE(variants, '[]'::jsonb) AS variants FROM products WHERE id = ANY($1::bigint[])",
         [lines.map((l) => l.productId)]
       );
       const byId = new Map(products.rows.map((p) => [Number(p.id), p]));
@@ -423,6 +425,30 @@ export const PurchaseInvoice = {
       if (unknown) {
         throw new PurchaseError(REASON.UNKNOWN_ITEM, `No product with id ${unknown.productId}.`);
       }
+
+      // Every variant on a line must actually belong to that line's product.
+      //
+      // Without this the value went straight through: it was stored verbatim in
+      // purchase_invoice_items.variant_uuid and written on to
+      // warehouse_inventory and product_batches at receipt, where the stock view
+      // joins variants on uuid. A variantUuid that was not a uuid -- a SKU, once
+      // the purchase form had no uuid to send -- therefore produced a stock row
+      // attributed to no variant at all, silently. resolveVariant() already
+      // existed for exactly this and was only ever called by its own tests.
+      //
+      // Product-level lines (no variant on a product that has variants) stay
+      // legal, which is what resolveVariant reports as `productLevel`.
+      lines.forEach((line, index) => {
+        if (!line.variantUuid) return;
+
+        const resolved = resolveVariant(byId.get(line.productId), line.variantUuid);
+        if (!resolved.ok) {
+          throw new PurchaseError(
+            REASON.BAD_VARIANT,
+            `Line ${index + 1}: ${resolved.error}`
+          );
+        }
+      });
 
       const totals = computeInvoiceTotals(lines, { shippingTotal });
       const invoiceNumber = await nextNumber(runner, "PURCHASE_INVOICE");

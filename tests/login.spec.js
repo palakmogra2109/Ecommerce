@@ -347,7 +347,7 @@ test.describe('negative — server contract (client rules bypassed)', () => {
 
   test('an unknown email is 401 with a message that does not confirm existence', async ({ request }) => {
     const res = await post(request, {
-      email: 'definitely-not-a-user@example.invalid',
+      email: `definitely-not-a-user-${RUN_ID}@example.invalid`,
       password: STRONG,
     });
     expect(res.status()).toBe(401);
@@ -359,7 +359,7 @@ test.describe('negative — server contract (client rules bypassed)', () => {
 
   test('a wrong password is 401 with the same message as an unknown user', async ({ request }) => {
     const wrongPw = await post(request, { email: EMAIL, password: 'Wr0ng@Pass99' });
-    const unknownUser = await post(request, { email: 'nobody@example.invalid', password: STRONG });
+    const unknownUser = await post(request, { email: `nobody-${RUN_ID}@example.invalid`, password: STRONG });
     const a = await wrongPw.json();
     const b = await unknownUser.json();
     // If these ever differ, the endpoint tells an attacker which emails exist.
@@ -437,6 +437,10 @@ test.describe('security gaps found while writing these cases', () => {
   // Each of these currently FAILS against the live code. They are written as
   // expected-passing tests so they document the required behaviour and will go
   // green when the gap is fixed. Do not delete them to make a run clean.
+  //
+  // The two at the end of this group are the exception: they pass today,
+  // because they assert the CURRENT behaviour and name the risk in a comment,
+  // so the danger stays visible in the diff rather than being assumed fixed.
 
   test('SECURITY: an INACTIVE user must not be able to log in', async ({ request }) => {
     // The login query has no status filter, so a deactivated account still
@@ -469,11 +473,12 @@ test.describe('security gaps found while writing these cases', () => {
     for (let i = 0; i < 25; i++) {
       const res = await request.post(`${API}/api/auth/login`, {
         headers: throttleClient,
-        data: { email: 'throttle-probe@example.test', password: `Wr0ng@Pass${i}` },
+        data: { email: `throttle-probe-${RUN_ID}@example.test`, password: `Wr0ng@Pass${i}` },
       });
       statuses.push(res.status());
     }
-    // lib/giftCardGuards allows MAX_GUESSES_PER_WINDOW (20) then locks out.
+    // lib/loginThrottle allows MAX_ACCOUNT_FAILURES (5) for the submitted
+    // account, then locks it out for LOGIN_LOCKOUT_MS (2 min).
     expect(statuses.filter((s) => s === 401).length).toBeGreaterThan(0);
     expect(statuses).toContain(429);
     expect(statuses.indexOf(429)).toBeGreaterThan(0);
@@ -484,12 +489,12 @@ test.describe('security gaps found while writing these cases', () => {
     for (let i = 0; i < 22; i++) {
       await request.post(`${API}/api/auth/login`, {
         headers: retryClient,
-        data: { email: 'retry-after@example.test', password: `Wr0ng@Pass${i}` },
+        data: { email: `retry-after-${RUN_ID}@example.test`, password: `Wr0ng@Pass${i}` },
       });
     }
     const res = await request.post(`${API}/api/auth/login`, {
       headers: retryClient,
-      data: { email: 'retry-after@example.test', password: 'Wr0ng@PassX' },
+      data: { email: `retry-after-${RUN_ID}@example.test`, password: 'Wr0ng@PassX' },
     });
     if (res.status() === 429) {
       expect(Number(res.headers()['retry-after'])).toBeGreaterThan(0);
@@ -539,6 +544,103 @@ test.describe('security gaps found while writing these cases', () => {
     // its session and the failure would look like a login bug.
     expect(setCookie).not.toContain('Secure');
   });
+
+  test('GAP: a token-bearing login response may be cached', async ({ request }) => {
+    // Asserted as today's reality, deliberately, so the risk is visible.
+    //
+    // GAP: the 200 carries a JWT in the body and a session cookie, and sets no
+    // Cache-Control. Nothing stops a shared proxy or a browser disk cache from
+    // holding a copy, and any later reader of that cache gets a live session.
+    // The fix is `Cache-Control: no-store` on the login response — which then
+    // also wants a test asserting it. Flip this expectation to
+    // `toContain('no-store')` at the same time as adding the header.
+    const res = await request.post(`${API}/api/auth/login`, {
+      headers: asClient(),
+      data: { email: EMAIL, password: PASSWORD },
+    });
+
+    expect(res.status()).toBe(200);
+    expect(res.headers()['cache-control'] || '').not.toContain('no-store');
+  });
+
+  test('GAP: an unknown email answers measurably faster than a wrong password', async () => {
+    // Asserted as today's reality, deliberately, so the risk is visible.
+    //
+    // GAP: the route returns 401 for an unknown address before it ever calls
+    // bcrypt.compare, so that path costs one indexed lookup while a wrong
+    // password costs a full bcrypt. The gap is roughly two orders of
+    // magnitude, which is far more than enough to enumerate which addresses
+    // have accounts by timing alone — the identical 401 message hides the text
+    // but not the latency. The fix is a dummy bcrypt.compare against a fixed
+    // hash on the unknown-address path.
+    //
+    // Five samples each, compared on the MINIMUM, with a 3x floor.
+    //
+    // Minimum, not median, and that is the whole point of this case. Measured
+    // idle: wrong-password ~352ms, unknown-email ~6ms — a 58x gap, very stable.
+    // Measured inside a full suite (3 parallel workers, each running its own
+    // cost-12 bcrypt): the fast path's median jumped to ~353ms, i.e. the ratio
+    // collapsed to roughly 1x and the case failed while the leak was still
+    // exactly as wide. Median is the wrong statistic here because contention
+    // adds delay asymmetrically: the cheap path has almost no work to hide
+    // behind, so a blocked event loop inflates it far more than it inflates the
+    // bcrypt path. The minimum is the least-contaminated sample of the batch,
+    // which is the standard estimator for "how fast can this go at all".
+    //
+    // The floor stays at 3x — loose enough to survive a busy machine, tight
+    // enough that closing the gap (a dummy bcrypt.compare on the unknown-email
+    // path) turns it red immediately.
+    if (!pool) test.skip(true, 'no DATABASE_URL');
+
+    // Each sample gets its OWN user and its own forwarded address, and they are
+    // awaited SEQUENTIALLY.
+    //
+    // Sequential matters: run concurrently and makeUser() races itself, since it
+    // names each user from `created.size` — five parallel inserts all read the
+    // same size and collide on the users_email_key unique constraint. Concurrent
+    // would also share one throttle bucket, so a burst could trip the lockout and
+    // the later samples would never reach the bcrypt call being timed.
+    const timeWrongPassword = async (n) => {
+      const user = await makeUser(['staff']);
+      const started = Date.now();
+      const res = await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `timing-${RUN_ID}-wrong-${n}` },
+        body: JSON.stringify({ email: user.email, password: 'Wr0ng@PassX' }),
+      });
+      expect(res.status).toBe(401);
+      return Date.now() - started;
+    };
+
+    // A distinct address per sample: reusing one would spend the (now five
+    // attempt) budget and the later samples would be short-circuited by the
+    // lockout instead of reaching the bcrypt call at all.
+    const timeUnknownEmail = async (n) => {
+      const started = Date.now();
+      const res = await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers: { "Content-Type": "application/json", "x-forwarded-for": `timing-${RUN_ID}-unknown-${n}` },
+        body: JSON.stringify({ email: `timing-unknown-${RUN_ID}-${n}@example.test`, password: PASSWORD }),
+      });
+      expect(res.status).toBe(401);
+      return Date.now() - started;
+    };
+
+    const fastest = (xs) => Math.min(...xs);
+
+    const wrongSamples = [];
+    const unknownSamples = [];
+    for (const n of [1, 2, 3, 4, 5]) {
+      wrongSamples.push(await timeWrongPassword(n));
+      unknownSamples.push(await timeUnknownEmail(n));
+    }
+    const wrong = fastest(wrongSamples);
+    const unknown = fastest(unknownSamples);
+
+    // The leak, stated as an assertion. If this ever fails, the unknown-address
+    // path has started paying the bcrypt cost and the gap above is closed.
+    expect(unknown * 3).toBeLessThan(wrong);
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════
@@ -557,6 +659,724 @@ test.describe('security gaps found while writing these cases', () => {
 //  while the sidebar offers no way to reach it. The sidebar itself filters by
 //  permission, not by the modules array, which is why a user with modules:[]
 //  can still get a full rail.
+
+// ─────────────────────────── lockout countdown ───────────────────────────
+//
+// backend/lib/loginThrottle.js locks an account for LOGIN_LOCKOUT_MS (2 min)
+// once it has burned MAX_ACCOUNT_FAILURES (5) failures, and the 429 carries
+// Retry-After. The API contract is already covered above; these cases assert the
+// LOGIN PAGE surfaces that number as a ticking countdown and stops taking
+// clicks, instead of only saying "please wait" and leaving the shopper to guess
+// how long.
+
+test.describe('lockout countdown', () => {
+  // The address is per-run, and that matters more than it looks. The limiter
+  // lives in the dev server's memory and survives between runs, so a fixed
+  // address is still partly drained from the previous run — the countdown then
+  // opens at 0:03 instead of 2:00, and every assertion about the window fails.
+  // RUN_ID gives each run a full two minutes.
+  const lockoutEmail = `lockout-ui-${RUN_ID}@example.test`;
+
+  // One bucket per case: the limiter is keyed on x-forwarded-for as well as on
+  // the account, so sharing a key would let the first case's lockout satisfy the
+  // rest and quietly turn three assertions into one.
+  let lockSeq = 0;
+  const lockHeaders = () => ({
+    'x-forwarded-for': `lockout-ui-${RUN_ID}-${(lockSeq += 1)}`,
+  });
+
+  /** Burns a fresh bucket down into a lockout, returning the key that did it. */
+  async function lockOutViaApi() {
+    const headers = lockHeaders();
+    // Sequential, for the same reason the throttle test above is: the counter
+    // lives in process memory and concurrent posts would race it.
+    for (let i = 0; i < 22; i++) {
+      const res = await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({
+          email: lockoutEmail,
+          password: `Wr0ng@Pass${i}`,
+        }),
+      });
+      if (res.status === 429) return headers;
+    }
+    throw new Error('expected a 429 lockout after 22 bad attempts');
+  }
+
+  async function submitBadLogin(page, email = lockoutEmail) {
+    await page.goto(`${BASE}/login`);
+    await page.locator('input[name="email"]').fill(email);
+    await page.locator('input[name="password"]').fill('Wr0ng@Pass0');
+    await page.getByRole('button', { name: 'Login' }).click();
+  }
+
+  test('a locked-out shopper is told how long is left, as mm:ss', async ({ page }) => {
+    // Set the header before navigating, so the page's own POST carries the
+    // already-locked key.
+    await page.setExtraHTTPHeaders(await lockOutViaApi());
+    await submitBadLogin(page);
+
+    await expect(page.locator('.auth-lockout-clock')).toHaveText(/^\d{1,2}:\d{2}$/);
+  });
+
+  test('the refusal sentence still reads, and the clock sits outside the alert', async ({ page }) => {
+    await page.setExtraHTTPHeaders(await lockOutViaApi());
+    await submitBadLogin(page);
+
+    // The alert holds the static sentence only. A per-second mutation inside a
+    // role="alert" makes a screen reader re-announce it forever, so the ticking
+    // number is deliberately not in there.
+    const alert = page.getByRole('alert');
+    await expect(alert).toContainText('Too many sign-in attempts');
+    await expect(alert).not.toContainText(/\d{1,2}:\d{2}/);
+    await expect(page.locator('.auth-lockout-clock')).toHaveAttribute(
+      'aria-live',
+      'off'
+    );
+  });
+
+  test('the submit button is disabled while the countdown runs', async ({ page }) => {
+    await page.setExtraHTTPHeaders(await lockOutViaApi());
+    await submitBadLogin(page);
+
+    await expect(page.locator('.auth-lockout-clock')).toBeVisible();
+    await expect(page.getByRole('button', { name: /Login/ })).toBeDisabled();
+  });
+
+  test('the countdown ticks down', async ({ page }) => {
+    await page.setExtraHTTPHeaders(await lockOutViaApi());
+    await submitBadLogin(page);
+
+    const clock = page.locator('.auth-lockout-clock');
+    const read = async () => {
+      const [min, sec] = (await clock.textContent()).split(':');
+      return Number(min) * 60 + Number(sec);
+    };
+
+    const first = await read();
+    await page.waitForTimeout(2200);
+    expect(await read()).toBeLessThan(first);
+  });
+
+  test('the button comes back on its own when the countdown reaches zero', async ({ page }) => {
+    // A real lockout is 15 minutes, far too long to sit through, so the 429 is
+    // served with a 2-second Retry-After. Everything downstream of the header —
+    // parse, count, re-enable — is the same code a 15-minute lockout runs.
+    await page.route('**/api/auth/login', (route) =>
+      route.fulfill({
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '2' },
+        body: JSON.stringify({
+          success: false,
+          message: 'Too many sign-in attempts. Please wait before trying again.',
+        }),
+      })
+    );
+
+    await submitBadLogin(page);
+
+    await expect(page.locator('.auth-lockout-clock')).toHaveText('0:02');
+    // Clock reaches zero, the lockout clears and the form is usable again —
+    // asserted with a timeout because it happens on a timer, not on a click.
+    await expect(page.getByRole('button', { name: /Login/ })).toBeEnabled({
+      timeout: 5000,
+    });
+    await expect(page.locator('.auth-lockout-clock')).toHaveCount(0);
+    // The refusal sentence goes with the clock. Left behind it would sit on a
+    // form that is now perfectly usable, telling the shopper to wait when there
+    // is nothing left to wait for.
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  });
+
+  test('the countdown ending does not wipe an ordinary login error', async ({ page }) => {
+    // The counterpart to the case above, so the cleanup cannot be mistaken for
+    // "clear the message whenever the timer stops". A 401 sets no lockout, so
+    // nothing should be cleared when the component settles.
+    await page.route('**/api/auth/login', (route) =>
+      route.fulfill({
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ success: false, message: 'Invalid email or password' }),
+      })
+    );
+
+    await submitBadLogin(page);
+
+    await expect(page.getByRole('alert')).toContainText('Invalid email or password');
+    // Well past any countdown that could have started.
+    await page.waitForTimeout(2500);
+    await expect(page.getByRole('alert')).toContainText('Invalid email or password');
+    await expect(page.getByRole('button', { name: /Login/ })).toBeEnabled();
+  });
+
+  test('a connection failure after a lockout is still shown', async ({ page }) => {
+    // Regression: the countdown ending works by hiding a message that belongs to
+    // the lockout. If that decision is remembered as a plain flag rather than
+    // being tied to the message itself, the NEXT ordinary failure inherits it and
+    // is silently swallowed — a shopper left staring at a form that appears to
+    // have done nothing.
+    await page.route('**/api/auth/login', (route) =>
+      route.fulfill({
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '1' },
+        body: JSON.stringify({
+          success: false,
+          message: 'Too many sign-in attempts. Please wait before trying again.',
+        }),
+      })
+    );
+
+    await submitBadLogin(page);
+    // Let the countdown run out, so the lockout is genuinely over.
+    await expect(page.locator('.auth-lockout-clock')).toHaveCount(0, { timeout: 5000 });
+    await expect(page.getByRole('alert')).toHaveCount(0);
+
+    // Now the server is unreachable rather than throttling.
+    await page.unroute('**/api/auth/login');
+    await page.route('**/api/auth/login', (route) => route.abort('failed'));
+
+    await page.locator('input[name="email"]').fill('someone@example.test');
+    await page.locator('input[name="password"]').fill('Wr0ng@Pass0');
+    await page.getByRole('button', { name: 'Login' }).click();
+
+    await expect(page.getByRole('alert')).toContainText('Unable to connect to the server');
+  });
+
+  test('a 429 with no usable Retry-After falls back to the plain sentence', async ({ page }) => {
+    // RFC 9110 also allows Retry-After to be an HTTP-date, and a proxy can drop
+    // it entirely. Neither may put NaN on screen.
+    await page.route('**/api/auth/login', (route) =>
+      route.fulfill({
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': 'Wed, 21 Oct 2026 07:28:00 GMT' },
+        body: JSON.stringify({
+          success: false,
+          message: 'Too many sign-in attempts. Please wait before trying again.',
+        }),
+      })
+    );
+
+    await submitBadLogin(page);
+
+    await expect(page.getByRole('alert')).toContainText('Too many sign-in attempts');
+    await expect(page.locator('.auth-lockout-clock')).toHaveCount(0);
+    await expect(page.getByRole('button', { name: /Login/ })).toBeEnabled();
+  });
+
+  test('a lockout on one account does not lock out another from the same IP', async ({ page }) => {
+    // The regression this guards: the limiter used to key on IP alone, so twenty
+    // failures by anyone behind a shared NAT — an office, a campus, mobile data
+    // — locked out every other user behind it.
+    const headers = lockHeaders();
+    await page.setExtraHTTPHeaders(headers);
+
+    for (let i = 0; i < 24; i++) {
+      const res = await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ email: `lockout-target-${RUN_ID}@example.test`, password: `Wr0ng@Pass${i}` }),
+      });
+      if (res.status === 429) break;
+    }
+
+    // A different account, same IP.
+    await page.goto(`${BASE}/login`);
+    await page.locator('input[name="email"]').fill(`lockout-bystander-${RUN_ID}@example.test`);
+    await page.locator('input[name="password"]').fill('Wr0ng@Pass0');
+    await page.getByRole('button', { name: 'Login' }).click();
+
+    // 401 "Invalid email or password", not 429 — the bystander still gets to try.
+    await expect(page.getByRole('alert')).toContainText('Invalid email or password');
+    await expect(page.locator('.auth-lockout-clock')).toHaveCount(0);
+  });
+
+  test('the same account IS locked out when retried from the same IP', async ({ page }) => {
+    // The other half of the pair above: per-account really is enforced, so the
+    // two tests together show the key is the account and not the address.
+    const headers = lockHeaders();
+    await page.setExtraHTTPHeaders(headers);
+
+    for (let i = 0; i < 24; i++) {
+      const res = await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ email: `lockout-self-${RUN_ID}@example.test`, password: `Wr0ng@Pass${i}` }),
+      });
+      if (res.status === 429) break;
+    }
+
+    await submitBadLogin(page, `lockout-self-${RUN_ID}@example.test`);
+
+    await expect(page.getByRole('alert')).toContainText('Too many sign-in attempts');
+    // Two minutes, so the clock starts near 2:00 — proof the login policy is
+    // not still borrowing the gift-card lockout.
+    await expect(page.locator('.auth-lockout-clock')).toHaveText(/^1:5\d$/);
+  });
+
+  test('the lockout countdown matches the two-minute policy', async ({ page }) => {
+    // A real lockout is 2 minutes, too long to sit through, so Retry-After is
+    // shortened. What matters here is that the number the server sends is the
+    // number the shopper is shown, not a hardcoded 15 minutes.
+    await page.route('**/api/auth/login', (route) =>
+      route.fulfill({
+        status: 429,
+        headers: { 'Content-Type': 'application/json', 'Retry-After': '118' },
+        body: JSON.stringify({
+          success: false,
+          message: 'Too many sign-in attempts. Please wait before trying again.',
+        }),
+      })
+    );
+
+    await submitBadLogin(page);
+
+    await expect(page.locator('.auth-lockout-clock')).toHaveText('1:58');
+  });
+});
+
+// ─────────────────────────── account lockout policy ───────────────────────────
+//
+// The limit itself, asserted against the server rather than the screen. Every
+// case uses its own account AND its own x-forwarded-for, because the limiter is
+// keyed on both: sharing either would let one case satisfy another's budget.
+
+test.describe('account lockout policy', () => {
+  let policySeq = 0;
+  const bucket = () => ({
+    headers: { 'x-forwarded-for': `policy-${RUN_ID}-${(policySeq += 1)}` },
+    email: `policy-${RUN_ID}-${policySeq}@example.test`,
+  });
+
+  /** Burns an account's budget and returns the status of every attempt. */
+  async function burnAccount({ headers, email }, attempts) {
+    const statuses = [];
+    for (let i = 0; i < attempts; i++) {
+      const res = await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ email, password: `Wr0ng@Pass${i}` }),
+      });
+      statuses.push(res.status);
+    }
+    return statuses;
+  }
+
+  test('exactly five wrong passwords are allowed and the sixth is refused', async () => {
+    const target = bucket();
+    const statuses = await burnAccount(target, 6);
+
+    // The first five are answered 401 because the budget is only spent as they
+    // fail; the sixth arrives to find the account already locked.
+    expect(statuses.slice(0, 5)).toEqual([401, 401, 401, 401, 401]);
+    expect(statuses[5]).toBe(429);
+  });
+
+  test('the refusal carries a two-minute Retry-After', async () => {
+    const target = bucket();
+    await burnAccount(target, 5);
+
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...target.headers },
+      body: JSON.stringify({ email: target.email, password: 'Wr0ng@PassX' }),
+    });
+
+    expect(res.status).toBe(429);
+    // LOGIN_LOCKOUT_MS in backend/lib/loginThrottle.js. Asserted as a range
+    // rather than an equality so a test running a second into the lockout does
+    // not fail on 119.
+    const retryAfter = Number(res.headers.get('retry-after'));
+    expect(retryAfter).toBeGreaterThan(110);
+    expect(retryAfter).toBeLessThanOrEqual(120);
+  });
+
+  test('a CORRECT password is still refused while the account is locked', async () => {
+    // The case that matters most. A lockout has to outrank valid credentials:
+    // otherwise an attacker who already holds the password simply waits out the
+    // pause, and the throttle only inconvenishes honest users.
+    const user = await makeUser(['staff']);
+    const target = { headers: { 'x-forwarded-for': `policy-${RUN_ID}-correct` }, email: user.email };
+
+    await burnAccount(target, 5);
+
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...target.headers },
+      body: JSON.stringify({ email: user.email, password: PASSWORD }),
+    });
+
+    expect(res.status).toBe(429);
+    expect(await res.json()).toMatchObject({ success: false });
+  });
+
+  test('a successful login clears the budget', async () => {
+    const user = await makeUser(['staff']);
+    const headers = { 'x-forwarded-for': `policy-${RUN_ID}-clear` };
+
+    // Four failures — one short of the limit.
+    for (let i = 0; i < 4; i++) {
+      await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...headers },
+        body: JSON.stringify({ email: user.email, password: `Wr0ng@Pass${i}` }),
+      });
+    }
+
+    const good = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ email: user.email, password: PASSWORD }),
+    });
+    expect(good.status).toBe(200);
+
+    // The fifth failure would have locked the account had the success not
+    // returned the budget, so reaching a 401 here proves it did.
+    const after = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ email: user.email, password: 'Wr0ng@PassAgain' }),
+    });
+    expect(after.status).toBe(401);
+  });
+
+  test('one account being locked never touches another', async () => {
+    const headers = { 'x-forwarded-for': `policy-${RUN_ID}-isolation` };
+    const locked = await burnAccount({ headers, email: `iso-victim-${RUN_ID}@example.test` }, 5);
+    expect(locked[4]).toBe(401);
+
+    const bystander = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ email: `iso-bystander-${RUN_ID}@example.test`, password: 'Wr0ng@Pass1' }),
+    });
+
+    expect(bystander.status).toBe(401);
+  });
+
+  test('the account stays locked when the attempt comes from a different IP', async () => {
+    // Proves the account key is doing the work. Under the old per-address-only
+    // limiter this request would have been allowed outright.
+    const target = bucket();
+    await burnAccount(target, 5);
+
+    const elsewhere = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `${target.headers['x-forwarded-for']}-elsewhere` },
+      body: JSON.stringify({ email: target.email, password: 'Wr0ng@PassX' }),
+    });
+
+    expect(elsewhere.status).toBe(429);
+  });
+
+  test('case and spacing variants spend the same budget', async () => {
+    const target = bucket();
+    await burnAccount(target, 4);
+
+    // A fifth failure, typed the way a person actually types their own address.
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...target.headers },
+      body: JSON.stringify({ email: `  ${target.email.toUpperCase()}  `, password: 'Wr0ng@PassX' }),
+    });
+
+    // That fifth attempt trips the lock, so the next one is refused. If the key
+    // were not normalised the budget would still be at four and this would 401.
+    expect(res.status).toBe(401);
+    const next = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...target.headers },
+      body: JSON.stringify({ email: target.email, password: 'Wr0ng@PassY' }),
+    });
+    expect(next.status).toBe(429);
+  });
+
+  test('concurrent failures overshoot the budget, then the lockout holds', async () => {
+    // GAP, documented rather than papered over: the budget is NOT an atomic
+    // limit under concurrency. The throttle check and the failure that spends
+    // the budget are separated by the `await pool.query` in between them, so a
+    // burst of simultaneous requests all read the counter before any of them
+    // writes it. Measured: 12 concurrent attempts against a five-attempt budget
+    // return 11 x 401, not 5.
+    //
+    // What still holds is what matters for the attack: the overshoot is bounded
+    // by the size of the burst, and once the burst is over the account is
+    // locked and stays locked. Sequential requests — how a guessing script
+    // actually works — get exactly five. Asserted below rather than papered
+    // over with a loose count, because "it is only a bit over five" is not a
+    // property worth relying on.
+    const target = bucket();
+
+    const results = await Promise.all(
+      Array.from({ length: 12 }, (_, i) =>
+        fetch(`${API}/api/auth/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...target.headers },
+          body: JSON.stringify({ email: target.email, password: `Wr0ng@Pass${i}` }),
+        })
+      )
+    );
+    const statuses = results.map((r) => r.status);
+
+    // Nothing unexpected escaped: no 500 from the counter, and never a success.
+    expect(statuses.every((s) => s === 401 || s === 429)).toBe(true);
+    expect(statuses).not.toContain(200);
+
+    // And the budget was genuinely spent: the next sequential attempt is locked.
+    const after = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...target.headers },
+      body: JSON.stringify({ email: target.email, password: 'Wr0ng@PassAfter' }),
+    });
+    expect(after.status).toBe(429);
+  });
+
+  test('sequential attempts are held to exactly the budget', async () => {
+    // The complement of the case above, and the one that matches how an online
+    // guessing attack actually runs: one request at a time.
+    const statuses = await burnAccount(bucket(), 7);
+
+    expect(statuses.slice(0, 5)).toEqual([401, 401, 401, 401, 401]);
+    expect(statuses.slice(5)).toEqual([429, 429]);
+  });
+});
+
+// ─────────────────────────── request shape and method ───────────────────────────
+
+test.describe('request shape and method', () => {
+  test('GET is not a login', async ({ request }) => {
+    const res = await request.get(`${API}/api/auth/login`);
+    expect([404, 405]).toContain(res.status());
+    // Whatever the framework decides, it must not authenticate anybody.
+    expect(await res.text()).not.toMatch(/token/i);
+  });
+
+  test('OPTIONS answers the CORS preflight', async ({ request }) => {
+    const res = await request.fetch(`${API}/api/auth/login`, {
+      method: 'OPTIONS',
+      headers: { Origin: 'http://localhost:5173', 'Access-Control-Request-Method': 'POST' },
+    });
+
+    expect(res.status()).toBe(204);
+    expect(res.headers()['access-control-allow-origin']).toBeTruthy();
+    expect(res.headers()['access-control-allow-credentials']).toBe('true');
+  });
+
+  test('malformed JSON is a 400, not a crash', async () => {
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `shape-${RUN_ID}-bad` },
+      body: '{ this is not json',
+    });
+
+    // The route reads the body before throttling so it can key the per-account
+    // bucket, which means a parse failure has to be handled rather than thrown.
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ success: false });
+  });
+
+  test('an empty body is a 400', async () => {
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `shape-${RUN_ID}-empty` },
+      body: '',
+    });
+
+    expect(res.status).toBe(400);
+  });
+
+  test('an email sent as an array or object is refused, not coerced', async () => {
+    // The password already has this case; the email must not become the weak
+    // link, since it is the half of the pair that keys the throttle.
+    //
+    // Asserted as "did not authenticate" rather than as a specific 4xx. These
+    // values have no RUN_ID in them — String(42) is always "42" — so the
+    // per-account bucket for each one fills up across repeated runs against the
+    // long-lived dev backend and eventually answers 429 instead of 401. Both are
+    // refusals, and the property worth protecting is that a non-string email is
+    // never coerced into a working login.
+    for (const email of [['a@b.com'], { $ne: null }, 42, true]) {
+      const res = await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `shape-${RUN_ID}-coerce` },
+        body: JSON.stringify({ email, password: PASSWORD }),
+      });
+
+      expect(res.status).not.toBe(200);
+      expect(await res.text()).not.toMatch(/"token"\s*:/i);
+    }
+  });
+
+  test('SQL-ish characters in the email are treated as a literal lookup', async () => {
+    // Parameterised query, so this must come back as an ordinary miss rather
+    // than an error or, worse, a match. RUN_ID is woven into the payload so each
+    // run gets a fresh per-account budget — otherwise the account is locked
+    // from the previous run and this asserts 429 forever after.
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `shape-${RUN_ID}-sqli` },
+      body: JSON.stringify({ email: `${RUN_ID}' OR 1=1 --`, password: PASSWORD }),
+    });
+
+    expect(res.status).toBe(401);
+  });
+
+  test('an absurdly long email is refused rather than looked up', async () => {
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `shape-${RUN_ID}-long` },
+      body: JSON.stringify({ email: `${RUN_ID}${'a'.repeat(20000)}@example.test`, password: PASSWORD }),
+    });
+
+    expect([400, 401]).toContain(res.status);
+  });
+
+  test('a unicode email is handled without erroring', async () => {
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `shape-${RUN_ID}-unicode` },
+      body: JSON.stringify({ email: `üser-${RUN_ID}@exämple.test`, password: PASSWORD }),
+    });
+
+    expect([400, 401]).toContain(res.status);
+  });
+});
+
+// ─────────────────────────── response contract ───────────────────────────
+
+test.describe('response contract', () => {
+  test('every outcome carries the CORS headers', async () => {
+    const headers = { 'x-forwarded-for': `contract-${RUN_ID}-cors` };
+
+    const missing = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ email: `someone-${RUN_ID}@example.test` }),
+    });
+    expect(missing.headers.get('access-control-allow-origin')).toBeTruthy();
+
+    const denied = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...headers },
+      body: JSON.stringify({ email: `someone-${RUN_ID}@example.test`, password: 'nope' }),
+    });
+    expect(denied.headers.get('access-control-allow-origin')).toBeTruthy();
+  });
+
+  test('no failed login ever returns a token or a cookie', async () => {
+    const bodies = [
+      { email: `notoken-${RUN_ID}@example.test`, password: 'Wr0ng@Pass1' },
+      { email: `notoken-${RUN_ID}@example.test` },
+      { email: `${RUN_ID}' OR 1=1 --`, password: PASSWORD },
+    ];
+
+    for (const data of bodies) {
+      const res = await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `contract-${RUN_ID}-token` },
+        body: JSON.stringify(data),
+      });
+
+      const text = await res.text();
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect(text).not.toMatch(/"token"\s*:/i);
+      expect(res.headers.get('set-cookie')).toBeFalsy();
+    }
+  });
+
+  test('the 429 body is the same shape as every other failure', async () => {
+    const email = `contract-${RUN_ID}-shape@example.test`;
+    const headers = { 'Content-Type': 'application/json', 'x-forwarded-for': `contract-${RUN_ID}-shape` };
+
+    for (let i = 0; i < 5; i++) {
+      await fetch(`${API}/api/auth/login`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ email, password: `Wr0ng@Pass${i}` }),
+      });
+    }
+
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ email, password: 'Wr0ng@PassX' }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(429);
+    expect(body.success).toBe(false);
+    expect(typeof body.message).toBe('string');
+    // The client renders data.message verbatim, so it must not be empty.
+    expect(body.message.length).toBeGreaterThan(0);
+  });
+
+  test('the response reports its own HTTP status', async () => {
+    // frontend/src/services/auth.js adds `status` alongside the parsed body so
+    // the login page can tell a 429 from a 401 without string-matching.
+    const res = await fetch(`${API}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-forwarded-for': `contract-${RUN_ID}-status` },
+      body: JSON.stringify({ email: `nostatus-${RUN_ID}@example.test`, password: 'nope' }),
+    });
+    const body = await res.json();
+
+    expect(res.status).toBe(401);
+    expect(body).toMatchObject({ success: false, message: expect.any(String) });
+  });
+
+  test('a successful login returns a verifiable JWT and nothing forgeable', async () => {
+    const user = await makeUser(['staff']);
+    const { body } = await apiLogin(user.email);
+
+    expect(typeof body.token).toBe('string');
+    expect(body.token.split('.')).toHaveLength(3);
+
+    const payload = JSON.parse(Buffer.from(body.token.split('.')[1], 'base64url').toString());
+    // Identity is in the token because it is stateless, so it must not carry
+    // the password hash.
+    expect(JSON.stringify(payload)).not.toMatch(/\$2[aby]\$/);
+  });
+
+  test('a tampered token is refused', async () => {
+    const user = await makeUser(['staff']);
+    const { body } = await apiLogin(user.email);
+    const parts = body.token.split('.');
+
+    // The PAYLOAD is altered, not the signature's last character. A 32-byte
+    // HS256 signature is 43 base64url characters, which is 258 bits of character
+    // for 256 bits of data, so the final character's low two bits are unused —
+    // flipping A<->B there decodes to the same bytes and the token still
+    // verifies. That made an earlier version of this case pass roughly one run
+    // in sixteen. Editing the payload is unambiguous: the signed content is no
+    // longer what was signed.
+    const payload = parts[1];
+    const edited = payload.slice(0, 5) + (payload[5] === 'A' ? 'B' : 'A') + payload.slice(6);
+
+    const res = await fetch(`${API}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${parts[0]}.${edited}.${parts[2]}`, ...asClient() },
+    });
+
+    expect([401, 403]).toContain(res.status);
+  });
+
+  test('a tampered signature is refused', async () => {
+    const user = await makeUser(['staff']);
+    const { body } = await apiLogin(user.email);
+    const parts = body.token.split('.');
+
+    // Middle of the signature, where every bit is significant — unlike the
+    // final character, see the payload case above.
+    const mid = Math.floor(parts[2].length / 2);
+    const edited =
+      parts[2].slice(0, mid) + (parts[2][mid] === 'A' ? 'B' : 'A') + parts[2].slice(mid + 1);
+
+    const res = await fetch(`${API}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${parts[0]}.${parts[1]}.${edited}`, ...asClient() },
+    });
+
+    expect([401, 403]).toContain(res.status);
+  });
+});
 
 // ─────────────────────────── super admin ───────────────────────────
 

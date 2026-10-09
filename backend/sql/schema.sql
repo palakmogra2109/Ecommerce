@@ -1,4 +1,4 @@
--- Earth धान्य schema
+-- Quick Kart schema
 -- Idempotent: safe to run on a fresh or existing database.
 --
 -- This is the BOOTSTRAP file: it is the DDL for an EMPTY database. A fresh

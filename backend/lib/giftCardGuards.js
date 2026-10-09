@@ -20,7 +20,8 @@ export function clientKey(request) {
 }
 
 // Returns { ok: true } or { ok: false, retryAfterSec }.
-export function checkGuessAllowed(log, key, nowMs = Date.now()) {
+export function checkGuessAllowed(log, key, nowMs = Date.now(), opts = {}) {
+  const windowMs = opts.windowMs ?? GUESS_WINDOW_MS;
   const entry = log.get(key);
   if (!entry) return { ok: true };
 
@@ -29,7 +30,7 @@ export function checkGuessAllowed(log, key, nowMs = Date.now()) {
   }
 
   // Window elapsed (and any lockout expired): start counting again.
-  if (nowMs - (entry.windowStart || 0) > GUESS_WINDOW_MS) {
+  if (nowMs - (entry.windowStart || 0) > windowMs) {
     log.delete(key);
     return { ok: true };
   }
@@ -39,15 +40,24 @@ export function checkGuessAllowed(log, key, nowMs = Date.now()) {
 
 // Call only after a *failed* guess, so a shopper who types their own valid
 // code once is never penalised.
-export function recordFailedGuess(log, key, nowMs = Date.now()) {
+//
+// opts carries the policy — { max, windowMs, lockoutMs } — so a caller with a
+// different threat model (lib/loginThrottle.js) can share these mechanics
+// without inheriting the gift-card numbers. Every field defaults to the
+// constants above, so existing callers are unaffected.
+export function recordFailedGuess(log, key, nowMs = Date.now(), opts = {}) {
+  const max = opts.max ?? MAX_GUESSES_PER_WINDOW;
+  const windowMs = opts.windowMs ?? GUESS_WINDOW_MS;
+  const lockoutMs = opts.lockoutMs ?? LOCKOUT_MS;
+
   const entry = log.get(key) || { count: 0, windowStart: nowMs };
-  if (nowMs - entry.windowStart > GUESS_WINDOW_MS) {
+  if (nowMs - entry.windowStart > windowMs) {
     entry.count = 0;
     entry.windowStart = nowMs;
   }
   entry.count += 1;
-  if (entry.count >= MAX_GUESSES_PER_WINDOW) {
-    entry.lockedUntil = nowMs + LOCKOUT_MS;
+  if (entry.count >= max) {
+    entry.lockedUntil = nowMs + lockoutMs;
   }
   log.set(key, entry);
   return entry;

@@ -44,7 +44,7 @@ export function loadEmailTemplate(file) {
 }
 
 export function getAppName() {
-  return process.env.APP_NAME || "Earth धान्य";
+  return process.env.APP_NAME || "Quick Kart";
 }
 
 export function getSender() {

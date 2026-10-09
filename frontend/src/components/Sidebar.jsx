@@ -1,14 +1,15 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import {
   FiBox,
   FiChevronDown,
+  FiChevronLeft,
+  FiChevronRight,
   FiFileText,
   FiGrid,
   FiImage,
   FiInbox,
   FiLayout,
-  FiLogOut,
   FiGift,
   FiMail,
   FiPercent,
@@ -17,11 +18,17 @@ import {
   FiShoppingCart,
   FiStar,
   FiTag,
-  FiTruck,
   FiUsers,
   FiUserCheck,
+  FiX,
 } from "react-icons/fi";
 import { useAuth } from "../context/AuthContext";
+import SidebarProfileFooter from "./SidebarProfileFooter";
+import SidebarTooltip from "./SidebarTooltip";
+
+// Persisted collapse preference. Named with the sidebar_ prefix used elsewhere in
+// the app for per-surface UI state (sf_view, sf_branch).
+const COLLAPSE_KEY = "sidebar_collapsed";
 
 // Permission slug that grants access to each sidebar module.
 const MODULE_VIEW_PERMISSIONS = {
@@ -112,12 +119,12 @@ const MODULES = [
         label: "Attributes",
         icon: FiFileText,
       },
-      {
-        slug: "inventory",
-        path: "/inventory",
-        label: "Stock & Price",
-        icon: FiTruck,
-      },
+      /*
+       * Stock & Price is no longer offered in the navigation: purchase
+       * invoices are the single flow for receiving stock and repricing
+       * products. The /inventory page itself still works for admins who
+       * reach it by URL.
+       */
     ],
   },
   {
@@ -195,31 +202,91 @@ const MODULES = [
    },
 ];
 
-function SidebarGroup({ module, pathname }) {
+function SidebarGroup({ module, pathname, collapsed }) {
   const isActive = module.children.some(
     (child) => pathname === child.path || pathname.startsWith(`${child.path}/`)
   );
   const [isOpen, setIsOpen] = useState(isActive);
+
+  // Where the collapsed flyout goes, in viewport coordinates.
+  //
+  // It has to be `position: fixed` and placed by hand. The obvious
+  // `position: absolute; left: 100%` inside the rail does not work: .sidebar-nav
+  // is a scroll container, and CSS gives a scrollable axis `overflow: auto` on
+  // BOTH axes, so the rail clips the flyout to its own 64px width. Measured, it
+  // hid 206px of a 200px panel — invisible while still reporting itself visible
+  // to a visibility check. Fixed positioning escapes every ancestor clip.
+  const [flyout, setFlyout] = useState(null);
+  const groupRef = useRef(null);
+
+  const openFlyout = () => {
+    if (!collapsed) return;
+    const group = groupRef.current;
+    const rail = group?.closest(".sidebar");
+    if (!group || !rail) return;
+
+    const rect = group.getBoundingClientRect();
+    const panel = 200;
+    const top = Math.max(8, Math.min(rect.top, window.innerHeight - panel - 16));
+    // Overlaps the rail by 2px so there is no dead gap for the pointer to cross
+    // between the icon and the panel it opened.
+    setFlyout({ top, left: rail.getBoundingClientRect().right - 2 });
+  };
+
+  const closeFlyout = () => setFlyout(null);
+
+  // A fixed panel does not travel with the content, so any scroll or resize
+  // would leave it hanging over the wrong item. Closing is the honest response.
+  useEffect(() => {
+    if (flyout === null) return undefined;
+    const dismiss = () => closeFlyout();
+    window.addEventListener("scroll", dismiss, true);
+    window.addEventListener("resize", dismiss);
+    return () => {
+      window.removeEventListener("scroll", dismiss, true);
+      window.removeEventListener("resize", dismiss);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [flyout]);
+
   const submenuId = `sidebar-${module.slug}`;
   const Icon = module.icon;
   const Chevron = FiChevronDown;
 
   return (
-    <div className="sidebar-group">
+    <div
+      className="sidebar-group"
+      ref={groupRef}
+      onMouseEnter={openFlyout}
+      onMouseLeave={closeFlyout}
+    >
+      <SidebarTooltip label={collapsed ? module.label : null}>
       <button
         type="button"
         className={`sidebar-link sidebar-toggle${isActive ? " active" : ""}`}
-        aria-expanded={isOpen}
-        aria-controls={submenuId}
+        aria-expanded={collapsed ? undefined : isOpen}
+        aria-controls={collapsed ? undefined : submenuId}
         onClick={() => setIsOpen((open) => !open)}
       >
         <span className="sidebar-label">
           {Icon && <Icon className="sidebar-item-icon" aria-hidden="true" />}
-          {module.label}
+          {/* Its own element so collapsing can hide the TEXT and keep the icon.
+              As a bare text node beside the icon there is nothing to target. */}
+          <span className="sidebar-label-text">{module.label}</span>
         </span>
-        <Chevron className="sidebar-chevron" aria-hidden="true" />
+        {/* Meaningless while collapsed: the submenu is a hover flyout there, not
+            an accordion, so claiming expanded/collapsed would misdescribe it. */}
+        {!collapsed && <Chevron className="sidebar-chevron" aria-hidden="true" />}
       </button>
-      <div id={submenuId} className="sidebar-submenu" hidden={!isOpen}>
+      </SidebarTooltip>
+      {/* While collapsed the rail is 64px wide, so an inline accordion has no
+          room. `hidden` is dropped and the element becomes a hover flyout. */}
+      <div
+        id={submenuId}
+        className="sidebar-submenu"
+        hidden={!isOpen && !collapsed}
+        style={collapsed && flyout ? { top: flyout.top, left: flyout.left } : undefined}
+      >
         {module.children.map((child) => {
           const ChildIcon = child.icon;
 
@@ -234,7 +301,7 @@ function SidebarGroup({ module, pathname }) {
               {ChildIcon && (
                 <ChildIcon className="sidebar-item-icon" aria-hidden="true" />
               )}
-              {child.label}
+              <span className="sidebar-label-text">{child.label}</span>
             </NavLink>
           );
         })}
@@ -243,10 +310,25 @@ function SidebarGroup({ module, pathname }) {
   );
 }
 
-export default function Sidebar() {
+export default function Sidebar({ id, open = false, onClose }) {
   const { user, logout, can } = useAuth();
   const navigate = useNavigate();
   const { pathname } = useLocation();
+
+  // Persisted so the rail stays as the user left it. Read lazily so a reload
+  // does not flash the full rail first, and stored as "1"/"0" rather than a
+  // boolean string so the key is explicit about what it means.
+  const [collapsed, setCollapsed] = useState(
+    () => localStorage.getItem(COLLAPSE_KEY) === "1"
+  );
+
+  const toggleCollapsed = () => {
+    setCollapsed((was) => {
+      const next = !was;
+      localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
+      return next;
+    });
+  };
 
   // Non-super-admin users only see the modules their permissions allow.
   // Users with no permissions see no modules at all.
@@ -276,8 +358,32 @@ export default function Sidebar() {
   }
 
   return (
-    <aside className="sidebar">
-      <div className="sidebar-brand">Earth धान्य</div>
+    <aside
+      id={id}
+      className={`sidebar${collapsed ? " sidebar-collapsed" : ""}${open ? " sidebar-open" : ""}`}
+    >
+      <div className="sidebar-brand">
+        <span className="sidebar-brand-text">Quick Kart</span>
+        <button
+          type="button"
+          className="sidebar-drawer-close"
+          onClick={onClose}
+          aria-label="Close navigation menu"
+          title="Close navigation menu"
+        >
+          <FiX aria-hidden="true" />
+        </button>
+        <button
+          type="button"
+          className="sidebar-collapse"
+          onClick={toggleCollapsed}
+          aria-expanded={!collapsed}
+          aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+        >
+          {collapsed ? <FiChevronRight aria-hidden="true" /> : <FiChevronLeft aria-hidden="true" />}
+        </button>
+      </div>
 
       {/* tabIndex: the nav is now a scroll container, and a scroll container that
           cannot be focused cannot be scrolled with the keyboard. The label gives
@@ -300,36 +406,34 @@ export default function Sidebar() {
                 key={`${module.slug}:${pathname}`}
                 module={module}
                 pathname={pathname}
+                collapsed={collapsed}
               />
             ) : (
-              <NavLink
-                key={module.slug}
-                to={module.path}
-                className={({ isActive }) =>
-                  isActive ? "sidebar-link active" : "sidebar-link"
-                }
-              >
-                {Icon && (
-                  <Icon className="sidebar-item-icon" aria-hidden="true" />
-                )}
-                <span className="sidebar-label">{module.label}</span>
-              </NavLink>
+              <SidebarTooltip key={module.slug} label={collapsed ? module.label : null}>
+                <NavLink
+                  to={module.path}
+                  className={({ isActive }) =>
+                    isActive ? "sidebar-link active" : "sidebar-link"
+                  }
+                >
+                  {/* Icon inside the label wrapper, matching the group toggle
+                      below. When they differed, the collapsed rail had a
+                      zero-width label span still collecting the 10px gap, which
+                      pulled every icon 5px left of centre. */}
+                  <span className="sidebar-label">
+                    {Icon && (
+                      <Icon className="sidebar-item-icon" aria-hidden="true" />
+                    )}
+                    <span className="sidebar-label-text">{module.label}</span>
+                  </span>
+                </NavLink>
+              </SidebarTooltip>
             );
           })
         )}
       </nav>
 
-      <div className="sidebar-footer">
-        <p className="sidebar-user">{user?.email ?? ""}</p>
-        <button
-          type="button"
-          className="sidebar-logout"
-          onClick={handleLogout}
-        >
-          <FiLogOut className="sidebar-item-icon" aria-hidden="true" />
-          Logout
-        </button>
-      </div>
+      <SidebarProfileFooter user={user} collapsed={collapsed} onLogout={handleLogout} />
     </aside>
   );
 }

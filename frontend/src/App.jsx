@@ -11,7 +11,7 @@ import RoleForm from "./components/RoleForm";
 import EmailTemplates from "./pages/EmailTemplates";
 import EmailTemplateForm from "./components/EmailTemplateForm";
 import Products from "./pages/Products";
-import Inventory from "./pages/Inventory";
+import NotFound from "./pages/NotFound";
 import Orders from "./pages/Orders";
 import OrderView from "./pages/OrderView";
 import Customers from "./pages/Customers";
@@ -332,12 +332,6 @@ export default function App() {
           }
         />
 
-        {/* Inventory */}
-        <Route
-          path="/inventory"
-          element={adminGuard("products.view", "Products", <Inventory />)}
-        />
-
         {/* Orders */}
         <Route
           path="/orders"
@@ -610,10 +604,16 @@ export default function App() {
         />
       </Route>
 
-      {/* Unknown URL → root */}
+      {/* Unknown URL → 404 (renders inside the admin layout) */}
       <Route
         path="*"
-        element={<Navigate to="/" replace />}
+        element={
+          <ProtectedRoute>
+            <AdminLayout>
+              <NotFound />
+            </AdminLayout>
+          </ProtectedRoute>
+        }
       />
     </Routes>
   );

@@ -1,6 +1,6 @@
 import PDFDocument from "pdfkit";
 
-const STORE_NAME = "Earth धान्य";
+const STORE_NAME = "Quick Kart";
 
 const money = (v) =>
   `Rs. ${Number(v || 0).toLocaleString("en-IN", {

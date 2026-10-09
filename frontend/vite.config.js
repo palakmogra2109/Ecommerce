@@ -1,29 +1,26 @@
 import react from '@vitejs/plugin-react'
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
+import { apiProxy, REPO_ROOT } from '../shared/viteProxy.mjs'
 
 // https://vite.dev/config/
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   plugins: [react()],
   resolve: {
     alias: {
       '@shared': fileURLToPath(new URL('../shared', import.meta.url)),
     },
   },
+  // Point envDir at the repo root so Vite watches the .env that holds
+  // BACKEND_URL and restarts on change — without this, editing BACKEND_URL
+  // would need a manual restart on every port change.
+  envDir: REPO_ROOT,
   server: {
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-      },
-      // Product/media images live under the backend's public/media and are
-      // returned by the API as root-relative paths (/media/...). The admin
-      // app also mounts the public customer storefront (Storefront.jsx), so
-      // forward /media the same way /api is forwarded.
-      '/media': {
-        target: 'http://localhost:3000',
-        changeOrigin: true,
-      },
-    },
+    // Target comes from BACKEND_URL in the repo-root .env — see
+    // shared/viteProxy.mjs. Both /api and /media are forwarded: product images
+    // live under the backend's public/media and come back from the API as
+    // root-relative paths, and this app also mounts the public customer
+    // storefront (Storefront.jsx).
+    proxy: apiProxy(loadEnv(mode, REPO_ROOT, '')),
   },
-})
+}))

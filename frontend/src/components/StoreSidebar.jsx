@@ -15,7 +15,7 @@ export default function StoreSidebar({ active, onNavigate, branchName }) {
 
   return (
     <aside className="sidebar">
-      <div className="sidebar-brand">Earth धान्य</div>
+      <div className="sidebar-brand">Quick Kart</div>
 
       <nav className="sidebar-nav">
         {STORE_NAV.map((item) => {

@@ -1,4 +1,4 @@
--- Earth धान्य seed data (idempotent)
+-- Quick Kart seed data (idempotent)
 -- Modules and default roles power module_has_roles / user_has_roles.
 
 -- Modules

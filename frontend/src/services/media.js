@@ -26,5 +26,5 @@ export function mediaUrl(path) {
     return path;
   }
 
-  return `http://localhost:3000${path}`;
+  return path;
 }

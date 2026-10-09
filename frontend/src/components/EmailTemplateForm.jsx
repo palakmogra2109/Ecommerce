@@ -11,7 +11,7 @@ import { useAuth } from "../context/AuthContext";
 import { STATUS, contrastText } from "@shared/constants";
 
 const SAMPLE_VALUES = {
-  appName: "Earth धान्य",
+  appName: "Quick Kart",
   userName: "John Doe",
   email: "john@example.com",
   password: "D3m0Pass!1",

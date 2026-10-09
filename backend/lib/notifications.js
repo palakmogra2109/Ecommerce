@@ -374,36 +374,68 @@ export class NotificationService {
     );
   }
 
+  /**
+   * The owner predicate, built from whichever ids were supplied.
+   *
+   * The obvious spelling — always pass two parameters and write
+   * `user_id = $1 OR customer_id = $2` — is correct in Postgres only because
+   * `x = NULL` is never true. That is an accident, not a guarantee: it depends
+   * on null comparison semantics rather than on the query saying what it means.
+   * Naming the ids explicitly, and matching nothing when neither is present,
+   * keeps a caller-only inbox provably scoped to that caller.
+   */
+  static ownerClause({ userId = null, customerId = null }) {
+    const parts = [];
+    const values = [];
+
+    if (userId) {
+      values.push(userId);
+      parts.push(`user_id = $${values.length}`);
+    }
+    if (customerId) {
+      values.push(customerId);
+      parts.push(`customer_id = $${values.length}`);
+    }
+
+    return { sql: parts.length ? `(${parts.join(" OR ")})` : "false", values };
+  }
+
   /** The inbox, for a user or a customer. */
   static async inbox({ userId = null, customerId = null, limit = 50, unreadOnly = false }) {
-    if (!userId && !customerId) return [];
+    const owner = NotificationService.ownerClause({ userId, customerId });
+
     const result = await pool.query(
       `SELECT id, uuid, event, category, priority, title, message, data, action_url,
               entity_type, entity_id, read_at, created_at
          FROM notifications
-        WHERE user_id = $1 OR customer_id = $2
+        WHERE ${owner.sql}
           ${unreadOnly ? "AND read_at IS NULL" : ""}
-        ORDER BY created_at DESC LIMIT $3`,
-      [userId, customerId, Math.min(200, Math.max(1, limit))]
+        ORDER BY created_at DESC LIMIT $${owner.values.length + 1}`,
+      [...owner.values, Math.min(200, Math.max(1, limit))]
     );
     return result.rows;
   }
 
   static async markRead({ userId = null, customerId = null, uuids = null }) {
+    const owner = NotificationService.ownerClause({ userId, customerId });
+    const list = uuids && uuids.length ? uuids : null;
+
     const result = await pool.query(
       `UPDATE notifications SET read_at = now()
-        WHERE (user_id = $1 OR customer_id = $2) AND read_at IS NULL
-          AND ($3::text[] IS NULL OR uuid::text = ANY($3::text[]))`,
-      [userId, customerId, uuids && uuids.length ? uuids : null]
+        WHERE ${owner.sql} AND read_at IS NULL
+          AND ($${owner.values.length + 1}::text[] IS NULL OR uuid::text = ANY($${owner.values.length + 1}::text[]))`,
+      [...owner.values, list]
     );
     return result.rowCount;
   }
 
   static async unreadCount({ userId = null, customerId = null }) {
+    const owner = NotificationService.ownerClause({ userId, customerId });
+
     const result = await pool.query(
       `SELECT count(*)::int AS n FROM notifications
-        WHERE (user_id = $1 OR customer_id = $2) AND read_at IS NULL`,
-      [userId, customerId]
+        WHERE ${owner.sql} AND read_at IS NULL`,
+      owner.values
     );
     return result.rows[0].n;
   }

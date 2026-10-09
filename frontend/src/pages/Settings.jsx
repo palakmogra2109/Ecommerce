@@ -246,7 +246,7 @@ export default function Settings() {
                     className="settings-preview-dot"
                     style={{ background: themeColor }}
                   />
-                  Earth धान्य
+                  Quick Kart
                 </div>
                 <div className="settings-preview-nav">
                   <span>Dashboard</span>
@@ -273,7 +273,7 @@ export default function Settings() {
                   className="settings-email-head"
                   style={{ background: themeColor }}
                 >
-                  <strong style={{ color: onPrimary }}>Earth धान्य</strong>
+                  <strong style={{ color: onPrimary }}>Quick Kart</strong>
                   <span style={{ color: onPrimary }}>Your credentials</span>
                 </div>
                 <div className="settings-email-body">

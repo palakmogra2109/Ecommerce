@@ -140,7 +140,7 @@ export default function PurchaseInvoices() {
 
 // ── receiving ──────────────────────────────────────────────────────────────
 
-export function ReceiveModal({ invoice, onClose, onSubmit }) {
+export function ReceiveModal({ invoice, onClose, onSubmit, fullPage = false }) {
   // One row per invoice line, pre-filled with whatever is still outstanding.
   const [rows, setRows] = useState(
     invoice.items.map((item) => {
@@ -161,6 +161,7 @@ export function ReceiveModal({ invoice, onClose, onSubmit }) {
   );
   const [notes, setNotes] = useState("");
   const [busy, setBusy] = useState(false);
+  const [localError, setLocalError] = useState("");
 
   const setField = (index, field, value) =>
     setRows((current) => current.map((row, i) => (i === index ? { ...row, [field]: value } : row)));
@@ -171,10 +172,39 @@ export function ReceiveModal({ invoice, onClose, onSubmit }) {
   const overReceipt = rows.some((row) => lineTotalOf(row) > remaining(row));
   const nothingToRecord = rows.every((row) => lineTotalOf(row) === 0);
 
+  const totals = rows.reduce(
+    (acc, row) => ({
+      accepted: acc.accepted + (Number(row.accepted) || 0),
+      damaged: acc.damaged + (Number(row.damaged) || 0),
+      missing: acc.missing + (Number(row.missing) || 0),
+    }),
+    { accepted: 0, damaged: 0, missing: 0 }
+  );
+
+  const adjust = (index, field, delta) =>
+    setRows((current) =>
+      current.map((row, i) => {
+        if (i !== index) return row;
+        const next = Math.max(0, Math.min(remaining(row), (Number(row[field]) || 0) + delta));
+        return { ...row, [field]: next };
+      })
+    );
+
+  const fillDue = () =>
+    setRows((current) =>
+      current.map((row) => ({ ...row, accepted: Math.max(0, remaining(row)) , damaged: 0, missing: 0 }))
+    );
+
+  const clearAll = () =>
+    setRows((current) =>
+      current.map((row) => ({ ...row, accepted: 0, damaged: 0, missing: 0 }))
+    );
+
   const submit = async (event) => {
     event.preventDefault();
     if (overReceipt || nothingToRecord) return;
     setBusy(true);
+    setLocalError("");
     try {
       await onSubmit(
         rows
@@ -187,6 +217,8 @@ export function ReceiveModal({ invoice, onClose, onSubmit }) {
           })),
         notes || null
       );
+    } catch (e) {
+      setLocalError(e.message || "Unable to record this receipt.");
     } finally {
       setBusy(false);
     }
@@ -210,58 +242,132 @@ export function ReceiveModal({ invoice, onClose, onSubmit }) {
 
         <form onSubmit={submit}>
           <div className="filament-modal-body">
-            {overReceipt && <Notice>You cannot receive more than was ordered on a line.</Notice>}
-            {nothingToRecord && <Notice>Enter at least one quantity to record.</Notice>}
+            <div className="receive-summary">
+              <div className="receive-summary-item">
+                <span>Into stock</span>
+                <strong className="receive-summary-ok">{totals.accepted}</strong>
+              </div>
+              <div className="receive-summary-item">
+                <span>Damaged</span>
+                <strong className="receive-summary-warn">{totals.damaged}</strong>
+              </div>
+              <div className="receive-summary-item">
+                <span>Missing</span>
+                <strong className="receive-summary-bad">{totals.missing}</strong>
+              </div>
+              <div className="receive-summary-item">
+                <span>Recording</span>
+                <strong>{totals.accepted + totals.damaged + totals.missing}</strong>
+              </div>
+            </div>
 
-            <table className="filament-table">
+            {localError && <Notice>{localError}</Notice>}
+            {overReceipt && <Notice>You cannot record more than the due quantity on a line.</Notice>}
+
+            <table className="filament-table receive-table">
               <thead>
                 <tr>
                   <th>Product</th>
-                  <th>Due</th>
-                  <th>Accepted</th>
-                  <th>Damaged</th>
-                  <th>Missing</th>
+                  <th className="receive-center">Due</th>
+                  <th className="receive-center">Accepted</th>
+                  <th className="receive-center">Damaged</th>
+                  <th className="receive-center">Missing</th>
+                  <th className="receive-center">Recording</th>
                 </tr>
               </thead>
               <tbody>
-                {rows.map((row, index) => (
-                  <tr key={row.purchaseInvoiceItemId}>
-                    <td>{row.label}</td>
-                    <td>{remaining(row)}</td>
-                    <td>
-                      <input
-                        type="number" min="0" value={row.accepted}
-                        onChange={(e) => setField(index, "accepted", e.target.value)}
-                        aria-label={`Accepted for ${row.label}`}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number" min="0" value={row.damaged}
-                        onChange={(e) => setField(index, "damaged", e.target.value)}
-                        aria-label={`Damaged for ${row.label}`}
-                      />
-                    </td>
-                    <td>
-                      <input
-                        type="number" min="0" value={row.missing}
-                        onChange={(e) => setField(index, "missing", e.target.value)}
-                        aria-label={`Missing for ${row.label}`}
-                      />
-                    </td>
-                  </tr>
-                ))}
+                {rows.map((row, index) => {
+                  const recorded = lineTotalOf(row);
+                  const due = remaining(row);
+                  const rowOver = recorded > due;
+                  const rowDone = recorded === due && due >= 0 && recorded > 0;
+
+                  return (
+                    <tr
+                      key={row.purchaseInvoiceItemId}
+                      className={rowOver ? "receive-row-over" : rowDone ? "receive-row-done" : ""}
+                    >
+                      <td>
+                        <span className="receive-product">{row.label}</span>
+                        <small className="receive-product-due">
+                          {row.already > 0 ? `${row.already} of ${row.ordered} already handled · ${due} due` : `${row.ordered} ordered`}
+                        </small>
+                      </td>
+                      <td className="receive-center receive-due">{due}</td>
+                      <td>
+                        <div className="receive-stepper">
+                          <button type="button" aria-label={`Decrease accepted for ${row.label}`} disabled={busy} onClick={() => adjust(index, "accepted", -1)}>−</button>
+                          <input
+                            type="number" min="0" max={due} value={row.accepted}
+                            onChange={(e) => setField(index, "accepted", e.target.value)}
+                            aria-label={`Accepted for ${row.label}`}
+                            disabled={busy}
+                          />
+                          <button type="button" aria-label={`Increase accepted for ${row.label}`} disabled={busy} onClick={() => adjust(index, "accepted", 1)}>+</button>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="receive-stepper">
+                          <button type="button" aria-label={`Decrease damaged for ${row.label}`} disabled={busy} onClick={() => adjust(index, "damaged", -1)}>−</button>
+                          <input
+                            type="number" min="0" max={due} value={row.damaged}
+                            onChange={(e) => setField(index, "damaged", e.target.value)}
+                            aria-label={`Damaged for ${row.label}`}
+                            disabled={busy}
+                          />
+                          <button type="button" aria-label={`Increase damaged for ${row.label}`} disabled={busy} onClick={() => adjust(index, "damaged", 1)}>+</button>
+                        </div>
+                      </td>
+                      <td>
+                        <div className="receive-stepper">
+                          <button type="button" aria-label={`Decrease missing for ${row.label}`} disabled={busy} onClick={() => adjust(index, "missing", -1)}>−</button>
+                          <input
+                            type="number" min="0" max={due} value={row.missing}
+                            onChange={(e) => setField(index, "missing", e.target.value)}
+                            aria-label={`Missing for ${row.label}`}
+                            disabled={busy}
+                          />
+                          <button type="button" aria-label={`Increase missing for ${row.label}`} disabled={busy} onClick={() => adjust(index, "missing", 1)}>+</button>
+                        </div>
+                      </td>
+                      <td className="receive-center">
+                        <span className={`receive-total${rowOver ? " over" : rowDone ? " done" : ""}`}>
+                          {recorded} / {due}
+                          {rowOver && <small>exceeds due</small>}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
 
+            <div className="receive-toolbar">
+              <button type="button" className="filament-btn filament-btn-outline" onClick={fillDue} disabled={busy || overReceipt}>
+                Fill all due
+              </button>
+              <button type="button" className="filament-btn filament-btn-outline" onClick={clearAll} disabled={busy}>
+                Clear all
+              </button>
+            </div>
+
             <label className="form-row">
-              <span className="input-hint">Notes</span>
-              <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <span className="input-hint">Notes (optional)</span>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                placeholder="e.g. Received against delivery challan 1234, two cartons damaged in transit"
+              />
             </label>
           </div>
 
           <div className="filament-modal-footer">
-            <button type="button" className="filament-btn filament-btn-outline" onClick={onClose}>Cancel</button>
+            <span className="receive-footer-note">
+              {totals.accepted} into stock · {totals.damaged} damaged · {totals.missing} missing
+            </span>
+            <div className="filament-modal-footer-spacer" />
+            <button type="button" className="filament-btn filament-btn-outline" onClick={onClose} disabled={busy}>Cancel</button>
             <button type="submit" className="filament-btn filament-btn-primary" disabled={busy || overReceipt || nothingToRecord}>
               {busy ? "Recording…" : "Record receipt"}
             </button>
@@ -274,6 +380,15 @@ export function ReceiveModal({ invoice, onClose, onSubmit }) {
 
 // ── payment ────────────────────────────────────────────────────────────────
 
+const PAYMENT_LABELS = {
+  CASH: "Cash",
+  BANK: "Bank transfer",
+  UPI: "UPI",
+  CARD: "Card",
+  CHEQUE: "Cheque",
+  CREDIT_NOTE: "Credit note",
+};
+
 export function PayModal({ invoice, onClose, onSubmit }) {
   const [amount, setAmount] = useState(String(invoice.outstanding ?? ""));
   const [method, setMethod] = useState("BANK");
@@ -282,9 +397,12 @@ export function PayModal({ invoice, onClose, onSubmit }) {
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState("");
 
+  const outstanding = Number(invoice.outstanding);
   const value = Number(amount);
-  const tooMuch = value > Number(invoice.outstanding);
+  const tooMuch = value > outstanding;
   const nothing = !(value > 0);
+  const balanceAfter = Math.max(0, outstanding - (value > 0 ? value : 0));
+  const paysFull = value === outstanding;
 
   const submit = async (event) => {
     event.preventDefault();
@@ -293,6 +411,8 @@ export function PayModal({ invoice, onClose, onSubmit }) {
     setLocalError("");
     try {
       await onSubmit({ amount: value, method, reference: reference || null, notes: notes || null });
+    } catch (e) {
+      setLocalError(e.message || "Unable to record this payment.");
     } finally {
       setBusy(false);
     }
@@ -304,43 +424,219 @@ export function PayModal({ invoice, onClose, onSubmit }) {
         <div className="filament-modal-header">
           <div>
             <h2>Record payment</h2>
-            <p className="filament-modal-sub">{rupees(invoice.outstanding)} outstanding on {invoice.invoice_number}</p>
+            <p className="filament-modal-sub">{invoice.invoice_number}</p>
           </div>
           <button type="button" className="filament-modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
         <form onSubmit={submit}>
           <div className="filament-modal-body">
+            <div className="pay-balance">
+              <div>
+                <span className="pay-balance-label">Outstanding</span>
+                <strong className="pay-balance-amount">{rupees(outstanding)}</strong>
+              </div>
+              <div className="pay-balance-after">
+                <span className="pay-balance-label">After this payment</span>
+                <strong>{rupees(balanceAfter)}</strong>
+                {paysFull && <span className="pay-badge">Pays in full</span>}
+              </div>
+            </div>
+
             {localError && <Notice>{localError}</Notice>}
-            {tooMuch && <Notice>That is more than the outstanding balance.</Notice>}
+            {tooMuch && <Notice>That is more than the outstanding balance of {rupees(outstanding)}.</Notice>}
 
             <label className="form-row">
               <span className="input-hint">Amount</span>
-              <input type="number" step="0.01" min="0" value={amount} onChange={(e) => setAmount(e.target.value)} required />
+              <input
+                type="number"
+                step="0.01"
+                min="0"
+                max={outstanding}
+                value={amount}
+                onChange={(e) => setAmount(e.target.value)}
+                required
+                autoFocus
+              />
             </label>
+
+            <div className="pay-quick">
+              <button
+                type="button"
+                className="filament-btn filament-btn-outline"
+                onClick={() => setAmount(outstanding.toFixed(2))}
+                disabled={busy}
+              >
+                Full {rupees(outstanding)}
+              </button>
+              <button
+                type="button"
+                className="filament-btn filament-btn-outline"
+                onClick={() => setAmount((outstanding / 2).toFixed(2))}
+                disabled={busy}
+              >
+                Half
+              </button>
+            </div>
+
             <label className="form-row">
               <span className="input-hint">Method</span>
-              <select value={method} onChange={(e) => setMethod(e.target.value)}>
-                {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{m.replace("_", " ")}</option>)}
+              <select value={method} onChange={(e) => setMethod(e.target.value)} disabled={busy}>
+                {PAYMENT_METHODS.map((m) => (
+                  <option key={m} value={m}>{PAYMENT_LABELS[m] || m}</option>
+                ))}
               </select>
             </label>
+
+            {(method === "BANK" || method === "UPI" || method === "CHEQUE") && (
+              <label className="form-row">
+                <span className="input-hint">Reference</span>
+                <input
+                  type="text"
+                  value={reference}
+                  onChange={(e) => setReference(e.target.value)}
+                  placeholder={method === "CHEQUE" ? "Cheque number" : "UTR / transaction id"}
+                  disabled={busy}
+                />
+              </label>
+            )}
+
             <label className="form-row">
-              <span className="input-hint">Reference</span>
-              <input type="text" value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UTR / cheque number" />
-            </label>
-            <label className="form-row">
-              <span className="input-hint">Notes</span>
-              <input type="text" value={notes} onChange={(e) => setNotes(e.target.value)} />
+              <span className="input-hint">Notes (optional)</span>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                rows={2}
+                disabled={busy}
+              />
             </label>
           </div>
 
           <div className="filament-modal-footer">
-            <button type="button" className="filament-btn filament-btn-outline" onClick={onClose}>Cancel</button>
+            <span className="pay-footer-note">
+              {nothing ? "Enter an amount" : tooMuch ? "More than outstanding" : `${rupees(value)} via ${PAYMENT_LABELS[method] || method}`}
+            </span>
+            <div className="filament-modal-footer-spacer" />
+            <button type="button" className="filament-btn filament-btn-outline" onClick={onClose} disabled={busy}>Cancel</button>
             <button type="submit" className="filament-btn filament-btn-primary" disabled={busy || tooMuch || nothing}>
               {busy ? "Recording…" : "Record payment"}
             </button>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+// ── cancel ─────────────────────────────────────────────────────────────────
+
+/*
+ * Cancel an invoice in two steps: the operator writes the reason, then a
+ * confirmation screen restates the consequences before anything is written.
+ * The backend refuses an empty reason, so the first step is blocked until
+ * there is a real one.
+ */
+export function CancelModal({ invoice, onClose, onSubmit }) {
+  const [reason, setReason] = useState("");
+  const [confirming, setConfirming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [localError, setLocalError] = useState("");
+
+  const trimmed = reason.trim();
+  const receivedUnits = invoice.items.reduce(
+    (s, i) => s + (Number(i.quantity_received) || 0),
+    0
+  );
+  const paidSoFar = Number(invoice.total_amount) - Number(invoice.outstanding);
+
+  const submit = async () => {
+    if (busy) return;
+    setBusy(true);
+    setLocalError("");
+    try {
+      await onSubmit(trimmed);
+    } catch (e) {
+      setLocalError(e.message || "Unable to cancel this invoice.");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="filament-modal-overlay" onClick={onClose}>
+      <div className="filament-modal" onClick={(e) => e.stopPropagation()} role="dialog" aria-modal="true">
+        <div className="filament-modal-header">
+          <div>
+            <h2>{confirming ? "Confirm cancellation" : "Cancel invoice"}</h2>
+            <p className="filament-modal-sub">{invoice.invoice_number}</p>
+          </div>
+          <button type="button" className="filament-modal-close" onClick={onClose} aria-label="Close">×</button>
+        </div>
+
+        {confirming ? (
+          <>
+            <div className="filament-modal-body">
+              <div className="filament-alert filament-alert-danger">
+                This cannot be undone. {invoice.invoice_number} will be marked
+                cancelled and no further receiving or payment is possible.
+              </div>
+              <dl className="cancel-review">
+                <div><dt>Reason</dt><dd>{trimmed}</dd></div>
+                <div><dt>Lines</dt><dd>{invoice.items.length}</dd></div>
+                <div>
+                  <dt>Stock already received</dt>
+                  <dd>{receivedUnits > 0 ? `${receivedUnits} unit(s) stay in stock` : "None"}</dd>
+                </div>
+                <div>
+                  <dt>Paid so far</dt>
+                  <dd>{rupees(paidSoFar)}</dd>
+                </div>
+              </dl>
+            </div>
+            <div className="filament-modal-footer">
+              <button type="button" className="filament-btn filament-btn-outline" onClick={() => setConfirming(false)} disabled={busy}>
+                Back
+              </button>
+              <button type="button" className="filament-btn filament-btn-danger" onClick={submit} disabled={busy}>
+                {busy ? "Cancelling…" : "Yes, cancel invoice"}
+              </button>
+            </div>
+          </>
+        ) : (
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (trimmed) setConfirming(true);
+            }}
+          >
+            <div className="filament-modal-body">
+              {localError && <Notice>{localError}</Notice>}
+              <div className="filament-alert filament-alert-info">
+                Cancelling stops any further receiving or payment on this invoice.
+                Stock already received stays in the warehouse.
+              </div>
+              <label className="form-row">
+                <span className="input-hint">Reason (required)</span>
+                <textarea
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder="e.g. Duplicate order, supplier cancelled the shipment…"
+                  rows={3}
+                  required
+                  autoFocus
+                />
+              </label>
+            </div>
+            <div className="filament-modal-footer">
+              <button type="button" className="filament-btn filament-btn-outline" onClick={onClose} disabled={busy}>
+                Close
+              </button>
+              <button type="submit" className="filament-btn filament-btn-danger" disabled={!trimmed || busy}>
+                Continue
+              </button>
+            </div>
+          </form>
+        )}
       </div>
     </div>
   );
@@ -371,9 +667,19 @@ function NewInvoiceModal({ onClose, onSaved, fullPage = false }) {
   const removeLine = (index) =>
     setLines((current) => current.filter((_, i) => i !== index));
 
-  // Ids already on another line, so the picker can exclude them. A duplicate
-  // product on two lines is refused by the server.
-  const usedUuids = [];
+  // Products already on another line. Deliberately EMPTY.
+//
+// It used to be excluded from the picker on the assumption that a product may
+// appear once per invoice. It may not: the server keys a line by product AND
+// variant (lib/services/purchaseInvoice.js — "uniqueness is product+variant,
+// not product alone"), so one product legitimately spans several lines, one per
+// variant. Excluding it here made the form stricter than the server, and a
+// 30-variant product could only ever be bought one variant at a time.
+//
+// The cost is that the picker no longer prevents a repeat, so the duplicate
+// product+variant rule moves into `problems` below — the same rule, the same
+// wording, checked before submit instead of after.
+const usedUuids = [];
 
   const totals = useMemo(() => {
     const rows = lines.map(lineTotal);
@@ -399,6 +705,25 @@ function NewInvoiceModal({ onClose, onSaved, fullPage = false }) {
       problems.push(`Line ${index + 1} has a negative selling price`);
     }
   });
+
+  // The same product+variant on two lines is refused by the server, so it is
+  // refused here first — with the server's own wording, so the message does not
+  // change depending on who caught it.
+  const seenLines = new Map();
+  lines.forEach((line, index) => {
+    if (!line.product) return;
+    const key = `${line.product.uuid}::${line.variantUuid || ""}`;
+    if (seenLines.has(key)) {
+      problems.push(
+        line.variantUuid
+          ? `The same product and variant appear twice (line ${index + 1}). Combine them into one line.`
+          : `Line ${index + 1} repeats a product already on line ${seenLines.get(key) + 1}. Pick a variant, or combine the lines.`
+      );
+    } else {
+      seenLines.set(key, index);
+    }
+  });
+
   const complete = problems.length === 0;
 
   const submit = async (event) => {
@@ -518,47 +843,55 @@ function NewInvoiceModal({ onClose, onSaved, fullPage = false }) {
 
               {lines.map((line, index) => (
                 <div className="pp-line" key={index}>
-                  <ProductPicker
-                      value={line.product}
-                      excludeUuids={usedUuids}
-                      label="Search products…"
-                      onChange={(product) => setLine(index, { product, variantUuid: "" })}
-                  />
-                  {line.product && Array.isArray(line.product.variants) && line.product.variants.length > 0 ? (
-                    <select
-                      className="pp-variant-select"
-                      value={line.variantUuid}
-                      onChange={(e) => setLine(index, { variantUuid: e.target.value })}
-                      required
-                    >
-                      <option value="">Select variant…</option>
-                      {line.product.variants.map((v) => (
-                        <option key={v.uuid || v.sku} value={v.uuid || v.sku}>
-                          {v.name || (v.attributes ? Object.values(v.attributes).join(" / ") : v.sku || "Variant")}
-                          {v.sku && v.name !== v.sku ? ` · ${v.sku}` : ""}
-                          {` · stock ${Number(v.stock) || 0}`}
-                        </option>
-                      ))}
-                    </select>
-                  ) : line.product ? (
-                    <span className="text-muted pp-no-variants">No variants</span>
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                  <input
-                    type="number" min="0" step="0.01" className="pp-num"
-                    value={line.quantityOrdered}
-                    onChange={(e) => setLine(index, { quantityOrdered: e.target.value })}
-                    placeholder="0"
-                    aria-label={`Quantity for line ${index + 1}`}
-                  />
-                  <input
-                    type="number" min="0" step="0.01" className="pp-num"
-                    value={line.unitCost}
-                    onChange={(e) => setLine(index, { unitCost: e.target.value })}
-                    placeholder="0.00"
-                    aria-label={`Unit cost for line ${index + 1}`}
-                  />
+                  <div className="pp-cell" data-label="Product">
+                    <ProductPicker
+                        value={line.product}
+                        excludeUuids={usedUuids}
+                        label="Search products…"
+                        onChange={(product) => setLine(index, { product, variantUuid: "" })}
+                    />
+                  </div>
+                  <div className="pp-cell" data-label="Variant">
+                    {line.product && Array.isArray(line.product.variants) && line.product.variants.length > 0 ? (
+                      <select
+                        className="pp-variant-select ui-select"
+                        value={line.variantUuid}
+                        onChange={(e) => setLine(index, { variantUuid: e.target.value })}
+                        required
+                        aria-label={`Variant for line ${index + 1}`}
+                      >
+                        <option value="">Select variant…</option>
+                        {sortVariants(line.product.variants).map((v) => (
+                          <option key={v.uuid || v.sku} value={v.uuid || v.sku}>
+                            {variantLabel(v)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : line.product ? (
+                      <span className="text-muted pp-no-variants">No variants</span>
+                    ) : (
+                      <span className="text-muted">—</span>
+                    )}
+                  </div>
+                  <div className="pp-cell" data-label="Qty">
+                    <input
+                      type="number" min="0" step="0.01" className="pp-num"
+                      value={line.quantityOrdered}
+                      onChange={(e) => setLine(index, { quantityOrdered: e.target.value })}
+                      placeholder="0"
+                      aria-label={`Quantity for line ${index + 1}`}
+                    />
+                  </div>
+                  <div className="pp-cell" data-label="Unit cost">
+                    <input
+                      type="number" min="0" step="0.01" className="pp-num"
+                      value={line.unitCost}
+                      onChange={(e) => setLine(index, { unitCost: e.target.value })}
+                      placeholder="0.00"
+                      aria-label={`Unit cost for line ${index + 1}`}
+                    />
+                  </div>
+                  <div className="pp-cell" data-label="Selling price">
                   <span className="pp-sell">
                     <input
                       type="number" min="0" step="0.01" className="pp-num"
@@ -578,6 +911,8 @@ function NewInvoiceModal({ onClose, onSaved, fullPage = false }) {
                       );
                     })()}
                   </span>
+                  </div>
+                  <div className="pp-cell" data-label="Disc %">
                   <input
                     type="number" min="0" max="100" className="pp-num"
                     value={line.discountPercent}
@@ -585,6 +920,8 @@ function NewInvoiceModal({ onClose, onSaved, fullPage = false }) {
                     placeholder="0"
                     aria-label={`Discount percent for line ${index + 1}`}
                   />
+                  </div>
+                  <div className="pp-cell" data-label="Tax %">
                   <input
                     type="number" min="0" max="100" className="pp-num"
                     value={line.taxPercent}
@@ -592,7 +929,10 @@ function NewInvoiceModal({ onClose, onSaved, fullPage = false }) {
                     placeholder="0"
                     aria-label={`Tax percent for line ${index + 1}`}
                   />
+                  </div>
+                  <div className="pp-cell" data-label="Line total">
                   <span className="pp-money">{money(totals.rows[index]?.total)}</span>
+                  </div>
                   <button
                     type="button"
                     className="filament-btn filament-btn-small filament-btn-danger pp-remove"
@@ -656,6 +996,33 @@ const blankLine = () => ({
   product: null, variantUuid: "", quantityOrdered: "", unitCost: "", sellingPrice: "",
   discountPercent: "", taxPercent: "",
 });
+
+// Readable name for a variant: its attribute combination is what a person
+// recognises ("Black / M"), with the name preferred when one is set.
+const variantLabel = (v) => {
+  const fromAttributes =
+    v.attributes && typeof v.attributes === "object"
+      ? Object.values(v.attributes).filter(Boolean).join(" / ")
+      : "";
+
+  return v.name || fromAttributes || v.sku || "Variant";
+};
+
+// In-stock variants first, then alphabetical. A 30-variant product otherwise
+// buries the ones you can actually buy, and "Black / M" appearing after "Black /
+// XXL" makes the list feel arbitrary. Ties keep their original order, so nothing
+// is reshuffled within a stock level.
+const sortVariants = (variants) =>
+  variants
+    .map((variant, index) => ({ variant, index }))
+    .sort((a, b) => {
+      const stock = (Number(b.variant.stock) || 0) - (Number(a.variant.stock) || 0);
+      if (stock !== 0) return stock;
+      const label = variantLabel(a.variant).localeCompare(variantLabel(b.variant));
+      if (label !== 0) return label;
+      return a.index - b.index;
+    })
+    .map(({ variant }) => variant);
 
 export function PurchaseInvoiceNew() {
   const navigate = useNavigate();

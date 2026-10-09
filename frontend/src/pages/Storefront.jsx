@@ -537,14 +537,6 @@ export default function Storefront() {
 
   return (
     <div className="sf-root">
-      <div className="sf-announce">
-        <span className="sf-announce-in">
-          <span className="sf-announce-item"><FiTruck /> Free delivery on orders above ₹499</span>
-          <span className="sf-announce-dot" />
-          <span className="sf-announce-item">Cash on Delivery available</span>
-        </span>
-      </div>
-
       <header className="sf-top">
         <div className="sf-top-in">
           <button className="sf-brand" onClick={goCatalog}>
@@ -667,12 +659,6 @@ export default function Storefront() {
 
             {showBanner && <BannerCarousel />}
 
-            <div className="sf-trust">
-              <span><FiTruck /> Fast delivery</span>
-              <span><FiShield /> Secure checkout</span>
-              <span><FiRefreshCw /> Easy returns</span>
-              <span><FiCreditCard /> COD &amp; cards</span>
-            </div>
 
             {!loading && products.length > 0 && (
               <div className="sf-cats">
@@ -802,6 +788,7 @@ export default function Storefront() {
       </main>
 
       <footer className="sf-footer">
+        <div className="sf-footer-glow" aria-hidden="true" />
         <div className="sf-footer-grid">
           <div className="sf-footer-col">
             <b className="sf-footer-brand">Earth<em>धान्य</em></b>
@@ -810,13 +797,18 @@ export default function Storefront() {
               <span><FiCheckCircle /> 100% quality-checked</span>
               <span><FiCheckCircle /> Transparent pricing</span>
             </div>
+            <div className="sf-footer-social">
+              <button type="button" aria-label="Instagram" className="sf-social"><FiSend /></button>
+              <button type="button" aria-label="Twitter" className="sf-social"><FiTag /></button>
+              <button type="button" aria-label="Email" className="sf-social"><FiMail /></button>
+            </div>
           </div>
           <div className="sf-footer-col">
             <b>Shop</b>
-            <button onClick={goCatalog}>All products</button>
-            <button onClick={() => setView(VIEWS.TRACK)}>Track order</button>
-            <button onClick={() => setView(user ? VIEWS.PROFILE : VIEWS.ACCOUNT)}>My account</button>
-            <button onClick={() => setView(user ? VIEWS.EGIFT : VIEWS.EGIFT)}>E-Gift Cards</button>
+            <button onClick={goCatalog} className="sf-flink">All products</button>
+            <button onClick={() => setView(VIEWS.TRACK)} className="sf-flink">Track order</button>
+            <button onClick={() => setView(user ? VIEWS.PROFILE : VIEWS.ACCOUNT)} className="sf-flink">My account</button>
+            <button onClick={() => setView(user ? VIEWS.EGIFT : VIEWS.EGIFT)} className="sf-flink">E-Gift Cards</button>
           </div>
           <div className="sf-footer-col">
             <b>Support</b>
@@ -826,7 +818,7 @@ export default function Storefront() {
           </div>
         </div>
         <div className="sf-footer-b">
-          © {new Date().getFullYear()} Earth धान्य · All rights reserved
+          © {new Date().getFullYear()} Quick Kart · All rights reserved
         </div>
       </footer>
     </div>

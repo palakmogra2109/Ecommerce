@@ -401,3 +401,211 @@ test("the product API ignores a price or stock sent in the request", async () =>
   assert.equal(Number(row.price), 500, "price ignored");
   assert.equal(Number(row.stock), 777, "stock ignored");
 });
+
+// ── variant identity ────────────────────────────────────────────────────────
+//
+// A line's variantUuid used to be stored without ever being checked. That let a
+// value which was not a variant uuid at all — the form fell back to sending the
+// SKU when a variant had no uuid — reach purchase_invoice_items.variant_uuid,
+// and then warehouse_inventory and product_batches at receipt, where the stock
+// view joins on uuid. The result was a stock row attributed to no variant.
+
+async function seedVariantProduct(attributeCount = 2) {
+  seq += 1;
+  const variants = [
+    { uuid: "11111111-1111-4111-8111-111111111111", sku: `V-${seq}-A`, name: "A", status: "ACTIVE", attributes: { Colour: "Red" } },
+    { uuid: "22222222-2222-4222-8222-222222222222", sku: `V-${seq}-B`, name: "B", status: "ACTIVE", attributes: { Colour: "Blue" } },
+  ];
+  const attributes = [{ name: "Colour", values: ["Red", "Blue"] }];
+  const product = (
+    await pool.query(
+      `INSERT INTO products (name,slug,sku,price,stock,status,variants,attributes)
+       VALUES ($1,$2,$3,100,0,'ACTIVE',$4::jsonb,$5::jsonb) RETURNING id`,
+      [`Shirt ${seq}`, `shirt-${seq}`, `SHIRT-${seq}`, JSON.stringify(variants), JSON.stringify(attributes)]
+    )
+  ).rows[0];
+  const supplier = (
+    await pool.query("INSERT INTO suppliers (name,email) VALUES ($1,$2) RETURNING id",
+      [`Supplier ${seq}`, `v${seq}@example.test`])
+  ).rows[0];
+  return { product: product.id, supplier: supplier.id, variants };
+}
+
+test("a line carrying a real variant uuid is accepted", async () => {
+  const { product, supplier, variants } = await seedVariantProduct();
+  const created = await PurchaseInvoice.create({
+    supplierId: supplier, supplierInvoiceNumber: "VOK-1",
+    items: [{ productId: product, variantUuid: variants[0].uuid, quantityOrdered: 5, unitCost: 20 }],
+  });
+  assert.ok(created.id);
+
+  const row = (await pool.query(
+    "SELECT variant_uuid FROM purchase_invoice_items WHERE purchase_invoice_id = $1", [created.id]
+  )).rows[0];
+  assert.equal(row.variant_uuid, variants[0].uuid);
+});
+
+test("one invoice may carry several variants of the SAME product", async () => {
+  // The reason the line key is product+variant rather than product alone.
+  const { product, supplier, variants } = await seedVariantProduct();
+  const created = await PurchaseInvoice.create({
+    supplierId: supplier, supplierInvoiceNumber: "VMULTI-1",
+    items: [
+      { productId: product, variantUuid: variants[0].uuid, quantityOrdered: 5, unitCost: 20 },
+      { productId: product, variantUuid: variants[1].uuid, quantityOrdered: 7, unitCost: 22 },
+    ],
+  });
+  assert.ok(created.id);
+
+  const rows = (await pool.query(
+    "SELECT variant_uuid FROM purchase_invoice_items WHERE purchase_invoice_id = $1 ORDER BY line_no", [created.id]
+  )).rows;
+  assert.equal(rows.length, 2);
+  assert.deepEqual(rows.map((r) => r.variant_uuid), [variants[0].uuid, variants[1].uuid]);
+});
+
+test("the identical product and variant twice is still refused", async () => {
+  const { product, supplier, variants } = await seedVariantProduct();
+  await assert.rejects(
+    () => PurchaseInvoice.create({
+      supplierId: supplier, supplierInvoiceNumber: "VDUP-1",
+      items: [
+        { productId: product, variantUuid: variants[0].uuid, quantityOrdered: 5, unitCost: 20 },
+        { productId: product, variantUuid: variants[0].uuid, quantityOrdered: 7, unitCost: 22 },
+      ],
+    }),
+    (e) => e.code === "DUPLICATE_PRODUCT"
+  );
+});
+
+test("a variantUuid that is a SKU rather than a uuid is refused", async () => {
+  // The regression this guards: the purchase form sends v.uuid || v.sku, and
+  // every seeded variant used to lack a uuid, so a SKU arrived here and was
+  // stored as if it were one.
+  const { product, supplier, variants } = await seedVariantProduct();
+  await assert.rejects(
+    () => PurchaseInvoice.create({
+      supplierId: supplier, supplierInvoiceNumber: "VSKU-1",
+      items: [{ productId: product, variantUuid: variants[0].sku, quantityOrdered: 5, unitCost: 20 }],
+    }),
+    (e) => e.code === "BAD_VARIANT"
+  );
+});
+
+test("a variant belonging to a DIFFERENT product is refused", async () => {
+  const a = await seedVariantProduct();
+  const b = await seedVariantProduct();
+
+  // Give B genuinely distinct uuids. Both fixtures started from the same two
+  // hardcoded constants, which meant B's uuid really did belong to A and the
+  // invoice was correctly accepted — the fixture was wrong, not the guard.
+  const foreign = "33333333-3333-4333-8333-333333333333";
+  await pool.query(
+    `UPDATE products SET variants = jsonb_set(variants, '{0,uuid}', $2::jsonb) WHERE id = $1`,
+    [b.product, JSON.stringify(foreign)]
+  );
+
+  await assert.rejects(
+    () => PurchaseInvoice.create({
+      supplierId: a.supplier, supplierInvoiceNumber: "VXPROD-1",
+      items: [{ productId: a.product, variantUuid: foreign, quantityOrdered: 5, unitCost: 20 }],
+    }),
+    (e) => e.code === "BAD_VARIANT"
+  );
+});
+
+test("a variant of a retired (inactive) variant is refused for trading", async () => {
+  const { product, supplier, variants } = await seedVariantProduct();
+  await pool.query(
+    `UPDATE products SET variants = jsonb_set(variants, '{1,status}', '"INACTIVE"') WHERE id = $1`,
+    [product]
+  );
+  await assert.rejects(
+    () => PurchaseInvoice.create({
+      supplierId: supplier, supplierInvoiceNumber: "VINACT-1",
+      items: [{ productId: product, variantUuid: variants[1].uuid, quantityOrdered: 5, unitCost: 20 }],
+    }),
+    (e) => e.code === "BAD_VARIANT"
+  );
+});
+
+// ── notifications inbox scoping ─────────────────────────────────────────────
+//
+// The inbox predicate used to be `user_id = $1 OR customer_id = $2` with both
+// parameters always passed. That is correct in Postgres only because
+// `x = NULL` is never true — an accident of null semantics rather than
+// something the query states. These cases pin the intent: an admin inbox keyed
+// on the session must not be able to reach a customer's rows.
+
+// Imported lazily inside each case, never at the top of the file. A static
+// import is hoisted above the DATABASE_URL reassignment above, so lib/db.js
+// would bind its pool to the live `ecommerce` database and every test in this
+// file would fail to authenticate.
+const loadNotifications = async () =>
+  (await import("../notifications.js")).NotificationService;
+
+test("the owner clause names only the ids it was given", async () => {
+  const Notifications = await loadNotifications();
+  assert.deepEqual(Notifications.ownerClause({ userId: 7 }), {
+    sql: "(user_id = $1)",
+    values: [7],
+  });
+  assert.deepEqual(Notifications.ownerClause({ customerId: 9 }), {
+    sql: "(customer_id = $1)",
+    values: [9],
+  });
+  assert.deepEqual(Notifications.ownerClause({ userId: 7, customerId: 9 }), {
+    sql: "(user_id = $1 OR customer_id = $2)",
+    values: [7, 9],
+  });
+});
+
+test("an owner clause with no id matches nothing rather than everything", async () => {
+  const Notifications = await loadNotifications();
+  // The failure this prevents: forgetting to pass an owner and returning the
+  // whole table. `false` cannot be read as "no filter".
+  assert.deepEqual(Notifications.ownerClause({}), { sql: "false", values: [] });
+});
+
+test("a user-only inbox cannot return another user's notifications", async () => {
+  const Notifications = await loadNotifications();
+
+  // Real rows: notifications.user_id is a real foreign key, so a stand-in id
+  // would fail the insert rather than prove anything about scoping.
+  const mkUser = async () =>
+    (await pool.query(
+      "INSERT INTO users (name,email,password,status) VALUES ($1,$2,'x','ACTIVE') RETURNING id",
+      [`Notif ${Math.random()}`, `notif-${Math.random()}@example.test`]
+    )).rows[0].id;
+
+  const owner = await mkUser();
+  const other = await mkUser();
+
+  await pool.query(
+    `INSERT INTO notifications (event, category, user_id, title, message, data)
+     VALUES ('test_event', 'GENERAL', $1, 'mine', 'mine', '{}'::jsonb),
+            ('test_event', 'GENERAL', $2, 'theirs', 'theirs', '{}'::jsonb)`,
+    [owner, other]
+  );
+
+  const mine = await Notifications.inbox({ userId: owner });
+  assert.deepEqual(mine.map((n) => n.title), ["mine"]);
+
+  const unread = await Notifications.unreadCount({ userId: owner });
+  assert.equal(unread, 1);
+
+  // Marking read is scoped the same way.
+  const marked = await Notifications.markRead({ userId: owner, uuids: mine.map((n) => n.uuid) });
+  assert.equal(marked, 1);
+  assert.equal(await Notifications.unreadCount({ userId: owner }), 0);
+  assert.equal(await Notifications.unreadCount({ userId: other }), 1);
+
+  await pool.query("DELETE FROM notifications WHERE event = 'test_event'");
+});
+
+test("an inbox with no owner returns nothing", async () => {
+  const Notifications = await loadNotifications();
+  // Guard rather than query: the clause would be `false`, but this also proves
+  // the early return still holds for the no-argument case.
+  assert.deepEqual(await Notifications.inbox({}), []);
+});

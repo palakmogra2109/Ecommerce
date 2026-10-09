@@ -292,6 +292,17 @@
   color: var(--au-ac-dark);
 }
 
+/* Lockout countdown. tabular-nums so the digits keep a constant width and the
+   sentence does not shuffle sideways on every tick. */
+.auth-lockout {
+  align-items: center;
+}
+
+.auth-lockout-clock {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
 /* ---- Footer links ---- */
 
 .auth-foot {
@@ -346,4 +357,38 @@
   .auth-head h1 {
     font-size: 21px;
   }
+}
+
+/* Elegant soft-motion enhancements */
+@keyframes au-rise {
+  from { opacity: 0; transform: translateY(12px) scale(.99); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+.auth-card { animation: au-rise .45s ease both; }
+.auth-page { background-size: 100% 100%; transition: background .6s ease; }
+.auth-submit,
+.auth-btn,
+.auth-card button[type="submit"] {
+  transition: transform .18s ease, box-shadow .18s ease, background .18s ease, border-color .18s ease;
+}
+.auth-card button[type="submit"]:hover,
+.auth-submit:hover { transform: translateY(-1px); box-shadow: 0 8px 20px rgba(31,157,85,.28); }
+.auth-card button[type="submit"]:active { transform: translateY(0) scale(.98); }
+.auth-input,
+.auth-card input,
+.auth-card select {
+  transition: border-color .18s ease, box-shadow .18s ease;
+}
+.auth-input:focus,
+.auth-card input:focus {
+  border-color: var(--au-ac);
+  box-shadow: 0 0 0 3px var(--au-ac-soft);
+  outline: none;
+}
+.auth-link { transition: color .18s ease, opacity .18s ease; }
+.auth-link:hover { opacity: .8; }
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-card { animation: none; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
 }

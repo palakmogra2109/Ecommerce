@@ -14,7 +14,20 @@ export async function loginUser(data) {
   });
 
   handleUnauthorizedResponse(response);
-  return await response.json();
+  const payload = await response.json();
+
+  // A throttled login (429) carries Retry-After: the seconds until this client
+  // may try again. Surfaced so the login page can count down instead of only
+  // saying "please wait". RFC 9110 also allows an HTTP-date here, and a proxy
+  // can drop the header entirely, so anything non-numeric becomes null rather
+  // than leaking a NaN onto the screen.
+  const retryAfter = Number.parseInt(response.headers.get("Retry-After") || "", 10);
+
+  return {
+    ...payload,
+    status: response.status,
+    retryAfterSec: Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter : null,
+  };
 }
 
 export async function logoutUser() {

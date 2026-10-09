@@ -7,6 +7,48 @@ body {
   font-family: Arial, sans-serif;
 }
 
+/* ── Stacking layers ─────────────────────────────────────────────────────────
+ *
+ * One ladder, defined once, replacing eleven hand-picked z-index values.
+ *
+ * Why this exists: the sidebar flyout and the table's pinned checkbox column
+ * were BOTH "high" — 40 and 3 — and the column still won. Because
+ * `.filament-table thead th` is `position: sticky`, each header cell forms its
+ * own stacking context, and inside that context the checkbox's `z-index: 3` is
+ * the whole story: it never competes with the flyout's 40, because the flyout
+ * lives in the root context while the header cell does not. So raising the
+ * flyout alone would not have fixed it; the layers have to be ordered
+ * deliberately instead of numerically guessed.
+ *
+ * Read it as an ordered list of "what am I competing with":
+ *
+ *   10  sticky / pinned — table headers, pinned columns, save bars. Only ever
+ *       wins INSIDE a container, and never needs to beat an overlay.
+ *   40  sidebar — the rail itself. It has to hold a layer because `position:
+ *       sticky` makes it a stacking context, so every dropdown inside it is
+ *       resolved against the rail and not against the page.
+ *   60  dropdowns — sidebar flyouts, bulk/filter/column menus, pickers. Above
+ *       every in-flow element, so a menu is never half-hidden behind a table.
+ *   70  tooltips — above dropdowns, so a tooltip is never occluded by the menu
+ *       it describes.
+ *   80  scrim — the mobile drawer backdrop.
+ *   90  modals — dialogs and their overlays.
+ *  100  toasts — notifications, transient save bars.
+ *
+ * Anything that needs to sit above a modal must use a layer above it rather
+ * than an arbitrary 1000; the image-editor overlay that used z-index 1000 is
+ * folded in at the top of this scale.
+ */
+:root {
+  --z-sticky: 10;
+  --z-dropdown: 60;
+  --z-tooltip: 70;
+  --z-scrim: 80;
+  --z-modal: 90;
+  --z-toast: 100;
+  --z-sidebar: 40;
+}
+
 .auth-container {
   min-height: 100vh;
   display: flex;
@@ -219,6 +261,15 @@ body {
   min-height: 100vh;
 }
 
+.admin-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
 .sidebar {
   width: 240px;
   flex-shrink: 0;
@@ -230,17 +281,162 @@ body {
      scroll inside it. Without a bounded height the nav just grew with the page
      and pushed the user/logout block off the bottom. Sticky rather than a fixed
      height on .admin-shell, because the main pane keeps its normal page scroll
-     and long pages are never clipped. */
+     and long pages are never clipped.
+     The z-index is the point of the declaration. `position: sticky` opens a
+     stacking context in Chromium even at `z-index: auto`, so the collapsed
+     flyout's own `--z-dropdown` is resolved *within* this element rather than
+     against the page. At auto the whole rail therefore lost to any pinned
+     sticky cell in a table (the bulk-select checkbox, `z-index: 10` in its own
+     context), and the menu opened behind the rows it was meant to sit over.
+     Giving the rail a real layer is what makes every dropdown inside it win. */
   position: sticky;
   top: 0;
+  z-index: var(--z-sidebar);
   height: 100vh;
 }
 
 .sidebar-brand {
+  /* Holds the toggle (and, on mobile, the drawer close), so it is a flex row
+     with the wordmark on one side and the control on the other. */
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   padding: 20px;
   font-size: 18px;
   font-weight: 700;
   border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-brand-text {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Only shown at mobile widths, where it stands in for the collapse toggle. */
+.sidebar-drawer-close {
+  display: none;
+}
+
+.sidebar-collapse {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.6);
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.sidebar-collapse:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.sidebar-collapse:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: 2px;
+}
+
+/* ── Collapsed rail ──────────────────────────────────────────────────────────
+ *
+ * 240px -> 64px, icons only. The label text is hidden by its own rule rather
+ * than by shrinking the whole label, which would take the icon with it.
+ */
+.sidebar-collapsed {
+  width: 64px;
+}
+
+.sidebar-collapsed .sidebar-label-text {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-brand {
+  padding: 20px 0;
+  text-align: center;
+}
+
+.sidebar-collapsed .sidebar-brand-text {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-link {
+  justify-content: center;
+  padding-left: 0;
+  padding-right: 0;
+  /* No labels are visible, so the gap between icon and label has nothing to
+     separate and would only shift the icon off-centre. */
+  gap: 0;
+}
+
+.sidebar-collapsed .sidebar-item-icon {
+  margin: 0;
+}
+
+.sidebar-collapsed .sidebar-chevron {
+  display: none;
+}
+
+/* ── Collapsed submenus: hover flyout ────────────────────────────────────────
+ *
+ * A 64px rail has no room for an inline accordion, so a group opens a panel over
+ * the content instead. It has to be `position: fixed` and placed by hand from JS
+ * (see SidebarGroup): .sidebar-nav is a scroll container, and a scrollable axis
+ * implies overflow: auto on BOTH axes, so an absolutely-positioned panel is
+ * clipped to the rail's own 64px. Measured, that hid 206px of a 200px panel.
+ */
+.sidebar-collapsed .sidebar-group {
+  position: relative;
+}
+
+.sidebar-collapsed .sidebar-submenu {
+  display: none;
+  position: fixed;
+  min-width: 200px;
+  z-index: var(--z-dropdown);
+  /* A floating panel is not a tree, so it drops the expanded rail's indent and
+     group rule — those would hang a stray border down its left edge. */
+  margin: 0;
+  padding: 6px;
+  border-left: none;
+  border-radius: 10px;
+  background: var(--sidebar-bg);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.28);
+}
+
+.sidebar-collapsed .sidebar-group:hover .sidebar-submenu,
+.sidebar-collapsed .sidebar-group:focus-within .sidebar-submenu {
+  display: block;
+}
+
+/* The flyout's whole job is to name the items. It is a DOM child of
+   .sidebar-nav, so the rule above that hides rail labels also reaches it and
+   would leave a column of unlabelled icons. Higher specificity, so it wins. */
+.sidebar-collapsed .sidebar-submenu .sidebar-label-text {
+  display: inline;
+}
+
+.sidebar-collapsed .sidebar-submenu .sidebar-link {
+  justify-content: flex-start;
+  padding: 9px 10px;
+  border-radius: 7px;
+  color: rgba(255, 255, 255, 0.78);
+}
+
+.sidebar-collapsed .sidebar-submenu .sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+}
+
+.sidebar-collapsed .sidebar-submenu .sidebar-item-icon {
+  margin-right: 10px;
 }
 
 .sidebar-nav {
@@ -319,6 +515,14 @@ body {
   padding-left: 17px;
 }
 
+/* The active row's 3px accent bar and the 17px that compensates for it are both
+   wrong once the rail is collapsed and the bar would sit 3px off-centre from
+   the icon. Padding returns to zero so the icon centres in the full 64px. */
+.sidebar-collapsed .sidebar-link.active {
+  border-left: none;
+  padding-left: 0;
+}
+
 .sidebar-toggle {
   width: 100%;
   display: flex;
@@ -349,45 +553,375 @@ body {
   background: rgba(0, 0, 0, 0.12);
 }
 
+/* Expanded submenu: read as a group belonging to the toggle above it, rather
+ * than as a run of loose items.
+ *
+ * The 2px rule is inset 18px from the rail edge rather than sitting at x=0,
+ * where it hugged the screen edge and read as a border on the window. It lines
+ * up under the parent's own icon, so the two rows form a tree instead of a
+ * staircase. */
+.sidebar-submenu {
+  position: relative;
+  margin: 2px 0 6px 18px;
+  padding-left: 14px;
+  border-left: 2px solid rgba(255, 255, 255, 0.16);
+  background: rgba(0, 0, 0, 0.12);
+}
+
 .sidebar-submenu .sidebar-link {
-  padding-left: 36px;
+  /* Indentation now comes from the container, so the link itself needs none —
+     that is what keeps the child text a consistent step in from the parent's. */
+  padding-left: 0;
   font-size: 14px;
+  border-radius: 0 8px 8px 0;
 }
 
 .sidebar-submenu .sidebar-link.active {
-  padding-left: 33px;
+  /* Same as above: the container already offsets these rows. */
+  padding-left: 0;
+  border-left: none;
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.sidebar-submenu .sidebar-link:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: #fff;
+}
+
+/* ── Collapsed-rail tooltip ──────────────────────────────────────────────────
+ *
+ * The labels come from JS-placed fixed elements (see SidebarTooltip), so they
+ * escape the rail's scroll clip. Appearance is animated on opacity/transform
+ * only, so it never triggers layout.
+ */
+.sidebar-tip-anchor {
+  display: flex;
+  /* Full width, and the link inside it too. Without this the anchor became a
+     flex container whose link shrank to its own content — measured at 26px and
+     46px instead of the rail's 64px, which left the icons hugging the left edge
+     and the active highlight a stub instead of a full row. */
+  width: 100%;
+}
+
+.sidebar-tip-anchor > .sidebar-link {
+  width: 100%;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.sidebar-tip {
+  position: fixed;
+  z-index: var(--z-tooltip);
+  transform: translate(-4px, -50%) scale(0.96);
+  transform-origin: left center;
+  padding: 6px 10px;
+  border-radius: 7px;
+  background: #1b2130;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  pointer-events: none;
+  opacity: 0;
+  box-shadow: 0 8px 22px rgba(9, 12, 20, 0.42);
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+
+.sidebar-tip-show {
+  transform: translate(0, -50%) scale(1);
+  opacity: 1;
+}
+
+/* The expanded rail shows its labels, so a tooltip there would be a duplicate. */
+.sidebar:not(.sidebar-collapsed) .sidebar-tip {
+  display: none;
+}
+
+/* The mobile drawer is already 280px wide and shows every label, so it needs no
+   tooltip either. */
+@media (max-width: 768px) {
+  .sidebar-tip {
+    display: none;
+  }
+}
+
+.sidebar-tip-anchor:focus-within {
+  outline: none;
+}
+
+.sidebar-tip-anchor:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: -2px;
 }
 
 .sidebar-footer {
-  padding: 16px 20px;
+  padding: 12px 12px 16px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* ── Profile block + account menu ────────────────────────────────────────────
+ *
+ * The rail now ends in ONE affordance. The identity row opens a menu holding the
+ * display mode and the way out, so the footer is a trigger rather than three
+ * stacked controls competing for the same 64px when collapsed.
+ *
+ * Logout is neutral at rest and red on hover. It was a full-width solid #dc2626
+ * block, which read as an error state rather than an action.
+ */
+.sidebar-footer {
+  padding: 12px;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
 }
 
-.sidebar-user {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: var(--text-faint);
-  word-break: break-all;
-}
-
-.sidebar-logout {
+.sidebar-profile {
   width: 100%;
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 10px;
+  gap: 10px;
+  padding: 7px 8px;
   border: none;
-  border-radius: 8px;
-  background: #dc2626;
-  color: #fff;
-  font-size: 14px;
-  font-weight: 600;
+  border-radius: 10px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
+  transition: background 0.15s ease;
 }
 
-.sidebar-logout:hover {
-  background: #b91c1c;
+.sidebar-profile:hover,
+.sidebar-profile-open {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.sidebar-profile:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: -2px;
+}
+
+.sidebar-avatar {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  /* A hairline keeps the initials legible against a mid-tone tint. */
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+}
+
+.sidebar-profile-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.sidebar-profile-name {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-profile-email {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-profile-caret {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: inline-flex;
+  color: rgba(255, 255, 255, 0.45);
+  transition: transform 0.18s ease;
+}
+
+/* Points DOWN when the menu is shut (the menu is below), up when it is open. */
+.sidebar-profile-caret.is-open {
+  transform: rotate(180deg);
+}
+
+/* ── The menu ────────────────────────────────────────────────────────────────
+ *
+ * Pinned to the rail with position: fixed and placed from JS, because
+ * `.sidebar-nav` is a scroll container: a scrollable axis implies
+ * overflow: auto on BOTH axes, so an absolutely-positioned panel inside it is
+ * clipped to the rail's own width. Fixed escapes every ancestor clip.
+ */
+.sidebar-menu {
+  position: fixed;
+  z-index: var(--z-dropdown);
+  min-width: 232px;
+  padding: 6px;
+  border-radius: 12px;
+  background: #1b2130;
+  box-shadow: 0 14px 38px rgba(9, 12, 20, 0.45);
+  animation: sidebar-menu-in 0.14s ease;
+}
+
+@keyframes sidebar-menu-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.sidebar-menu-head {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 8px 10px 9px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  min-width: 0;
+}
+
+.sidebar-menu-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: #fff;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-menu-email {
+  font-size: 11.5px;
+  color: rgba(255, 255, 255, 0.55);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sidebar-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.85);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.sidebar-menu-item:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+  color: #fff;
+}
+
+.sidebar-menu-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.sidebar-menu-item:focus-visible {
+  outline: 2px solid #6366f1;
+  outline-offset: -2px;
+}
+
+.sidebar-menu-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-menu-logout:hover {
+  background: rgba(220, 38, 38, 0.18);
+  color: #fca5a5;
+}
+
+.sidebar-menu-error {
+  margin: 0 10px 4px;
+  font-size: 11px;
+  color: #fca5a5;
+}
+
+/* ── Theme switch ────────────────────────────────────────────────────────────
+ *
+ * A real switch rather than a checkbox styled to look like one, so it announces
+ * its state. The label names the mode in effect.
+ */
+.sidebar-switch {
+  margin-left: auto;
+  flex-shrink: 0;
+  position: relative;
+  width: 34px;
+  height: 19px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+  transition: background 0.18s ease;
+}
+
+[aria-checked="true"] .sidebar-switch,
+.sidebar-menu-theme[aria-checked="true"] .sidebar-switch {
+  background: #6366f1;
+}
+
+.sidebar-switch-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
+  transition: transform 0.18s ease;
+}
+
+.sidebar-menu-theme[aria-checked="true"] .sidebar-switch-knob {
+  transform: translateX(15px);
+}
+
+/* ── Collapsed ───────────────────────────────────────────────────────────────
+ *
+ * The trigger is the bare avatar; the menu is placed beside the rail by the
+ * component, which measures it.
+ */
+.sidebar-collapsed .sidebar-footer {
+  padding: 12px 8px 16px;
+}
+
+.sidebar-collapsed .sidebar-profile {
+  justify-content: center;
+  padding: 7px 0;
+}
+
+.sidebar-collapsed .sidebar-profile-text,
+.sidebar-collapsed .sidebar-profile-caret {
+  display: none;
+}
+
+.sidebar-collapsed .sidebar-avatar {
+  width: 36px;
+  height: 36px;
+  font-size: 13px;
 }
 
 .admin-main {
@@ -395,6 +929,443 @@ body {
   padding: 28px;
   background: var(--bg);
   min-width: 0;
+  overflow: hidden;
+}
+
+/* ── Top bar ────────────────────────────────────────────────────────────────
+ *
+ * Notification bell, then the account avatar. Sits above the rail, so it is the
+ * primary identity and alert surface on every screen size; the sidebar footer
+ * keeps the same controls for the collapsed rail.
+ *
+ * z-index values come from the stacking ladder rather than being picked here.
+ */
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  /* The bell panel is pulled right past the avatar to line up with the top bar's
+     own content edge, so these two values are shared rather than restated. */
+  --topbar-gap: 10px;
+  --avatar-size: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--topbar-gap);
+  height: 56px;
+  padding: 0 16px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--topbar-gap);
+}
+
+.topbar-bell-root,
+.topbar-menu-root {
+  position: relative;
+}
+
+.topbar-icon-btn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text);
+  font-size: 17px;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.topbar-icon-btn:hover,
+.topbar-icon-btn.is-open {
+  background: var(--surface-2);
+  border-color: var(--border);
+}
+
+.topbar-icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Sits on the bell's corner, and is a fixed-size dot until there is a number to
+ * show, so an empty bell never carries a stray circle. */
+.topbar-badge {
+  position: absolute;
+  top: 2px;
+  right: 1px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #dc2626;
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  border: 2px solid var(--surface);
+  font-variant-numeric: tabular-nums;
+}
+
+.topbar-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.18);
+  transition: border-color 0.15s ease;
+}
+
+.topbar-avatar:hover,
+.topbar-avatar.is-open {
+  border-color: var(--accent);
+}
+
+.topbar-avatar:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Panels ─────────────────────────────────────────────────────────────────
+ *
+ * Anchored to their trigger (.topbar-bell-root / .topbar-menu-root are
+ * position:relative), so both hang below the button and stay inside the viewport
+ * at every width without measuring anything in JS. Nothing between the top bar
+ * and them sets overflow, so there is no ancestor to clip an absolute child.
+ */
+.topbar-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: var(--z-dropdown);
+  /* min() so a narrow phone can shrink the panel instead of letting it push
+     past the left edge of the screen. */
+  min-width: min(268px, calc(100vw - 24px));
+  max-width: min(360px, calc(100vw - 24px));
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 16px 40px rgba(15, 23, 42, 0.18);
+  animation: topbar-panel-in 0.14s ease;
+}
+
+@keyframes topbar-panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.topbar-notifications {
+  /* The bell is not the right-hand control, so right:0 would line the panel up
+     with the bell's own edge and push it past the avatar. Offset back by the
+     avatar and the gap to land on the top bar's content edge, where both panels
+     belong. */
+  right: calc(-1 * (var(--avatar-size) + var(--topbar-gap)));
+}
+
+.topbar-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.topbar-panel-title {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.topbar-markall {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 7px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.topbar-markall:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.topbar-empty {
+  margin: 0;
+  padding: 20px 14px;
+  text-align: center;
+  color: var(--text-faint);
+  font-size: 12.5px;
+}
+
+.topbar-notif-list {
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
+.topbar-notif {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.topbar-notif:hover {
+  background: var(--surface-2);
+}
+
+.topbar-notif.is-unread {
+  background: var(--accent-soft);
+}
+
+.topbar-notif.is-unread:hover {
+  background: var(--accent-soft);
+  filter: brightness(0.97);
+}
+
+.topbar-notif-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.topbar-notif-message {
+  font-size: 12px;
+  color: var(--text-muted);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.topbar-notif-time {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+
+.topbar-menu {
+  min-width: 232px;
+  padding: 6px;
+}
+
+.topbar-menu-head {
+  display: flex;
+  flex-direction: column;
+  padding: 8px 10px 9px;
+  margin-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+}
+
+.topbar-menu-name {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-menu-email {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.topbar-menu-item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.topbar-menu-item:hover:not(:disabled) {
+  background: var(--surface-2);
+}
+
+.topbar-menu-item:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.topbar-menu-item:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+.topbar-menu-label {
+  margin-left: auto;
+}
+
+.topbar-menu-logout:hover {
+  background: rgba(220, 38, 38, 0.14);
+  color: #dc2626;
+}
+
+.topbar-menu-error {
+  margin: 0 10px 4px;
+  font-size: 11px;
+  color: #dc2626;
+}
+
+/* ── Mobile navigation ───────────────────────────────────────────────────────
+ *
+ * Below 768px the sidebar is an off-canvas drawer rather than a rail. Measured at
+ * 390px: a permanent 240px sidebar took 62% of the width and left 150px of
+ * content, and the dashboard's own unbreakable text (a UUID, an email) then
+ * pushed the page to 531px.
+ *
+ * The hamburger and the scrim exist only at this width; on desktop the rail is
+ * exactly as it was.
+ */
+.admin-menu-btn,
+.admin-scrim {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .admin-menu-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    position: fixed;
+    top: 10px;
+    left: 10px;
+    z-index: var(--z-scrim);
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+    color: var(--text);
+    box-shadow: 0 4px 14px rgba(15, 23, 42, 0.14);
+    cursor: pointer;
+  }
+
+  .admin-scrim {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-scrim);
+    border: 0;
+    padding: 0;
+    background: rgba(15, 23, 42, 0.45);
+    cursor: pointer;
+  }
+
+  /* Off-canvas by default: translated out, and the rail's links are unreachable
+     while closed because the whole element is off-screen. */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 0;
+    /* Above its own backdrop, below any dialog opened from inside the drawer. */
+    z-index: calc(var(--z-scrim) + 1);
+    width: 280px;
+    max-width: 84vw;
+    height: 100vh;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 0 0 40px rgba(15, 23, 42, 0.3);
+  }
+
+  .sidebar.sidebar-open {
+    transform: translateX(0);
+  }
+
+  /* The collapse toggle is meaningless for a drawer — it opens at full width by
+     definition — so it is replaced by an explicit close. */
+  .sidebar-collapse {
+    display: none;
+  }
+
+  .sidebar-drawer-close {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 26px;
+    height: 26px;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    cursor: pointer;
+  }
+
+  .sidebar-drawer-close:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+
+  .admin-main {
+    padding: 56px 16px 20px;
+  }
+
+  /* The dashboard card is the narrowest thing on the page, so its unbreakable
+     content (a UUID, a long email) sets the floor for the whole page. */
+  .dashboard {
+    margin: 12px auto;
+    padding: 20px 16px;
+    overflow-wrap: anywhere;
+  }
 }
 
 /* 403 - Access denied (full page, no sidebar) */
@@ -809,7 +1780,7 @@ body {
   align-items: center;
   justify-content: center;
   padding: 20px;
-  z-index: 100;
+  z-index: var(--z-modal);
 }
 
 .modal-panel {
@@ -1055,7 +2026,7 @@ body {
 .perm-matrix thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-sticky);
   background: var(--surface-2);
 }
 
@@ -1083,7 +2054,7 @@ body {
   border-left: none;
   position: sticky;
   left: 0;
-  z-index: 2;
+  z-index: var(--z-sticky);
 }
 
 .perm-matrix-th-content {
@@ -1198,7 +2169,7 @@ body {
   position: sticky;
   left: 0;
   background: var(--surface);
-  z-index: 1;
+  z-index: var(--z-sticky);
 }
 
 .perm-matrix-row:hover .perm-matrix-td-module {
@@ -1600,7 +2571,7 @@ body {
   opacity: 0;
   pointer-events: none;
   transition: opacity 0.15s ease;
-  z-index: 10;
+  z-index: var(--z-tooltip);
 }
 
 [data-tooltip]:hover::after {
@@ -1903,6 +2874,14 @@ body {
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
+/* The native popup ignores most page styling, so at minimum the closed control
+   must not truncate its own selected value. */
+.ui-select,
+.form-row select,
+.frm-field select {
+  text-overflow: ellipsis;
+}
+
 .filament-btn {
   display: inline-flex;
   align-items: center;
@@ -2047,7 +3026,7 @@ body {
   border-radius: 0.75rem;
   box-shadow: 0 12px 34px rgba(15, 23, 42, 0.16);
   padding: 0.375rem;
-  z-index: 40;
+  z-index: var(--z-dropdown);
   animation: filament-bulk-in 0.16s ease;
 }
 
@@ -2214,7 +3193,7 @@ body {
   border-radius: 0.75rem;
   box-shadow: 0 12px 34px rgba(15, 23, 42, 0.16);
   padding: 0.375rem;
-  z-index: 40;
+  z-index: var(--z-dropdown);
   animation: filament-drop-in 0.16s ease;
 }
 
@@ -2655,6 +3634,280 @@ body {
   border-color: #bfdbfe;
 }
 
+.filament-alert-danger {
+  color: #991b1b;
+  background: #fee2e2;
+  border-color: #fecaca;
+}
+
+/* Purchase invoice cancel confirmation review */
+.cancel-review {
+  margin: 0.75rem 0 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.cancel-review div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  padding-bottom: 0.5rem;
+  border-bottom: 1px dashed var(--border);
+}
+
+.cancel-review div:last-child {
+  border-bottom: none;
+  padding-bottom: 0;
+}
+
+.cancel-review dt {
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.cancel-review dd {
+  margin: 0;
+  font-weight: 600;
+  color: var(--text);
+  text-align: right;
+}
+
+/* Receive stock modal per-row totals */
+.receive-row-total {
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.receive-row-total small {
+  display: block;
+}
+
+.filament-modal-footer-spacer {
+  flex: 1;
+}
+
+/* ── Receive stock modal ─────────────────────────────────────────────── */
+.receive-summary {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.5rem;
+  margin-bottom: 0.875rem;
+}
+
+.receive-summary-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.125rem;
+  padding: 0.5rem 0.375rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-2);
+}
+
+.receive-summary-item span {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+}
+
+.receive-summary-item strong {
+  font-size: 1.125rem;
+  line-height: 1.2;
+  color: var(--text);
+}
+
+.receive-summary-ok { color: #15803d !important; }
+.receive-summary-warn { color: #b45309 !important; }
+.receive-summary-bad { color: #b91c1c !important; }
+
+.receive-table td {
+  vertical-align: middle;
+}
+
+.receive-table .receive-center {
+  text-align: center;
+}
+
+.receive-product {
+  display: block;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.receive-product-due {
+  display: block;
+  color: var(--text-faint);
+  font-size: 0.75rem;
+  margin-top: 0.125rem;
+}
+
+.receive-due {
+  font-weight: 700;
+  color: var(--text);
+}
+
+.receive-stepper {
+  display: inline-flex;
+  align-items: stretch;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  overflow: hidden;
+  background: var(--surface);
+}
+
+.receive-stepper button {
+  width: 1.75rem;
+  border: none;
+  background: var(--surface-3);
+  color: var(--text-body);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.receive-stepper button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.receive-stepper button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.receive-stepper input {
+  width: 3.25rem;
+  border: none;
+  text-align: center;
+  font-weight: 600;
+  color: var(--text);
+  -moz-appearance: textfield;
+  appearance: textfield;
+}
+
+.receive-stepper input::-webkit-outer-spin-button,
+.receive-stepper input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.receive-stepper input:focus {
+  outline: none;
+  background: var(--accent-soft);
+}
+
+.receive-total {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  font-weight: 700;
+  color: var(--text);
+  white-space: nowrap;
+}
+
+.receive-total small {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  color: #b91c1c;
+}
+
+.receive-total.done {
+  color: #15803d;
+}
+
+.receive-row-over td {
+  background: #fef2f2;
+}
+
+.receive-row-done td {
+  background: #f0fdf4;
+}
+
+.receive-toolbar {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.receive-footer-note {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+/* ── Record payment modal ────────────────────────────────────────────── */
+.pay-balance {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: 0.625rem;
+  background: var(--surface-2);
+}
+
+.pay-balance-label {
+  display: block;
+  font-size: 0.6875rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  margin-bottom: 0.125rem;
+}
+
+.pay-balance-amount {
+  font-size: 1.25rem;
+  color: var(--text);
+}
+
+.pay-balance-after {
+  text-align: right;
+}
+
+.pay-balance-after strong {
+  color: var(--text);
+}
+
+.pay-badge {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.125rem 0.5rem;
+  border-radius: 9999px;
+  background: #dcfce7;
+  color: #166534;
+  font-size: 0.6875rem;
+  font-weight: 700;
+}
+
+.pay-quick {
+  display: flex;
+  gap: 0.5rem;
+  margin: -0.25rem 0 0.75rem;
+}
+
+.pay-quick .filament-btn {
+  height: 1.875rem;
+  padding: 0 0.75rem;
+  font-size: 0.75rem;
+}
+
+.pay-footer-note {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
 .filament-col-picker {
   position: relative;
   margin-left: auto;
@@ -2697,7 +3950,7 @@ body {
   border-radius: 0.75rem;
   box-shadow: 0 12px 34px rgba(15, 23, 42, 0.16);
   padding: 0.375rem;
-  z-index: 40;
+  z-index: var(--z-dropdown);
   animation: filament-drop-in 0.16s ease;
 }
 
@@ -2746,7 +3999,7 @@ body {
   justify-content: center;
   padding: 2rem 1.25rem;
   overflow-y: auto;
-  z-index: 100;
+  z-index: var(--z-modal);
 }
 
 .filament-modal {
@@ -3116,7 +4369,7 @@ body {
   position: absolute;
   top: calc(100% + 0.25rem);
   left: 0;
-  z-index: 50;
+  z-index: var(--z-dropdown);
   width: 19rem;
   max-height: 20rem;
   display: flex;
@@ -3228,6 +4481,7 @@ body {
 .phone-input-controls > input:focus {
   border-color: var(--accent);
   box-shadow: 0 0 0 3px var(--accent-ring);
+  /* Local lift inside this control's own context, not a layer. */
   z-index: 1;
   position: relative;
 }
@@ -3557,6 +4811,14 @@ body {
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 1.5rem;
   align-items: start;
+  /* A grid item defaults to min-width: auto, so it refuses to shrink below its
+     content. The Settings panels carry a wide preview, which pushed the page to
+     645px at a 390px viewport. */
+  min-width: 0;
+}
+
+.settings-layout > * {
+  min-width: 0;
 }
 
 .settings-panel {
@@ -4394,7 +5656,7 @@ body {
 .inventory-save-bar {
   position: sticky;
   bottom: 0;
-  z-index: 20;
+  z-index: var(--z-toast);
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -4570,6 +5832,303 @@ body {
 .media-picker-busy {
   cursor: progress;
   opacity: 0.7;
+}
+
+.media-picker-edit {
+  position: absolute;
+  bottom: 0.25rem;
+  left: 0.25rem;
+  width: 1.375rem;
+  height: 1.375rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 9999px;
+  background: rgba(15, 23, 42, 0.65);
+  color: #fff;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+
+.media-picker-edit:hover {
+  background: var(--accent);
+}
+
+.media-picker-edit:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.media-picker-edit-icon {
+  width: 0.75rem;
+  height: 0.75rem;
+  fill: currentColor;
+}
+
+/* Image crop & edit modal (shared by every image upload).
+   Was z-index: 1000 — the only arbitrary value in the stylesheet, and it only
+   worked because nothing else was anywhere near it. A modal belongs on the modal
+   layer; its inner toolbar then sits above it via the same token. */
+.image-editor-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.5rem;
+  background: rgba(15, 23, 42, 0.65);
+  backdrop-filter: blur(2px);
+}
+
+.image-editor {
+  display: flex;
+  flex-direction: column;
+  width: min(44rem, 100%);
+  max-height: 100%;
+  border-radius: 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.35);
+  overflow: hidden;
+}
+
+.image-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.875rem 1.125rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.image-editor-header h2 {
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.image-editor-close {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: none;
+  border-radius: 9999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 1.125rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.image-editor-close:hover {
+  background: var(--border);
+  color: var(--text);
+}
+
+.image-editor-canvas {
+  position: relative;
+  width: 100%;
+  height: min(24rem, 45vh);
+  background: var(--surface-3);
+}
+
+.image-editor-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+  padding: 0.875rem 1.125rem;
+  border-top: 1px solid var(--border);
+}
+
+.image-editor-ratios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+}
+
+.image-editor-chip {
+  padding: 0.25rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease, color 0.15s ease;
+}
+
+.image-editor-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.image-editor-chip.active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.image-editor-chip:not(button) {
+  cursor: default;
+}
+
+.image-editor-size .image-editor-select {
+  flex: 1;
+  min-width: 0;
+  max-width: 16rem;
+  padding: 0.375rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-2);
+  color: var(--text-body);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.image-editor-size .image-editor-select:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.image-editor-custom-size {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  color: var(--text-muted);
+  font-size: 0.75rem;
+}
+
+.image-editor-custom-size input {
+  width: 3.75rem;
+  padding: 0.375rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--surface-2);
+  color: var(--text-body);
+  font-size: 0.8125rem;
+}
+
+.image-editor-custom-size input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-ring);
+}
+
+.image-editor-size-hint {
+  margin-left: auto;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+/* 404 page (admin panel, unknown URLs) */
+.notfound-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  min-height: 55vh;
+  text-align: center;
+  padding: 2rem 1rem;
+}
+
+.notfound-code {
+  margin: 0;
+  font-size: 5rem;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.03em;
+  color: var(--accent);
+  opacity: 0.85;
+}
+
+.notfound-page h1 {
+  margin: 0.25rem 0 0;
+  font-size: 1.375rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.notfound-text {
+  margin: 0.375rem 0 0;
+  max-width: 26rem;
+  color: var(--text-muted);
+  font-size: 0.9375rem;
+}
+
+.notfound-actions {
+  display: flex;
+  gap: 0.625rem;
+  margin-top: 1.25rem;
+}
+
+.notfound-actions a {
+  text-decoration: none;
+}
+
+.image-editor-slider {
+  display: flex;
+  align-items: center;
+  gap: 0.625rem;
+}
+
+.image-editor-slider-label {
+  width: 3.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.image-editor-slider input[type="range"] {
+  flex: 1;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.image-editor-icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border: 1px solid var(--border);
+  border-radius: 9999px;
+  background: var(--surface-2);
+  color: var(--text-body);
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.image-editor-icon-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.image-editor-error {
+  padding: 0 1.125rem;
+}
+
+.image-editor-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.875rem 1.125rem;
+  border-top: 1px solid var(--border);
+}
+
+.image-editor-footer-spacer {
+  flex: 1;
 }
 
 /* Repeatable rows (product attributes / variants) */
@@ -5209,6 +6768,8 @@ body {
   justify-content: center;
   font-size: 0.875rem;
   position: relative;
+  /* Lifts the dot above its own ::after ring. Local to this control, not a
+     layer, so it stays off the stacking scale. */
   z-index: 1;
 }
 
@@ -5901,11 +7462,23 @@ body {
 }
 
 /* Inside a card body the form's own padding would double up. */
-.filament-pad > .admin-form,
-.filament-card > .admin-form {
+.filament-pad > .admin-form {
   padding: 0;
   background: none;
   max-width: none;
+}
+
+/* A form sitting directly in the card (create/edit) needs its padding, or it
+   renders flush to the card border. Keep the surface-less background but give
+   it a proper gutter. */
+.filament-card > .admin-form {
+  padding: 1.5rem;
+  background: none;
+  max-width: none;
+}
+.filament-card > .admin-form .media-picker,
+.filament-card > .admin-form .sp-form-grid {
+  margin-top: 0.25rem;
 }
 
 .filament-check {
@@ -5959,7 +7532,7 @@ body {
 .admin-main:has(.filament-page--list) {
   display: flex;
   flex-direction: column;
-  height: 100vh;
+  height: 100%;
   overflow: hidden;
 }
 
@@ -6020,7 +7593,7 @@ body {
 .filament-table thead th {
   position: sticky;
   top: 0;
-  z-index: 2;
+  z-index: var(--z-sticky);
   background: var(--surface-2);
   box-shadow:
     inset 0 -1px 0 var(--border),
@@ -6030,7 +7603,7 @@ body {
 /* The checkbox column is sticky too, so it needs the same treatment or the
    select-all box goes transparent on scroll. */
 .filament-table thead th.filament-th-check {
-  z-index: 3;
+  z-index: var(--z-sticky);
 }
 
 /* Sticky cells stack horizontally as well as vertically when the table is
@@ -6041,7 +7614,7 @@ body {
   position: sticky;
   left: 0;
   background: var(--surface);
-  z-index: 1;
+  z-index: var(--z-sticky);
 }
 
 /* A pinned cell with its own background does NOT inherit the row's hover
@@ -6054,7 +7627,7 @@ body {
 
 .filament-table thead .filament-th-check {
   background: var(--surface-2);
-  z-index: 3;
+  z-index: var(--z-sticky);
 }
 
 /* A focused scroll region needs a visible ring: it is now a tab stop, and a
@@ -6125,7 +7698,7 @@ body {
 .variant-table thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: var(--z-sticky);
   background: var(--surface-2);
 }
 
@@ -6186,6 +7759,104 @@ body {
   border-top: 1px solid #f3f4f6;
 }
 .pp-line:first-child { border-top: none; }
+
+/* Each cell is its own box so the stacked phone layout has something to hang a
+   label on. On desktop it must not change the row, so the wrapper takes the
+   cell's grid track and the child fills it. */
+.pp-cell {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+}
+
+.pp-cell > * {
+  min-width: 0;
+  width: 100%;
+}
+
+/* The line total must reach the full column width or `text-align: right` has
+   nothing to align against and the figure drifts left of its header — measured
+   40px off before this. */
+.pp-cell > .pp-money {
+  width: 100%;
+  text-align: right;
+}
+
+.pp-cell > .pp-sell {
+  width: 100%;
+}
+
+/* ── Purchase lines: phone layout ───────────────────────────────────────────
+ *
+ * The nine-column grid needs 864px before it starts and measured 1001px at a
+ * 390px viewport. Stacking trades the header row for a data-label on every cell,
+ * so each field names itself.
+ *
+ * This block comes AFTER the base .pp-line rules on purpose: equal specificity
+ * means source order decides, and these must win. */
+@media (max-width: 768px) {
+  /* The header row carries BOTH classes — "pp-line pp-line-head" — so hiding it
+     means overriding `.pp-line`'s own display: grid, set two rules below.
+     Matching on both outranks it; `.pp-line-head` alone lost the cascade. */
+  .pp-line.pp-line-head {
+    display: none;
+  }
+
+  .pp-lines {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .pp-line {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 12px;
+    padding: 14px;
+    border: 1px solid var(--border);
+    border-top: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--surface);
+  }
+
+  /* Product, variant, selling price and the line total each want the full
+     width; the four numeric fields pair up two per row. */
+  .pp-cell[data-label="Product"],
+  .pp-cell[data-label="Variant"],
+  .pp-cell[data-label="Selling price"],
+  .pp-cell[data-label="Line total"] {
+    grid-column: 1 / -1;
+  }
+
+  .pp-cell {
+    display: block;
+  }
+
+  .pp-cell::before {
+    content: attr(data-label);
+    display: block;
+    margin-bottom: 4px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-muted);
+  }
+
+  /* The margin hint sat beside the input on desktop; under a label it goes
+     below, or it lands on the label's own line. */
+  .pp-sell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .pp-remove {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+}
 .pp-line-head {
   background: #f9fafb;
   font-size: 11px;
@@ -6252,7 +7923,7 @@ body {
 }
 .pp-picker-menu {
   position: absolute;
-  z-index: 30;
+  z-index: var(--z-dropdown);
   top: calc(100% + 4px);
   left: 0;
   right: 0;
@@ -6452,7 +8123,7 @@ body {
 
 .ss-panel {
   position: absolute;
-  z-index: 40;
+  z-index: var(--z-dropdown);
   top: calc(100% + 4px);
   left: 0;
   right: 0;
@@ -6649,3 +8320,125 @@ body {
 .pp-line .text-muted { color: #9ca3af; padding: 8px 0; }
 
 .pp-no-variants { white-space: nowrap; }
+
+/* Shared elegant motion for auth screens (Login/Forgot/Reset), used by
+   .auth-container/.auth-form which live in index.css, not Auth.css. */
+@keyframes ic-bgpan {
+  0% { background-position: center 30%; }
+  50% { background-position: center 60%; }
+  100% { background-position: center 30%; }
+}
+@keyframes ic-fade-up {
+  from { opacity: 0; transform: translateY(14px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.auth-container {
+  background-size: cover;
+  animation: ic-bgpan 12s ease-in-out infinite;
+}
+.auth-form {
+  animation: ic-fade-up .5s ease both;
+  border: 1px solid rgba(255,255,255,.6);
+  backdrop-filter: blur(6px);
+}
+.auth-form button[type="submit"],
+.auth-form .sf-btn,
+.auth-form a.btn {
+  transition: transform .18s ease, box-shadow .18s ease, background .18s ease;
+}
+.auth-form button[type="submit"]:hover { transform: translateY(-1px); box-shadow: 0 8px 18px rgba(0,0,0,.18); }
+.auth-form button[type="submit"]:active { transform: translateY(0) scale(.98); }
+.auth-form input:focus { border-color: var(--accent, #3b82f6); box-shadow: 0 0 0 3px var(--accent-ring, rgba(59,130,246,.15)); }
+
+@media (prefers-reduced-motion: reduce) {
+  .auth-container { animation: none; }
+  .auth-form { animation: none; }
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+/* ── Selects ────────────────────────────────────────────────────────────────
+ *
+ * THE LAST BLOCK IN THIS FILE, deliberately.
+ *
+ * Every container here styles its own selects with a `padding` SHORTHAND
+ * (`.frm-field input, .frm-field select { padding: 8px 10px }`, for one), and
+ * several of those rules sit thousands of lines below where this block used to
+ * live. Equal specificity plus later source order meant the shorthand silently
+ * reset padding-right to 10px and ran the selected text under the chevron. Only
+ * a trailing position wins reliably.
+ *
+ * What it sets is deliberately minimal: the things a <select> cannot inherit
+ * (native appearance, the chevron, room for the chevron). Height, radius, font
+ * and border are NOT set here — each container already matches those to its own
+ * inputs, and imposing one global size is what made dropdowns look inconsistent
+ * from page to page (35px/6px on the invoice form, 38px/8px on the product
+ * form). Imposing less is what makes them look alike.
+ *
+ * Applied two ways: `.ui-select` opts a select in that sits outside the known
+ * containers, and the container selectors opt in everything else, so a new
+ * dropdown cannot forget.
+ */
+.ui-select,
+.form-row select,
+.frm-field select,
+.pp-line select,
+.sf-field select,
+.sp-form-grid select,
+.store-edit-row select,
+.filament-select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  /* Room for the chevron, so a long selected value is never run under it. */
+  padding-right: 2rem;
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.6rem center;
+  background-size: 12px 12px;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.ui-select:hover,
+.form-row select:hover,
+.frm-field select:hover,
+.pp-line select:hover,
+.sf-field select:hover,
+.sp-form-grid select:hover,
+.store-edit-row select:hover,
+.filament-select:hover {
+  border-color: #9ca3af;
+}
+
+.ui-select:focus-visible,
+.form-row select:focus-visible,
+.frm-field select:focus-visible,
+.pp-line select:focus-visible,
+.sf-field select:focus-visible,
+.sp-form-grid select:focus-visible,
+.store-edit-row select:focus-visible,
+.filament-select:focus-visible {
+  outline: none;
+  border-color: var(--accent, #6366f1);
+  box-shadow: 0 0 0 3px var(--accent-ring, rgba(99, 102, 241, 0.15));
+}
+
+/* A disabled dropdown should not invite a click, and its chevron should recede
+   with the rest of it rather than staying full contrast. */
+.ui-select:disabled,
+.form-row select:disabled,
+.frm-field select:disabled,
+.filament-select:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23cbd5e1' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
+}
+
+/* A long selected value ellipsises instead of colliding with the chevron. The
+   native popup itself is OS-drawn and ignores page styling either way. */
+.ui-select,
+.form-row select,
+.frm-field select,
+.filament-select {
+  text-overflow: ellipsis;
+}

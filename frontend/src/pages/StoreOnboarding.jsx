@@ -194,7 +194,7 @@ export default function StoreOnboarding({ mode = "wizard" }) {
         <div className="store-field-grid">
           <label className="store-field">
             <span>Store name *</span>
-            <input type="text" value={fieldValue("name")} onChange={setField("name")} placeholder="Earth धान्य Downtown" />
+            <input type="text" value={fieldValue("name")} onChange={setField("name")} placeholder="Quick Kart Downtown" />
           </label>
           <label className="store-field">
             <span>Contact email</span>

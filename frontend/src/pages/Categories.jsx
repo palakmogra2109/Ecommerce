@@ -7,6 +7,7 @@ import {
   deleteCategory,
 } from "../services/categories";
 import { CATEGORY_STATUS } from "@shared/constants";
+import { mediaUrl } from "../services/media";
 
 export default function Categories() {
   const navigate = useNavigate();
@@ -41,8 +42,17 @@ export default function Categories() {
           sortKey: "name",
           searchKeys: ["name"],
           render: (row) => (
-            <span className="category-name">
-              <strong>{row.name}</strong>
+            <span className="product-thumb-name">
+              {row.image ? (
+                <img
+                  src={mediaUrl(row.image)}
+                  alt=""
+                  className="product-thumb"
+                />
+              ) : null}
+              <span>
+                <strong>{row.name}</strong>
+              </span>
             </span>
           ),
         },

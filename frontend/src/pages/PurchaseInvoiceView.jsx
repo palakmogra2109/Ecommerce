@@ -4,7 +4,7 @@ import {
   getPurchaseInvoice, receiveStock, payPurchaseInvoice, cancelPurchaseInvoice,
 } from "../services/purchases";
 import { useAuth } from "../context/AuthContext";
-import { Notice, ReceiveModal, PayModal, rupees } from "./PurchaseInvoices";
+import { Notice, ReceiveModal, PayModal, CancelModal, rupees } from "./PurchaseInvoices";
 
 export default function PurchaseInvoiceView() {
   const { id } = useParams();
@@ -13,12 +13,11 @@ export default function PurchaseInvoiceView() {
 
   const [invoice, setInvoice] = useState(null);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
+  // busy is toggled by act() while a request runs; the modals read their own
+  // busy state, so the value itself is not needed here.
+  const [, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
-  // A reason must be typed. Defaulting it here would put a fiction on the audit
-  // trail, which is exactly what the backend refuses to do for itself.
-  const [cancelReason, setCancelReason] = useState("");
 
   const reload = useCallback(async () => {
     const data = await getPurchaseInvoice(id);
@@ -48,6 +47,7 @@ export default function PurchaseInvoiceView() {
 
   const [receiveOpen, setReceiveOpen] = useState(false);
   const [payOpen, setPayOpen] = useState(false);
+  const [cancelOpen, setCancelOpen] = useState(false);
 
   if (loading) return <div className="filament-page"><div className="filament-empty">Loading…</div></div>;
   if (!invoice) {
@@ -65,6 +65,20 @@ export default function PurchaseInvoiceView() {
   const ordered = invoice.items.reduce((s, i) => s + (Number(i.quantity_ordered) || 0), 0);
   const closed = invoice.status === "CANCELLED";
   const settled = Number(invoice.outstanding) === 0;
+
+  /*
+   * Receive stock is offered only while at least one line still has units
+   * due (ordered minus received, damaged and missing). When everything is
+   * accounted for the button is hidden entirely instead of sitting disabled.
+   */
+  const anyDue = invoice.items.some(
+    (item) =>
+      Number(item.quantity_ordered) -
+        Number(item.quantity_received) -
+        Number(item.quantity_damaged) -
+        Number(item.quantity_rejected) >
+      0
+  );
 
   return (
     <>
@@ -146,10 +160,10 @@ export default function PurchaseInvoiceView() {
         )}
 
         <div className="filament-modal-footer" style={{ border: "none" }}>
-          {can("purchase_invoices.receive") && !closed && (
+          {can("purchase_invoices.receive") && !closed && anyDue && (
             <button
               type="button" className="filament-btn filament-btn-primary"
-              onClick={() => setReceiveOpen(true)} disabled={received >= ordered}
+              onClick={() => setReceiveOpen(true)}
             >
               Receive stock
             </button>
@@ -160,22 +174,12 @@ export default function PurchaseInvoiceView() {
             </button>
           )}
           {can("purchase_invoices.cancel") && !closed && (
-            <div className="filament-modal-footer" style={{ border: "none", gap: 8 }}>
-              <input
-                type="text" value={cancelReason} onChange={(e) => setCancelReason(e.target.value)}
-                placeholder="Cancellation reason (required)" aria-label="Cancellation reason"
-              />
-              <button
-                type="button" className="filament-btn filament-btn-danger" disabled={busy || !cancelReason.trim()}
-                onClick={() => act(async () => {
-                  await cancelPurchaseInvoice(invoice.uuid, cancelReason.trim());
-                  setCancelReason("");
-                  await reload();
-                }, "Invoice cancelled")}
-              >
-                Cancel invoice
-              </button>
-            </div>
+            <button
+              type="button" className="filament-btn filament-btn-danger"
+              onClick={() => setCancelOpen(true)}
+            >
+              Cancel invoice
+            </button>
           )}
         </div>
       </div>
@@ -187,6 +191,8 @@ export default function PurchaseInvoiceView() {
       setReceiveOpen={setReceiveOpen}
       payOpen={payOpen}
       setPayOpen={setPayOpen}
+      cancelOpen={cancelOpen}
+      setCancelOpen={setCancelOpen}
       act={act}
       reload={reload}
     />
@@ -198,7 +204,7 @@ export default function PurchaseInvoiceView() {
    reason as the supplier bank form: nested fixed overlays race on paint order
    and the wrong one swallows the clicks. */
 export function PurchaseInvoiceModals({ invoice, receiveOpen, setReceiveOpen, payOpen,
-                                       setPayOpen, act, reload }) {
+                                       setPayOpen, cancelOpen, setCancelOpen, act, reload }) {
   return (
     <>
       {receiveOpen && (
@@ -224,6 +230,19 @@ export function PurchaseInvoiceModals({ invoice, receiveOpen, setReceiveOpen, pa
               await reload();
             }, "Payment recorded");
             setPayOpen(false);
+          }}
+        />
+      )}
+      {cancelOpen && (
+        <CancelModal
+          invoice={invoice}
+          onClose={() => setCancelOpen(false)}
+          onSubmit={async (reason) => {
+            await act(async () => {
+              await cancelPurchaseInvoice(invoice.uuid, reason);
+              await reload();
+            }, "Invoice cancelled");
+            setCancelOpen(false);
           }}
         />
       )}
