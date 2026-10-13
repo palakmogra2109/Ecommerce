@@ -36,8 +36,17 @@ function cartesian(groups) {
   );
 }
 
+// Identity of a variant's attribute combination.
+//
+// SORTED, and every caller must build the key through this function. Joining in
+// raw attribute order meant a stored variant saved as {Size, Colour} never
+// matched a combo generated as {Colour, Size}, which orphaned it and dropped its
+// uuid — after which the purchase form could no longer select it.
 function combinationKey(combo) {
-  return combo.map((item) => `${item.name}:${item.value}`).join("|");
+  return combo
+    .map((item) => `${item.name}:${item.value}`)
+    .sort()
+    .join("|");
 }
 
 function buildSku(base, combo) {
@@ -338,7 +347,11 @@ export default function Inventory() {
       const variants = combos.map((combo) => {
         const match = existing.get(combinationKey(combo));
 
+        // `...match` first, for the same reason as ProductForm's generateVariants:
+        // this used to rebuild each variant from a fixed key list, dropping
+        // uuid, barcode, status and the per-variant `image` on every Generate.
         return {
+          ...match,
           name: combo.map((item) => item.value).join(" / "),
           sku: match?.sku || buildSku(baseSku, combo),
           price: match?.price ?? base.price ?? "",

@@ -238,7 +238,19 @@ export function resolveVariant(product, variantUuid, { requireActive = true } = 
     };
   }
 
-  const variant = variants.find((v) => v.uuid === String(variantUuid));
+  // Matched on uuid first. The purchase form sends `v.uuid || v.sku`, so a
+  // variant that never got a uuid arrives here carrying its SKU — matching that
+  // too turns a hard 400 into a working line instead of "Variant does not belong
+  // to this product", which is what any variant lacking a uuid used to produce.
+  // uuid is tried across every variant before falling back to sku, so a SKU can
+  // never shadow a different variant's real uuid.
+  const needle = String(variantUuid);
+
+  let variant = variants.find((v) => v.uuid === needle);
+
+  if (!variant) {
+    variant = variants.find((v) => v.sku && String(v.sku) === needle);
+  }
 
   if (!variant) {
     return { ok: false, error: "Variant does not belong to this product" };

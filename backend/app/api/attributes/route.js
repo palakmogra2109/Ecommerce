@@ -23,9 +23,13 @@ export async function GET(request) {
 
     const { searchParams } = new URL(request.url);
 
+    const type = searchParams.get("type") ?? "";
+
     if (searchParams.get("all") === "1") {
       const attributes = await AttributeType.all({
         status: searchParams.get("status") ?? "",
+        type,
+        parentUuid: searchParams.get("parent") ?? "",
       });
 
       return Response.json(
@@ -41,6 +45,7 @@ export async function GET(request) {
     const { rows: attributes, pagination } = await AttributeType.list({
       search,
       status,
+      type,
       page,
       limit,
     });

@@ -1,5 +1,6 @@
 import pool from "../db.js";
 import { paginate } from "../pagination.js";
+import { ensureIdentity } from "../services/productVariants.js";
 
 const TABLE = "products";
 
@@ -9,9 +10,15 @@ const PUBLIC_COLUMNS =
   " inventory_mode, pricing_attribute_uuid, expiry_date," +
   " meta_title, meta_description, meta_keywords, created_at, updated_at";
 
+// `variants` must be here. Two write paths need the CURRENT variant list to
+// decide whether an edit is safe — the PATCH guard that refuses removing or
+// renumbering a variant with history, and the variant-pricing screen that
+// merges price/stock back by sku. Without this column both silently saw an
+// empty array: the pricing screen wrote back nothing at all, and the edit guard
+// waved every edit through.
 const INTERNAL_COLUMNS =
   "id, uuid, name, slug, sku, brand_id, category_id, price, discount_price," +
-  " stock, status, inventory_mode, created_at, updated_at";
+  " stock, images, attributes, variants, status, inventory_mode, created_at, updated_at";
 
 const BASE_SELECT = `
   SELECT p.uuid, p.name, p.slug, p.sku, p.short_description, p.description,
@@ -305,7 +312,17 @@ export const Product = {
     }
 
     if (updates.variants !== undefined) {
-      set("variants", JSON.stringify(Array.isArray(updates.variants) ? updates.variants : []));
+      // ensureIdentity before storing: a variant that arrives without a uuid
+      // gets one here, so it can never be persisted without an identity the
+      // purchase form and stock views can join on.
+      set(
+        "variants",
+        JSON.stringify(
+          Array.isArray(updates.variants)
+            ? ensureIdentity(updates.variants)
+            : []
+        )
+      );
     }
 
     if (updates.featured !== undefined) {

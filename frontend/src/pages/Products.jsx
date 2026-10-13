@@ -82,31 +82,6 @@ export default function Products() {
             row.brand_name || <span className="filament-muted">—</span>,
         },
         {
-          label: "Price",
-          sortKey: "price",
-          render: (row) => {
-            const variants = Array.isArray(row.variants) ? row.variants : [];
-            const discountVariants = variants.filter((v) => {
-              const d = v.discount_price ?? v.discountPrice;
-              return d != null && Number(d) > 0 && Number(d) < Number(v.price);
-            });
-            const salePrice =
-              discountVariants.length > 0
-                ? Math.min(...discountVariants.map((v) => Number(v.discount_price ?? v.discountPrice)))
-                : (row.discount_price ?? row.discountPrice);
-            const showDisc = salePrice != null && Number(salePrice) > 0;
-            if (showDisc) {
-              return (
-                <span>
-                  <strong>{formatCurrency(salePrice)}</strong>{" "}
-                  <span className="price-old">{formatCurrency(row.price)}</span>
-                </span>
-              );
-            }
-            return <strong>{formatCurrency(row.price)}</strong>;
-          },
-        },
-        {
           label: "Stock",
           sortKey: "stock",
           render: (row) => (

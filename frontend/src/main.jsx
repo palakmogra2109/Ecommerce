@@ -6,7 +6,7 @@ import App from "./App";
 import { AuthProvider } from "./context/AuthContext";
 import { SettingsProvider } from "./context/SettingsContext";
 
-import "./index.css";
+import "./index.scss";
 
 ReactDOM.createRoot(
   document.getElementById("root")

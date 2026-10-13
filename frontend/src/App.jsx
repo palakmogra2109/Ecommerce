@@ -44,6 +44,9 @@ import VariantPricing from "./components/VariantPricing";
 import CategoriesForm from "./components/CategoriesForm";
 import BrandForm from "./components/BrandForm";
 import AttributeForm from "./components/AttributeForm";
+import AttributeValues from "./pages/AttributeValues";
+import AttributeValueView from "./pages/AttributeValueView";
+import AttributeValueForm from "./components/AttributeValueForm";
 import CouponForm from "./components/CouponForm";
 import GiftCardForm from "./components/GiftCardForm";
 import BannerForm from "./components/BannerForm";
@@ -130,6 +133,16 @@ function AttributeEditRoute() {
   }
 
   return <AttributeForm attributeId={id} />;
+}
+
+function AttributeValueEditRoute() {
+  const { id } = useParams();
+
+  if (!id || id === "undefined" || id === "null") {
+    return <Navigate to="/attribute-values" replace />;
+  }
+
+  return <AttributeValueForm valueId={id} />;
 }
 
 function ProductEditRoute() {
@@ -447,6 +460,35 @@ export default function App() {
           path="/attributes/:id/edit"
           element={
             adminGuard("attributes.update", "Update Attributes", <AttributeEditRoute />)
+          }
+        />
+
+        {/* Attribute Values. A child of attributes, so it reuses the
+            attributes.* permissions exactly as sub-categories reuses
+            categories.*. Editing is its own route, gated on update rather than
+            view, so opening a value read-only can never change one. */}
+        <Route
+          path="/attribute-values"
+          element={
+            adminGuard("attributes.view", "Attribute Values", <AttributeValues />)
+          }
+        />
+        <Route
+          path="/attribute-values/new"
+          element={
+            adminGuard("attributes.create", "Create Attribute Values", <AttributeValueForm />)
+          }
+        />
+        <Route
+          path="/attribute-values/:id"
+          element={
+            adminGuard("attributes.view", "Attribute Values", <AttributeValueView />)
+          }
+        />
+        <Route
+          path="/attribute-values/:id/edit"
+          element={
+            adminGuard("attributes.update", "Update Attribute Values", <AttributeValueEditRoute />)
           }
         />
 

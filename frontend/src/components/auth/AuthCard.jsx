@@ -1,4 +1,4 @@
-import "../../styles/Auth.css";
+import "../../styles/Auth.scss";
 
 // The centered card every auth screen renders into. Owns the page background,
 // the card shell and the heading, so Login, Register and the storefront panel

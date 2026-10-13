@@ -83,13 +83,18 @@ export default function VariantPricing() {
 
     try {
       const data = await updateProductVariantPricing(id, {
-        variants: product.variants.map((v) => ({
-          sku: v.sku,
-          name: v.name,
-          price: v.price,
-          stock: v.stock,
-          discountPrice: v.discountPrice ?? "",
-        })),
+      variants: product.variants.map((v) => ({
+        sku: v.sku,
+        name: v.name,
+        price: v.price,
+        stock: v.stock,
+        discountPrice: v.discountPrice ?? "",
+        // Sent so this screen cannot quietly strip a variant's images. The route
+        // matches by sku/name and spreads the STORED variant, so they would
+        // survive regardless — but sending them keeps this allow-list from being
+        // a trap for the next field added to a variant.
+        images: Array.isArray(v.images) ? v.images : v.image ? [v.image] : [],
+      })),
       });
 
       if (data.success) {

@@ -1,5 +1,10 @@
 import { corsHeaders } from "@/lib/cors";
-import { productUsage, ProductInUseError } from "@/lib/productUsage";
+import {
+  productUsage,
+  ProductInUseError,
+  variantUsage,
+  variantUsageMessage,
+} from "@/lib/productUsage";
 import { Product } from "@/lib/models/product";
 import { authorize } from "@/lib/authorization";
 import { KEY_PERMISSIONS, PRODUCT_STATUSES, INVENTORY_MODES, slugify } from "@shared/constants";
@@ -45,8 +50,13 @@ export async function GET(_request, { params }) {
         }))
       : [];
 
+    // Which variants the edit form must not let the operator remove or renumber.
+    // Sent with the product so the form can grey out exactly those rows instead
+    // of locking the whole product — the same reason PATCH checks per variant.
+    const lockedVariants = await variantUsage(id, variants);
+
     return Response.json(
-      { success: true, product: { ...product, variants } },
+      { success: true, product: { ...product, variants }, lockedVariants },
       { status: 200, headers: corsHeaders() }
     );
   } catch (error) {
@@ -78,13 +88,78 @@ export async function PATCH(request, { params }) {
 
     const body = await request.json();
 
-    // A product that has been ordered, stocked in a store or received against a
-    // purchase invoice is history. Editing its details or flipping it between
-    // ACTIVE and DRAFT would rewrite what those records appear to mean, so both
-    // are refused with the reason.
-    const usage = await productUsage(id);
-    if (usage.isUsed) {
-      throw new ProductInUseError(usage);
+    // ── Per-variant history, not a blanket lock ──────────────────────────────
+    //
+    // This used to refuse the WHOLE update whenever the product had any usage
+    // at all. With 30 variants and history on one of them, that froze all 30 —
+    // the operator could not even add a new colour. The rule is now narrow:
+    //
+    //   adding a variant        -> always allowed
+    //   removing a variant      -> refused only if that variant has history
+    //   price / stock           -> refused only if that variant has history
+    //   everything else         -> allowed
+    //
+    // Product-level history still blocks DELETE, which is unchanged.
+    const stored = await Product.getInternalByUuid(id);
+    const currentVariants = Array.isArray(stored?.variants) ? stored.variants : [];
+
+    if (stored && body.variants !== undefined && Array.isArray(body.variants)) {
+      const usage = await variantUsage(id, currentVariants);
+
+      if (usage.length > 0) {
+        // A variant survives if it is still submitted under any identifier it
+        // is known by — the form round-trips uuid, but older rows may carry only
+        // a sku or a name, so all three are accepted as "the same variant".
+        const matchesFinding = (candidate, finding) => {
+          const keys = [candidate?.uuid, candidate?.sku, candidate?.name].filter(
+            (v) => typeof v === "string" && v.trim() !== ""
+          );
+
+          return keys.some(
+            (key) =>
+              key === finding.uuid || key === finding.sku || key === finding.name
+          );
+        };
+
+        for (const finding of usage) {
+          const next = body.variants.find((candidate) =>
+            matchesFinding(candidate, finding)
+          );
+
+          if (!next) {
+            throw new ProductInUseError({
+              isUsed: true,
+              reasons: [],
+              total: finding.total,
+              code: "VARIANT_IN_USE",
+              message: variantUsageMessage(finding, "remove"),
+            });
+          }
+
+          // Numbers that a purchase receipt already set.
+          const previous = currentVariants.find((variant) =>
+            matchesFinding(variant, finding)
+          );
+
+          const priceChanged =
+            previous && Number(next.price ?? 0) !== Number(previous.price ?? 0);
+          const stockChanged =
+            previous && parseInt(next.stock, 10) !== parseInt(previous.stock, 10);
+
+          if (priceChanged || stockChanged) {
+            throw new ProductInUseError({
+              isUsed: true,
+              reasons: [],
+              total: finding.total,
+              code: "VARIANT_IN_USE",
+              message: variantUsageMessage(
+                finding,
+                priceChanged ? "change the price of" : "change the stock of"
+              ),
+            });
+          }
+        }
+      }
     }
 
     if (

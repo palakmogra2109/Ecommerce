@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       '@shared': fileURLToPath(new URL('../shared', import.meta.url)),
+      '@styles': fileURLToPath(new URL('../src/styles', import.meta.url)),
     },
   },
   // Point envDir at the repo root so Vite watches the .env that holds

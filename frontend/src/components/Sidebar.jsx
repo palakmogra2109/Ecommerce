@@ -11,6 +11,7 @@ import {
   FiInbox,
   FiLayout,
   FiGift,
+  FiList,
   FiMail,
   FiPercent,
   FiSettings,
@@ -41,6 +42,7 @@ const MODULE_VIEW_PERMISSIONS = {
   sub_categories: "categories.view",
   brands: "brands.view",
   attributes: "attributes.view",
+  attribute_values: "attributes.view",
   inventory: "products.view",
   orders: "orders.view",
   customers: "customers.view",
@@ -118,6 +120,14 @@ const MODULES = [
         path: "/attributes",
         label: "Attributes",
         icon: FiFileText,
+      },
+      // Sits directly after Attributes because a value belongs to an attribute;
+      // the listing is grouped by parent, so they read as one pair.
+      {
+        slug: "attribute_values",
+        path: "/attribute-values",
+        label: "Attribute Values",
+        icon: FiList,
       },
       /*
        * Stock & Price is no longer offered in the navigation: purchase

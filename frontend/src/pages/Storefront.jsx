@@ -9,10 +9,10 @@ import {
 } from "react-icons/fi";
 
 import { giftCardImage, scopeSummary } from "../lib/giftCardArt";
-import "../styles/Storefront.css";
-// The account panel reuses the shared auth field styling; Auth.css is pulled
+import "../styles/Storefront.scss";
+// The account panel reuses the shared auth field styling; Auth.scss is pulled
 // in here because this page does not render AuthCard (which would import it).
-import "../styles/Auth.css";
+import "../styles/Auth.scss";
 
 import AuthField from "../components/auth/AuthField";
 import PhoneInput from "../components/PhoneInput";

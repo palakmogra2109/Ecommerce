@@ -13,6 +13,12 @@ export async function listAttributes(params = {}) {
     searchParams.set("status", params.status);
   }
 
+  // "parent" = top-level attributes only, "value" = values only. Omitting it
+  // returns every row, which is what the product form's dropdowns want.
+  if (params.type) {
+    searchParams.set("type", params.type);
+  }
+
   if (params.all) {
     searchParams.set("all", "1");
   }

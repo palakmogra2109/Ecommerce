@@ -28,6 +28,10 @@ export default function Attributes() {
         listAttributes({
           search,
           status: filters.status,
+          // Top-level attributes only. Values live in the same table (an
+          // attribute row with a parent_id), and they have their own screen —
+          // listing them here too would show every row twice.
+          type: "parent",
           page,
           limit,
         })

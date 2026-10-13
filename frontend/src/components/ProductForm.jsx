@@ -8,8 +8,20 @@ import {
 import { listCategories } from "../services/categories";
 import { listBrands } from "../services/brands";
 import { listAttributes, createAttribute } from "../services/attributes";
+import {
+  listAttributeValues,
+  createAttributeValue,
+} from "../services/attributeValues";
 import Breadcrumb from "./Breadcrumb";
 import MediaPicker from "./MediaPicker";
+import VariantImageControl from "./VariantImageControl";
+import {
+  variantImages,
+  allVariantsShareImages,
+  attributeValues,
+  variantAttributeNames,
+  imagesForAttributeValue,
+} from "../utils/variantImages";
 import {
   PRODUCT_STATUS,
   INVENTORY_MODE,
@@ -20,6 +32,27 @@ import {
 import { useAuth } from "../context/AuthContext";
 
 const SKU_SEPARATOR = "-";
+
+// How variant images are assigned. All three are editing surfaces over the same
+// stored field — every variant keeps its own `images` array — so switching
+// between them never moves or duplicates data, it only changes where you type.
+const IMAGE_MODES = [
+  {
+    value: "all",
+    label: "Apply single image(s) to all SKUs",
+    hint: "The same image(s) will be assigned to every SKU. Use this option when all variants share identical image(s).",
+  },
+  {
+    value: "unique",
+    label: "Apply unique image(s) to each SKU",
+    hint: "Upload and assign different image(s) for each SKU individually. Use this when each variant has its own image(s).",
+  },
+  {
+    value: "attribute",
+    label: "Apply unique image(s) by attribute to each SKU",
+    hint: "Assign image(s) based on a selected attribute (such as flavour). All SKUs with the same attribute value will automatically share the same image(s).",
+  },
+];
 
 function buildSku(base, combo) {
   const prefix = (base || "SKU")
@@ -35,8 +68,28 @@ function buildSku(base, combo) {
   return suffix ? `${prefix}${SKU_SEPARATOR}${suffix}` : prefix;
 }
 
+// Identity of a variant's attribute combination, used to carry an existing
+// variant's uuid/sku/price across a regeneration.
+//
+// SORTED, and BOTH sides must build the key through this function. The parts
+// used to be joined in whatever order the attributes happened to be in, so a
+// stored variant whose attributes were saved as {Size, Colour} never matched a
+// combo generated as {Colour, Size}. That silently orphaned every variant —
+// losing its uuid, which then made the purchase form reject the line with
+// "Variant does not belong to this product", because the form sends
+// `v.uuid || v.sku` while the backend matches on uuid alone.
+//
+// Accepts either shape a combination arrives in: an array of {name, value}
+// from the cartesian product, or a plain object from a stored variant.
 function combinationKey(combo) {
-  return combo.map((item) => `${item.name}:${item.value}`).join("|");
+  const pairs = Array.isArray(combo)
+    ? combo.map((item) => [item?.name, item?.value])
+    : Object.entries(combo || {});
+
+  return pairs
+    .map(([name, value]) => `${name}:${value}`)
+    .sort()
+    .join("|");
 }
 
 function cartesian(groups) {
@@ -47,6 +100,28 @@ function cartesian(groups) {
       ),
     [[]]
   );
+}
+
+// Registered values bucketed by their parent attribute's uuid, so the value input
+// can offer the ones that already exist for the attribute chosen above it.
+function groupValuesByParent(values) {
+  const grouped = {};
+
+  for (const value of Array.isArray(values) ? values : []) {
+    const parent = value.parent_uuid || value.parentUuid;
+
+    if (!parent) {
+      continue;
+    }
+
+    grouped[parent] = grouped[parent] || [];
+
+    if (!grouped[parent].some((v) => v.toLowerCase() === String(value.name).toLowerCase())) {
+      grouped[parent].push(value.name);
+    }
+  }
+
+  return grouped;
 }
 
 function groupAttributes(flat) {
@@ -175,6 +250,10 @@ export default function ProductForm({ productId = null }) {
   const [categories, setCategories] = useState([]);
   const [brands, setBrands] = useState([]);
   const [attributes, setAttributes] = useState([]);
+  // Registered attribute values, keyed by the parent attribute's uuid. Offers
+  // suggestions in the value input; typing something new still works and
+  // registers it, so the list grows as the catalogue does.
+  const [attributeValuesByParent, setAttributeValuesByParent] = useState({});
   const [creatingAttribute, setCreatingAttribute] = useState(false);
   const [loading, setLoading] = useState(isEdit);
   const [errors, setErrors] = useState({});
@@ -182,24 +261,40 @@ export default function ProductForm({ productId = null }) {
   const [saving, setSaving] = useState(false);
   const [bulkPrice, setBulkPrice] = useState("");
 
+  // Variant-image assignment mode. Not persisted: it is re-inferred from the
+  // stored variants each time the form loads (see the load effect), so there is
+  // no column to add and no state that can drift out of step with the data.
+  const [imageMode, setImageMode] = useState("unique");
+  const [imageAttribute, setImageAttribute] = useState("");
+
+  // Variants that other records point at (a received purchase line, a stock
+  // movement, a batch). They cannot be removed or renumbered; everything else
+  // about them stays editable, and new variants can always be added.
+  const [lockedVariants, setLockedVariants] = useState([]);
+
   useEffect(() => {
     let active = true;
 
     const run = async () => {
       try {
-        const [catData, brandData, attrData] = await Promise.all([
+        const [catData, brandData, attrData, valueData] = await Promise.all([
           listCategories({ all: 1 }),
           listBrands({ all: 1 }),
-          listAttributes({ all: 1 }),
+          // Top-level attributes only: the picker drives variant combinations, and
+          // values ("Black") are entered against an attribute, not chosen as one.
+          listAttributes({ all: 1, type: "parent" }),
+          listAttributeValues({ all: 1 }),
         ]);
 
         if (active) {
           setCategories(catData.categories || []);
           setBrands(brandData.brands || []);
           setAttributes(attrData.attributes || []);
+          setAttributeValuesByParent(groupValuesByParent(valueData.values));
         }
       } catch {
-        // Dropdown options are non-critical.
+        // Dropdown options are non-critical. A failure here only costs the
+        // suggestions; typing a value still works and still registers it.
       }
     };
 
@@ -283,6 +378,25 @@ export default function ProductForm({ productId = null }) {
             metaDescription: p.meta_description || "",
             metaKeywords: p.meta_keywords || "",
           });
+
+          // Which variants the form must lock, per row.
+          if (Array.isArray(data.lockedVariants)) {
+            setLockedVariants(data.lockedVariants);
+          }
+
+          // Open in the mode that matches what is already stored, so an admin
+          // editing a product whose SKUs all share one photo lands on the bulk
+          // picker rather than a column of identical thumbnails. Only inferred —
+          // never persisted, so there is no state that can disagree with the data.
+          if (allVariantsShareImages(loadedVariants)) {
+            setImageMode("all");
+          }
+
+          const firstAttribute = variantAttributeNames(loadedVariants)[0];
+
+          if (firstAttribute) {
+            setImageAttribute(firstAttribute);
+          }
         } else {
           setMessage(data.message);
         }
@@ -453,17 +567,70 @@ export default function ProductForm({ productId = null }) {
       const list = [...prev.attributes];
       const current = list[index] || { values: [] };
       const values = [...(current.values || [])];
+      const added = [];
 
       for (const part of parts) {
         if (!values.some((v) => v.toLowerCase() === part.toLowerCase())) {
           values.push(part);
+          added.push(part);
         }
       }
 
       list[index] = { ...current, values, draft: "" };
 
+      // Register the newly typed values so the next product can pick them from
+      // the list instead of retyping. Fire-and-forget: the chip is already on
+      // screen, and a failure here must not block saving the product.
+      registerAttributeValues(current, added);
+
       return { ...prev, attributes: list, ...syncedOptions(prev, list) };
     });
+  }
+
+  /**
+   * Adds values to the central attribute_values table, ignoring any that are
+   * already registered under that attribute.
+   *
+   * The server enforces uniqueness per parent and answers 409 for a duplicate,
+   * which is the normal case when two products share a value — so it is treated
+   * as success rather than an error.
+   */
+  async function registerAttributeValues(attr, names) {
+    const parentUuid = attr?.attribute_uuid || attr?.attributeUuid;
+
+    if (!parentUuid || !Array.isArray(names) || names.length === 0) {
+      return;
+    }
+
+    const known = attributeValuesByParent[parentUuid] || [];
+    const missing = names.filter(
+      (name) => !known.some((v) => v.toLowerCase() === name.toLowerCase())
+    );
+
+    if (missing.length === 0) {
+      return;
+    }
+
+    const created = [];
+
+    for (const name of missing) {
+      try {
+        const data = await createAttributeValue({ name, parentUuid });
+
+        if (data.success) {
+          created.push(name);
+        }
+      } catch {
+        // Leave it out of the local list; the product still saves.
+      }
+    }
+
+    if (created.length > 0) {
+      setAttributeValuesByParent((prev) => ({
+        ...prev,
+        [parentUuid]: [...(prev[parentUuid] || []), ...created],
+      }));
+    }
   }
 
   function removeAttributeValue(index, valueIndex) {
@@ -502,6 +669,31 @@ export default function ProductForm({ productId = null }) {
       variants[index] = { ...variants[index], [field]: value };
       return { ...prev, variants };
     });
+  }
+
+  // ── Bulk variant-image writers ─────────────────────────────────────────────
+  //
+  // Each writes the same `images` array onto many variants at once. They are the
+  // mechanism behind the two bulk modes; nothing else in the form needs to know
+  // which mode is active.
+
+  function setVariantImagesEverywhere(images) {
+    setForm((prev) => ({
+      ...prev,
+      variants: prev.variants.map((variant) => ({ ...variant, images })),
+    }));
+  }
+
+  function setVariantImagesForAttributeValue(attributeName, value, images) {
+    setForm((prev) => ({
+      ...prev,
+      variants: prev.variants.map((variant) =>
+        variant.attributes &&
+        variant.attributes[attributeName] === value
+          ? { ...variant, images }
+          : variant
+      ),
+    }));
   }
 
   function addVariant() {
@@ -546,10 +738,9 @@ export default function ProductForm({ productId = null }) {
         const entries = Object.entries(variant.attributes || {});
 
         if (entries.length > 0) {
-          existingByKey.set(
-            entries.map(([name, value]) => `${name}:${value}`).join("|"),
-            variant
-          );
+          // Through the same helper, so attribute ORDER cannot stop an existing
+          // variant from being found and losing its uuid.
+          existingByKey.set(combinationKey(variant.attributes), variant);
         }
       }
 
@@ -566,7 +757,13 @@ export default function ProductForm({ productId = null }) {
             ? parseInt(option.stock, 10) || 0
             : existing?.stock ?? 0;
 
+        // Spread `existing` FIRST so every key it already carries survives:
+        // uuid, barcode, status, and the per-variant `image`. This used to build
+        // a fresh literal from just these five fields, so anything else was
+        // silently dropped every time an admin pressed this button — a variant
+        // image attached a moment earlier vanished on the next Generate.
         return {
+          ...existing,
           name: combo.map((item) => item.value).join(" / "),
           sku: existing?.sku || buildSku(baseSku, combo),
           price,
@@ -759,11 +956,21 @@ export default function ProductForm({ productId = null }) {
           ? []
           : form.variants
         ).map((variant) => ({
+          // uuid must be carried through. This map is an ALLOW-LIST, so a key
+          // missing here is deleted on every save — which is how variants lost
+          // their uuid and the purchase form then rejected the line with
+          // "Variant does not belong to this product". Only a genuinely new
+          // variant has no uuid, and the server assigns one.
+          uuid: variant.uuid || undefined,
           name: variant.name || "",
           sku: (variant.sku || "").trim(),
           price: variant.price === "" ? 0 : Number(variant.price),
           stock: parseInt(variant.stock, 10) || 0,
           discountPrice: variant.discountPrice === "" ? null : Number(variant.discountPrice),
+          // Always the array shape. variantImages() folds in the legacy single
+          // `image` string, so a product saved before this feature gained arrays
+          // keeps its picture and silently upgrades to the new shape on save.
+          images: variantImages(variant),
           attributes:
             variant.attributes && Object.keys(variant.attributes).length > 0
               ? variant.attributes
@@ -812,6 +1019,101 @@ export default function ProductForm({ productId = null }) {
   );
 
   const activePricingGroup = pricingGroup(form);
+
+  // ── Variant image mode, derived ────────────────────────────────────────────
+  //
+  // The bulk modes need a value to bind their picker to. "All SKUs" only has a
+  // meaningful current value when every variant genuinely agrees; if they differ,
+  // showing the first variant's images would claim a shared value that does not
+  // exist and invite the operator to overwrite real per-variant work by accident.
+  // So a disagreement reads as empty, with a note saying why.
+  // A row is locked when the server says one of its identifiers has history.
+  // Matched on uuid, sku and name for the same reason the server does: older
+  // rows may carry only some of them.
+  const isVariantLocked = (variant) =>
+    lockedVariants.some((locked) =>
+      [variant?.uuid, variant?.sku, variant?.name]
+        .filter((v) => typeof v === "string" && v.trim() !== "")
+        .some(
+          (key) => key === locked.uuid || key === locked.sku || key === locked.name
+        )
+    );
+
+  const lockedVariantCount = form.variants.filter(isVariantLocked).length;
+
+
+  const variantsShareOneImageSet = allVariantsShareImages(form.variants);
+  const sharedVariantImages = variantsShareOneImageSet
+    ? variantImages(form.variants[0])
+    : [];
+
+  const imageAttributeNames = variantAttributeNames(form.variants);
+  const effectiveImageAttribute =
+    imageAttribute && imageAttributeNames.includes(imageAttribute)
+      ? imageAttribute
+      : imageAttributeNames[0] || "";
+  const imageAttributeValueList = attributeValues(
+    form.variants,
+    effectiveImageAttribute
+  );
+
+  // ── Image coverage ─────────────────────────────────────────────────────────
+  //
+  // NOT a validation. Images stay optional everywhere, because a variant with no
+  // image falls back to the product images and nothing breaks. What this counts
+  // is how far the CURRENT mode is from being honest: "unique per SKU" claims
+  // each SKU differs, and "by attribute" claims each value has its own, so a
+  // gap in either mode is worth saying out loud rather than storing silently.
+  //
+  // The count is deliberately per-mode. Blanking the same variant shows up in
+  // "unique" but not in "by attribute" if its attribute value still has an image.
+  const missingImageCounts = (() => {
+    if (imageMode === "all") {
+      // One picker covers every SKU, so either it is filled or it is not.
+      const filled = sharedVariantImages.length > 0;
+
+      return { total: 1, missing: filled ? 0 : 1, noun: "shared image", plural: false };
+    }
+
+    if (imageMode === "attribute") {
+      const total = imageAttributeValueList.length;
+
+      return {
+        total,
+        missing: imageAttributeValueList.filter(
+          (value) =>
+            imagesForAttributeValue(
+              form.variants,
+              effectiveImageAttribute,
+              value
+            ).length === 0
+        ).length,
+        noun: `${effectiveImageAttribute || "attribute"} value(s)`,
+      };
+    }
+
+    return {
+      total: form.variants.length,
+      missing: form.variants.filter(
+        (variant) => variantImages(variant).length === 0
+      ).length,
+      noun: "SKU(s)",
+    };
+  })();
+
+  function handleImageModeChange(mode) {
+    setImageMode(mode);
+
+    // Landing on By-attribute with nothing selected would show an empty panel;
+    // default it to the first attribute the variants actually carry.
+    if (mode === "attribute" && !imageAttribute) {
+      const first = variantAttributeNames(form.variants)[0];
+
+      if (first) {
+        setImageAttribute(first);
+      }
+    }
+  }
 
   return (
     <div className="filament-page">
@@ -941,25 +1243,6 @@ export default function ProductForm({ productId = null }) {
                   <a href="/purchase-invoices">purchase invoice</a>, and receiving it
                   sets the stock and the selling price for this product.
                 </p>
-              </div>
-
-              <div className="form-row">
-                <label className="form-label">
-                  Discount Price{" "}
-                  <span className="optional">(leave blank if none)</span>
-                </label>
-                 <input
-                   type="number"
-                   name="discountPrice"
-                   step="0.01"
-                   min="0"
-                   value={form.discountPrice}
-                   onChange={handleChange}
-                   readOnly={isEdit}
-                 />
-                {errors.discountPrice && (
-                  <p className="input-error">{errors.discountPrice}</p>
-                )}
               </div>
 
                <div className="form-row">
@@ -1096,7 +1379,10 @@ export default function ProductForm({ productId = null }) {
 
             <p className="input-hint">
               Pick an attribute and add its options (press Enter or comma to add
-              each value). These options drive the variant combinations below.
+              each value). Values already registered under the chosen attribute
+              are suggested as you type; anything new you enter is saved to the
+              Attribute Values list for next time. These options drive the
+              variant combinations below.
             </p>
 
             {form.attributes.length === 0 && (
@@ -1138,10 +1424,32 @@ export default function ProductForm({ productId = null }) {
                         </span>
                       ))}
                     </div>
+                    {/* Suggestions come from the Attribute Values module, one
+                        list per parent attribute, so they never mix values from
+                        different attributes. Typing something not on the list is
+                        still allowed and is registered on commit. */}
+                    <datalist
+                      id={`attribute-value-options-${index}`}
+                      data-registered-count={(
+                        attributeValuesByParent[
+                          attr.attribute_uuid || attr.attributeUuid
+                        ] || []
+                      ).length}
+                    >
+                      {(
+                        attributeValuesByParent[
+                          attr.attribute_uuid || attr.attributeUuid
+                        ] || []
+                      ).map((option) => (
+                        <option key={option} value={option} />
+                      ))}
+                    </datalist>
                     <input
                       type="text"
                       className="attribute-value-input"
                       placeholder="Add value, e.g. 5kg"
+                      list={`attribute-value-options-${index}`}
+                      autoComplete="off"
                       value={attr.draft || ""}
                       onChange={(e) =>
                         updateAttributeDraft(index, e.target.value)
@@ -1193,10 +1501,29 @@ export default function ProductForm({ productId = null }) {
             {creatingAttribute && (
               <NewAttributeModal
                 onClose={() => setCreatingAttribute(false)}
-                onCreated={async (created) => {
+                onCreated={async (created, warning) => {
                   setAttributes((current) => [...current, created]);
+                  // Make the new attribute immediately selectable in the
+                  // repeater below, rather than making the operator hunt for it
+                  // in the dropdown.
+                  setForm((prev) => ({
+                    ...prev,
+                    attributes: [
+                      ...prev.attributes,
+                      {
+                        attribute_uuid: created.uuid,
+                        attributeUuid: created.uuid,
+                        name: created.name || "",
+                        values: [],
+                        draft: "",
+                      },
+                    ],
+                  }));
                   setCreatingAttribute(false);
-                  setMessage(`Attribute "${created.name}" created. Add it below.`);
+                  setMessage(
+                    warning ||
+                      `Attribute "${created.name}" created and added below.`
+                  );
                 }}
               />
             )}
@@ -1328,12 +1655,152 @@ export default function ProductForm({ productId = null }) {
                   </div>
                 )}
 
+                {form.variants.length > 0 && (
+                  <>
+                    {/* ── How variant images are assigned ──────────────────────
+                     *
+                     * Three ways to reach the same stored data. Each variant keeps
+                     * its own `images` array; "all SKUs" and "by attribute" are
+                     * bulk writes across that array. Switching mode therefore
+                     * never moves images around — it only changes which control
+                     * you are typing into.
+                     */}
+                    <fieldset className="variant-image-modes">
+                      <legend className="form-label">
+                        Variant images
+                      </legend>
+
+                      {IMAGE_MODES.map((mode) => (
+                        <label
+                          key={mode.value}
+                          className={`variant-image-mode${
+                            imageMode === mode.value
+                              ? " variant-image-mode-on"
+                              : ""
+                          }`}
+                        >
+                          <input
+                            type="radio"
+                            name="variantImageMode"
+                            value={mode.value}
+                            checked={imageMode === mode.value}
+                            onChange={() => handleImageModeChange(mode.value)}
+                          />
+                          <span className="variant-image-mode-body">
+                            <strong>{mode.label}</strong>
+                            <span className="variant-image-mode-hint">
+                              {mode.hint}
+                            </span>
+                          </span>
+                        </label>
+                      ))}
+                    </fieldset>
+
+                    {/* Coverage, not validation — the save is never blocked on
+                        this. It only says how far the chosen mode is from being
+                        true, so a half-filled mode is visible rather than
+                        silently stored. */}
+                    {missingImageCounts.total > 0 &&
+                      (missingImageCounts.missing > 0 ? (
+                        <p className="variant-image-gap">
+                          {missingImageCounts.missing} of{" "}
+                          {missingImageCounts.total}{" "}
+                          {missingImageCounts.noun}
+                          {missingImageCounts.plural === false
+                            ? " still has no image."
+                            : " still have no image."}{" "}
+                          You can
+                          save like this — those will show the product image
+                          instead.
+                        </p>
+                      ) : (
+                        <p className="variant-image-gap variant-image-gap-ok">
+                          {missingImageCounts.plural === false
+                            ? "The shared image is set."
+                            : `All ${missingImageCounts.total} ${missingImageCounts.noun} have an image.`}
+                        </p>
+                      ))}
+
+                    {imageMode === "all" && (
+                      <div className="variant-image-bulk">
+                        <MediaPicker
+                          multiple
+                          label="Image(s) shared by every SKU"
+                          value={sharedVariantImages}
+                          onChange={setVariantImagesEverywhere}
+                          hint={
+                            variantsShareOneImageSet
+                              ? `Applied to all ${form.variants.length} SKU(s).`
+                              : "These SKUs currently have different images. Picking here replaces all of them with the same set."
+                          }
+                        />
+                      </div>
+                    )}
+
+                    {imageMode === "attribute" && (
+                      <div className="variant-image-bulk">
+                        {imageAttributeNames.length === 0 ? (
+                          <p className="input-hint">
+                            These variants have no attributes, so there is nothing
+                            to group them by. Generate variants from attributes
+                            first, or use “Apply unique image(s) to each SKU”.
+                          </p>
+                        ) : (
+                          <>
+                            <div className="form-row">
+                              <label className="form-label">
+                                Group images by attribute
+                              </label>
+                              <select
+                                value={effectiveImageAttribute}
+                                onChange={(e) =>
+                                  setImageAttribute(e.target.value)
+                                }
+                              >
+                                {imageAttributeNames.map((name) => (
+                                  <option key={name} value={name}>
+                                    {name}
+                                  </option>
+                                ))}
+                              </select>
+                            </div>
+
+                            {imageAttributeValueList.map((value) => (
+                              <MediaPicker
+                                key={`${effectiveImageAttribute}:${value}`}
+                                multiple
+                                label={`${effectiveImageAttribute}: ${value}`}
+                                value={imagesForAttributeValue(
+                                  form.variants,
+                                  effectiveImageAttribute,
+                                  value
+                                )}
+                                onChange={(images) =>
+                                  setVariantImagesForAttributeValue(
+                                    effectiveImageAttribute,
+                                    value,
+                                    images
+                                  )
+                                }
+                                hint={`Applied to every SKU with ${effectiveImageAttribute} = ${value}.`}
+                              />
+                            ))}
+                          </>
+                        )}
+                      </div>
+                    )}
+                  </>
+                )}
+
                 <div className="variant-toolbar">
                   <button
                     type="button"
                     className="filament-btn filament-btn-primary"
                     onClick={generateVariants}
-                    disabled={valueGroups.length === 0 || isEdit}
+                    // Adding variants is allowed even on a product that has
+                    // history; only removal and renumbering are locked, and
+                    // those are enforced per row below.
+                    disabled={valueGroups.length === 0}
                   >
                     Generate from attributes
                     {valueGroups.length > 0 ? ` (${combinationCount})` : ""}
@@ -1343,7 +1810,6 @@ export default function ProductForm({ productId = null }) {
                       type="button"
                       className="filament-btn filament-btn-outline"
                       onClick={addVariant}
-                      disabled={isEdit}
                     >
                       + Add manually
                     </button>
@@ -1420,22 +1886,42 @@ export default function ProductForm({ productId = null }) {
                   </p>
                 )}
 
+                {form.variants.length > 0 && lockedVariantCount > 0 && (
+                  <p className="input-hint variant-lock-note">
+                    {lockedVariantCount} of {form.variants.length} variant(s) have
+                    stock or order history, so their price, stock and removal are
+                    locked. Everything else on this product stays editable, and
+                    you can still add variants.
+                  </p>
+                )}
+
                 {form.variants.length > 0 && (
                   <div className="variant-table-wrap">
                     <table className="variant-edit-table">
                       <thead>
                         <tr>
                           <th>Variant</th>
+                          {imageMode === "unique" && (
+                            <th className="variant-th-image">Image</th>
+                          )}
                           <th>SKU</th>
-                          <th>Price</th>
-                          <th>Discount Price</th>
-                          <th>Stock</th>
                           <th />
                         </tr>
                       </thead>
                       <tbody>
-                        {form.variants.map((variant, index) => (
-                          <tr key={index}>
+                        {form.variants.map((variant, index) => {
+                          const locked = isVariantLocked(variant);
+
+                          return (
+                          <tr
+                            key={index}
+                            className={`${locked ? "variant-row-locked" : ""}${
+                              imageMode === "unique" &&
+                              variantImages(variant).length === 0
+                                ? " variant-row-no-image"
+                                : ""
+                            }`}
+                          >
                             <td>
                               {variant.attributes &&
                                 Object.keys(variant.attributes).length > 0 ? (
@@ -1459,6 +1945,16 @@ export default function ProductForm({ productId = null }) {
                                 />
                               )}
                             </td>
+                            {imageMode === "unique" && (
+                              <td className="variant-td-image">
+                                <VariantImageControl
+                                  value={variantImages(variant)}
+                                  onChange={(images) =>
+                                    updateVariant(index, "images", images)
+                                  }
+                                />
+                              </td>
+                            )}
                             <td>
                               <input
                                 type="text"
@@ -1471,53 +1967,16 @@ export default function ProductForm({ productId = null }) {
                               />
                             </td>
                             <td>
-                              <input
-                                type="number"
-                                min="0"
-                                step="0.01"
-                                placeholder="Price"
-                                value={variant.price ?? ""}
-                                readOnly={isEdit}
-                                onChange={(e) => updateVariant(index, "price", e.target.value)}
-                              />
-                            </td>
-                            <td>
-                              {form.inventoryMode ===
-                                INVENTORY_MODE.BY_ATTRIBUTE ? (
-                                <span className="variant-readonly">
-                                  {(variant.discount_price || variant.discountPrice) ?? ""}
-                                </span>
-                               ) : (
-                                <input
-                                  type="number"
-                                  min="0"
-                                  step="0.01"
-                                  placeholder="Discount"
-                                  value={variant.discountPrice ?? variant.discount_price ?? ""}
-                                  readOnly={isEdit}
-                                  onChange={(e) =>
-                                    updateVariant(index, "discountPrice", e.target.value)
-                                  }
-                                />
-                              )}
-                            </td>
-                            <td>
-                              <input
-                                type="number"
-                                min="0"
-                                placeholder="Stock"
-                                value={variant.stock ?? ""}
-                                readOnly={isEdit}
-                                onChange={(e) => updateVariant(index, "stock", e.target.value)}
-                              />
-                            </td>
-                            <td>
                               <button
                                 type="button"
                                 className="filament-action-btn filament-action-danger"
-                                title="Remove"
+                                title={
+                                  locked
+                                    ? "This variant has stock or order history and cannot be removed"
+                                    : "Remove"
+                                }
                                 onClick={() => removeVariant(index)}
-                                disabled={isEdit}
+                                disabled={locked}
                               >
                                 <svg viewBox="0 0 24 24">
                                   <path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12ZM8 9h8v10H8V9Zm7.5-5-1-1h-5l-1 1H5v2h14V4h-3.5Z" />
@@ -1525,7 +1984,8 @@ export default function ProductForm({ productId = null }) {
                               </button>
                             </td>
                           </tr>
-                        ))}
+                          );
+                        })}
                       </tbody>
                     </table>
                   </div>
@@ -1574,6 +2034,13 @@ export default function ProductForm({ productId = null }) {
             </div>
 
             <div className="form-actions form-actions-sticky">
+              {/* The save failure is reported HERE, next to the button that
+                  caused it. It used to render only at the top of the page, which
+                  is off-screen once you have scrolled to the sticky action bar —
+                  so pressing Save looked like it did nothing at all. */}
+              {message && (
+                <div className="form-actions-alert">{message}</div>
+              )}
               <button
                 type="button"
                 className="filament-btn filament-btn-outline"
@@ -1621,15 +2088,43 @@ function NewAttributeModal({ onClose, onCreated }) {
     .filter(Boolean);
 
   const submit = async (event) => {
-    event.preventDefault();
+    // Called from a button's onClick now, not a form submit, so there may be no
+    // event at all — and a click event has no preventDefault to call.
+    event?.preventDefault();
     if (busy || !name.trim()) return;
     setBusy(true);
     setError("");
     try {
-      const created = await createAttribute({
-        name: name.trim(),
-        values: parsedValues,
-      });
+      const response = await createAttribute({ name: name.trim() });
+
+      if (!response?.success) {
+        setError(response?.message || "Unable to create the attribute.");
+        return;
+      }
+
+      const created = response.attribute;
+
+      // The values go to the Attribute Values module, one row each. This used to
+      // pass `values` to createAttribute(), where nothing read them and they
+      // were silently discarded — so an attribute created here arrived with
+      // none of the values the operator had typed.
+      if (parsedValues.length > 0 && created?.uuid) {
+        const results = await Promise.allSettled(
+          parsedValues.map((value) =>
+            createAttributeValue({ name: value, parentUuid: created.uuid })
+          )
+        );
+
+        const failed = results.filter((r) => r.status === "rejected").length;
+
+        if (failed > 0) {
+          // The attribute exists either way, so hand it back and say what was
+          // missed rather than throwing away a working create.
+          onCreated(created, `${failed} value(s) could not be saved — add them from Attribute Values.`);
+          return;
+        }
+      }
+
       onCreated(created);
     } catch (e) {
       setError(e.message);
@@ -1657,7 +2152,13 @@ function NewAttributeModal({ onClose, onCreated }) {
           <button type="button" className="filament-modal-close" onClick={onClose} aria-label="Close">×</button>
         </div>
 
-        <form onSubmit={submit}>
+        {/* A plain div, NOT a <form>. This modal is rendered from INSIDE the
+            product <form>, and a form inside a form is invalid HTML: the parser
+            hoists the inner one out, so its submit button stops belonging to the
+            product form and the product's own submit handler fires instead. The
+            click handler below is what this modal needs; a nested form was never
+            required. */}
+        <div onSubmit={submit}>
           <div className="filament-modal-body">
             {error && <div className="filament-alert filament-alert-info">{error}</div>}
 
@@ -1692,14 +2193,15 @@ function NewAttributeModal({ onClose, onCreated }) {
               Cancel
             </button>
             <button
-              type="submit"
+              type="button"
               className="filament-btn filament-btn-primary"
               disabled={busy || !name.trim()}
+              onClick={submit}
             >
               {busy ? "Creating…" : "Create attribute"}
             </button>
           </div>
-        </form>
+        </div>
       </div>
     </div>
   );
