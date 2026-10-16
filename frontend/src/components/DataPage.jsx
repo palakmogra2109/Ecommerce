@@ -820,8 +820,10 @@ export default function DataPage({
                               </button>
                             );
                           })}
-                          {allowedActions.map((action) => {
-                            if (action.type === "delete") {
+                          {allowedActions
+                            .filter((action) => !action.isVisible || action.isVisible(row))
+                            .map((action) => {
+                              if (action.type === "delete") {
                               const isDisabled =
                                 action.disabled?.(row) ?? false;
 

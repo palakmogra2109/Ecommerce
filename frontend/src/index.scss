@@ -8762,3 +8762,100 @@ body {
 .filament-select {
   text-overflow: ellipsis;
 }
+
+
+.filament-modal.sp-modal,
+.filament-modal.pp-modal {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 2rem);
+  overflow: hidden;
+}
+ 
+.sp-modal > form,
+.pp-modal > form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;          /* lets the body shrink and scroll instead of overflowing */
+}
+ 
+.sp-modal .filament-modal-header,
+.pp-modal .filament-modal-header {
+  flex: 0 0 auto;
+}
+ 
+.sp-modal .filament-modal-body,
+.pp-modal .filament-modal-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+ 
+/* 2. Footer: pinned, buttons on the right, hint on the left on its own. */
+.sp-modal .filament-modal-footer,
+.pp-modal .filament-modal-footer {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.625rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+}
+ 
+/* The validation hint is the last child in the markup; show it first (left). */
+.sp-modal .filament-modal-footer .frm-hint,
+.pp-modal .filament-modal-footer .frm-hint {
+  order: -1;
+  margin: 0 auto 0 0;
+  display: block;
+  max-width: 100%;
+  font-size: 0.75rem;
+  line-height: 1.4;
+}
+ 
+/* 3. Footer buttons: same height, no shrinking or text wrap. */
+.sp-modal .filament-modal-footer .filament-btn,
+.pp-modal .filament-modal-footer .filament-btn {
+  flex: 0 0 auto;
+  height: 2.5rem;
+  min-width: 6.5rem;
+  justify-content: center;
+}
+ 
+/* 4. Disabled state — there was none, so a blocked "Add supplier" looked live. */
+.filament-btn:disabled,
+.filament-btn[disabled] {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
+  transform: none;
+}
+ 
+.filament-btn-primary:disabled:hover,
+.filament-btn-primary[disabled]:hover {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+ 
+/* 5. Keyboard focus on footer buttons. */
+.filament-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+ 
+/* 6. Small screens: stack the buttons full width. */
+@media (max-width: 520px) {
+  .sp-modal .filament-modal-footer .filament-btn,
+  .pp-modal .filament-modal-footer .filament-btn {
+    flex: 1 1 100%;
+  }
+}
+ 
+/* 7. Dark mode: warning text readable on the dark surface. */
+[data-theme="dark"] .frm-warn {
+  color: #fbbf24;
+}

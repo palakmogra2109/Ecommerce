@@ -1,6 +1,6 @@
 import { useState } from "react";
 import DataPage from "../components/DataPage";
-import { listSuppliers } from "../services/purchases";
+import { listSuppliers, retireSupplier } from "../services/purchases";
 import SupplierForm from "./SupplierForm";
 import SupplierBankPopup from "./SupplierBankPopup";
 
@@ -102,6 +102,12 @@ export default function Suppliers() {
             permission: "suppliers.update",
             tooltip: "Edit supplier",
             to: (row) => `/suppliers/${row.uuid}/edit`,
+          },
+          {
+            type: "delete",
+            tooltip: "Delete",
+            disabled: (row) => !row.name || !row.email || !row.phone || !row.address || !row.city || !row.state || !row.postal_code || !row.country || !row.gstin,
+            onDelete: async (row) => retireSupplier(row.uuid),
           },
         ]}
       />

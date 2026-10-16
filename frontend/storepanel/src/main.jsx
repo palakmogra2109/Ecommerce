@@ -8,7 +8,7 @@ import ForgotPassword from "../../src/pages/ForgotPassword.jsx";
 import StorePanel from "../../src/pages/StorePanel.jsx";
 import StoreOnboarding from "../../src/pages/StoreOnboarding.jsx";
 
-import "../../src/index.css";
+import "../../src/index.scss";
 
 function Home() {
   const { user } = useAuth();
